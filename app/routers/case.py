@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.case import CaseCreate, CaseOut
 from app.services import case as case_service
+from app.services import execution as execution_service
 
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -27,4 +28,7 @@ def delete_case(case_id: int, db: Session = Depends(get_db)):
     return case_service.s_delete(db, case_id)
 
 
+@router.post("/{case_id}/run")
+def run_case(case_id: int, db: Session = Depends(get_db)):
+    return execution_service.run_case(db, case_id)
 
