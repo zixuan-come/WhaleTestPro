@@ -4,3 +4,5 @@ sqlalchemy
 pymysql
 pydantic-settings
 requests
+bcrypt
+PyJWT
