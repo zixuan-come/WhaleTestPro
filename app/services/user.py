@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from app.repositories import user as user_repo
-from app.core.security import verify_password, create_access_token
+from app.core.security import verify_password, create_access_token, get_token_remaining_seconds
+from app.core.blacklist import add_to_blacklist
 
 def s_register(db, user):
     existing = user_repo.db_get_by_username(db, user.username)
@@ -17,4 +18,17 @@ def s_login(db, user):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     token = create_access_token(existing.id)
     return {"access_token": token}
+
+
+def s_logout(token: str):
+    remaining = get_token_remaining_seconds(token)
+    add_to_blacklist(token, remaining)
+    return {"detail": "已登出"}
+
+
+
+
+
+
+
 

@@ -28,6 +28,18 @@ def decode_access_token(token: str) -> int | None:
     return int(sub) if sub is not None else None
 
 
+def get_token_remaining_seconds(token: str) -> int:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except jwt.PyJWTError:
+        return 0
+    exp = payload.get("exp")
+    if exp is None:
+        return 0
+    remaining = exp - int(datetime.now(timezone.utc).timestamp())
+    return max(remaining, 0)
+
+
 
 
 
