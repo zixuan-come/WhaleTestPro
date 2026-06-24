@@ -25,6 +25,8 @@ def s_run(db, task_id):
     if task is None:
         return None
 
+    perf_repo.db_update(db, task_id, status="running")
+
     cmd = [
         sys.executable, "-m", "locust",
         "-f", "locustfile.py",
@@ -58,10 +60,11 @@ def s_run(db, task_id):
     )
 
 
-
-
-
-
+def s_mark_running(db, task_id):
+    task = perf_repo.db_get(db, task_id)
+    if task is None:
+        return None
+    return perf_repo.db_update(db, task_id, status="running")
 
 
 
