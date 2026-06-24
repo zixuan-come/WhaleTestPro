@@ -4,11 +4,13 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from app.routers import interface as api_router
 from app.routers import case as case_router
 from app.routers import user as user_router
+from app.routers import perf as perf_router
 from app.database import Base, engine
 import uvicorn
 import app.models.interface
 import app.models.case
 import app.models.user
+import app.models.perf
 
 Base.metadata.create_all(bind=engine)
 
@@ -18,6 +20,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(api_router.router)
 app.include_router(case_router.router)
 app.include_router(user_router.router)
+app.include_router(perf_router.router)
 
 
 # 自己重写 /docs：内容还是 Swagger UI，但 JS/CSS/图标都改指向本地 /static，不再走 CDN
