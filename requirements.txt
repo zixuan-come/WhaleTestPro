@@ -7,5 +7,7 @@ requests~=2.34.2
 bcrypt~=5.0.0
 PyJWT~=2.12.1
 redis~=8.0.0
+celery~=5.6.3
 pydantic~=2.12.5
 locust~=2.44.0
+prometheus-fastapi-instrumentator~=8.0.2

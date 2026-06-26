@@ -6,6 +6,7 @@ from app.routers import case as case_router
 from app.routers import user as user_router
 from app.routers import perf as perf_router
 from app.database import Base, engine
+from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 import app.models.interface
 import app.models.case
@@ -21,6 +22,9 @@ app.include_router(api_router.router)
 app.include_router(case_router.router)
 app.include_router(user_router.router)
 app.include_router(perf_router.router)
+
+# Prometheus 埋点：自动统计每个路由的请求数/耗时/进行中数，并暴露 /metrics 供抓取
+Instrumentator().instrument(app).expose(app)
 
 
 # 自己重写 /docs：内容还是 Swagger UI，但 JS/CSS/图标都改指向本地 /static，不再走 CDN
