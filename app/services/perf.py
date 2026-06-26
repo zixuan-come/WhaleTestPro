@@ -27,7 +27,9 @@ def s_run(db, task_id):
 
     perf_repo.db_update(db, task_id, status="running")
 
-    cmd = [
+    worker_count = os.cpu_count() or 1
+
+    master_cmd = [
         sys.executable, "-m", "locust",
         "-f", "locustfile.py",
         "--headless",
@@ -35,11 +37,33 @@ def s_run(db, task_id):
         "-r", str(task.spawn_rate),
         "-t", f"{task.duration}s",
         "--host", task.target_host,
+        "--master",
+        "--expect-workers", str(worker_count),
         "--csv", "perf_result",
         "--only-summary",
     ]
+    worker_cmd = [
+        sys.executable, "-m", "locust",
+        "-f", "locustfile.py",
+        "--worker",
+        "--master-host", "127.0.0.1",
+    ]
     env = {**os.environ, "TARGET_PATH": task.target_path}
-    subprocess.run(cmd, env=env, capture_output=True, text=True)
+
+    master = subprocess.Popen(
+        master_cmd, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    workers = [
+        subprocess.Popen(
+            worker_cmd, env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        for _ in range(worker_count)
+    ]
+    master.wait()
+    for w in workers:
+        w.wait()
     rps = avg = fail_ratio = None
     with open("perf_result_stats.csv", newline="") as f:
         for row in csv.DictReader(f):
