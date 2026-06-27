@@ -1,0 +1,25 @@
+# 构建镜像时排除这些，免得污染镜像 / 泄密 / 拖慢构建
+.git
+.gitignore
+.idea
+.vscode
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+env
+
+# 密钥绝不进镜像（运行时靠 compose env_file 注入）
+.env
+.env.*
+
+# 运行产物 / 临时
+perf_result*.csv
+*.log
+grafana-perf.png
+liaotian*.txt
+
+# 文档
+README.md
+LICENSE

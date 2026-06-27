@@ -1,0 +1,103 @@
+# WhaleTestPro 一键起：app + MySQL + Redis + Celery worker + Prometheus + Grafana
+# 用法：docker compose up -d --build
+# 依赖 .env 里的 SECRET_KEY 和 MYSQL_ROOT_PASSWORD（compose 自动读项目根的 .env）
+
+services:
+  mysql:
+    image: mysql:8.0
+    # 8.0 用原生密码插件，省得 pymysql 再依赖 cryptography 做 sha2 握手
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: whale_test_pro          # 容器首次启动自动建库，省得手动 create database
+    volumes:
+      - mysql-data:/var/lib/mysql             # 命名卷持久化数据，容器删了数据还在
+    healthcheck:                              # 让 app/worker 等 MySQL 真正就绪再启动
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [whale]
+
+  redis:
+    image: redis:7-alpine
+    networks: [whale]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [whale]
+
+  app:
+    build: .
+    env_file: .env                            # 注入 SECRET_KEY
+    environment:
+      # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    ports:
+      - "8001:8000"                           # 宿主机 8001 → 容器 8000（沿用你平时的 8001）
+    depends_on:
+      mysql:
+        condition: service_healthy            # 等 MySQL 健康，create_all 才不会连不上
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks: [whale]
+
+  worker:
+    build: .
+    # Linux 容器里 prefork 正常，不用 Windows 的 --pool=solo
+    command: celery -A app.core.celery_app worker -l info
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks: [whale]
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+    networks: [whale]
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"       # 匿名免登录，演示方便
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning   # 数据源+仪表盘 provider
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards    # 仪表盘 json 本体
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks: [whale]
+
+volumes:
+  mysql-data:
+
+networks:
+  whale:

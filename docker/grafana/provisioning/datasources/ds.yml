@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prom1
+    access: proxy
+    # compose 网络里用服务名 prometheus + 端口 9090（不是 localhost）
+    url: http://prometheus:9090
+    isDefault: true
