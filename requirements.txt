@@ -11,3 +11,5 @@ celery~=5.6.3
 pydantic~=2.12.5
 locust~=2.44.0
 prometheus-fastapi-instrumentator~=8.0.2
+jsonpath-ng
+jsonschema
