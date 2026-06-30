@@ -8,6 +8,7 @@ from app.core.sql_runner import run_sql
 from app.core.notifier import send_feishu
 from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
+from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
 import requests
 
 
@@ -55,13 +56,18 @@ def run_chain(db, case_ids, env_id=None):
             results.append({"case_id": case_id, "error": "接口不存在"})
             continue
 
-        response = requests.request(
-            method=interface.method,
-            url=render_deep(interface.url, context),
-            headers=render_deep(interface.headers, context),
-            params=render_deep(interface.params, context),
-            json=render_deep(interface.body, context),
-        )
+        try:
+            response = _request(
+                interface,
+                url=render_deep(interface.url, context),
+                headers=render_deep(interface.headers, context),
+                params=render_deep(interface.params, context),
+                json=render_deep(interface.body, context),
+            )
+        except Exception as e:
+            results.append({"case_id": case_id, "passed": False, "error": str(e)})
+            continue
+
         status_passed = response.status_code == case.expected_status
         assertions_results = run_assertions(response, case.assertions, db)
         passed = status_passed and all(r["passed"] for r in assertions_results)
@@ -82,11 +88,28 @@ def run_chain(db, case_ids, env_id=None):
     return results
 
 
+def _request(interface, **kwargs):
+    breaker = get_breaker(interface.id)
+    if not breaker.allow_request():
+        raise CircuitBreakerOpen(f"接口 {interface.id} 熔断打开，快速失败")
+    try:
+        response = requests.request(method=interface.method, **kwargs)
+    except Exception:
+        breaker.record_failure()      # 连不上/超时 = 下游不可用
+        raise
+    if response.status_code >= 500:
+        breaker.record_failure()      # 5xx = 下游崩了
+    else:
+        breaker.record_success()      # 2xx/3xx/4xx = 下游活着(决策 A:4xx 不算挂)
+    return response
+
+
+
 def _run_once(db, case, interface, context):
     try:
         run_sql(db, render_deep(case.setup_sql, context))
-        response = requests.request(
-            method=interface.method,
+        response = _request(
+            interface,
             url=render_deep(interface.url, context),
             headers=render_deep(interface.headers, context),
             params=render_deep(interface.params, context),
