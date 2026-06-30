@@ -1,0 +1,40 @@
+{
+  "uid": "regression-dash",
+  "title": "WhaleTestPro 回归趋势",
+  "tags": ["whaletestpro"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "回归通过率",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "whale_regression_pass_rate", "legendFormat": "通过率" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "接口覆盖率",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "whale_regression_interface_coverage", "legendFormat": "覆盖率" }
+      ]
+    }
+  ]
+}
