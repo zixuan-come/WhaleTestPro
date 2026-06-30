@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, JSON
 from app.database import Base
 
 
@@ -9,6 +9,9 @@ class Interface(Base):
     name = Column(String(100), nullable=False)
     method = Column(String(10), nullable=False)
     url = Column(String(500), nullable=False)
+    headers = Column(JSON, nullable=True)
+    params = Column(JSON, nullable=True)
+    body = Column(JSON, nullable=True)
 
 
 

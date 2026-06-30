@@ -13,3 +13,4 @@ locust~=2.44.0
 prometheus-fastapi-instrumentator~=8.0.2
 jsonpath-ng
 jsonschema
+celery-redbeat~=2.3.2

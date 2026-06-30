@@ -29,6 +29,16 @@ def delete_case(case_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{case_id}/run")
-def run_case(case_id: int, db: Session = Depends(get_db)):
-    return execution_service.run_case(db, case_id)
+def run_case(case_id: int, env_id: int | None = None, db: Session = Depends(get_db)):
+    return execution_service.run_case(db, case_id, env_id)
+
+
+@router.post("/chain")
+def run_chain(case_ids: list[int], env_id: int | None = None, db: Session = Depends(get_db)):
+    return execution_service.run_chain(db, case_ids, env_id)
+
+
+
+
+
 
