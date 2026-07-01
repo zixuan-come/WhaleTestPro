@@ -18,8 +18,11 @@ const navGroups = [
   {
     label: '测试',
     items: [
-      { to: '/interfaces', text: '接口用例', icon: 'M4 6h16M4 12h16M4 18h10' },
+      { to: '/interfaces', text: '接口管理', icon: 'M4 6h16M4 12h16M4 18h10' },
+      { to: '/cases', text: '测试用例', icon: 'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },
+      { to: '/orchestration', text: '场景编排', icon: 'M4 6h4v4H4zM16 6h4v4h-4zM10 14h4v4h-4zM8 8h8M12 10v4' },
       { to: '/reports', text: '测试报告', icon: 'M9 17V9m4 8V5m4 12v-6 M4 20h16' },
+      { to: '/regression', text: '回归执行', icon: 'M21 12a9 9 0 11-3-6.7M21 3v5h-5' },
       { to: '/traffic', text: '流量回放', icon: 'M5 3l14 9-14 9V3z' },
     ],
   },
@@ -27,6 +30,8 @@ const navGroups = [
     label: '运维',
     items: [
       { to: '/perf', text: '压测监控', icon: 'M3 12h4l3 8 4-16 3 8h4' },
+      { to: '/mocks', text: 'Mock 挡板', icon: 'M4 7h16M4 12h16M4 17h10 M7 4v16' },
+      { to: '/schedules', text: '定时调度', icon: 'M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z' },
       { to: '/environments', text: '环境管理', icon: 'M12 8a4 4 0 100-8 4 4 0 000 8z M4 21v-1a6 6 0 0112 0v1' },
     ],
   },
