@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhaleTestPro</title>
+  <!-- 防主题闪烁:解析时同步定主题 + 兜底背景,早于 main.js 注入 theme.css -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('wtp_theme') || 'light'
+        document.documentElement.setAttribute('data-theme', t)
+      } catch (e) {}
+    })()
+  </script>
+  <style>
+    html[data-theme="light"] { background:#F2F4FF; }
+    html[data-theme="dark"]  { background:#0B0A16; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

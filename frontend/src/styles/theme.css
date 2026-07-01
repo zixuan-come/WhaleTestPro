@@ -1,0 +1,105 @@
+/* ===== WhaleTestPro 设计变量 · 亮=L4 蓝紫海(白天蓝) / 暗=P3 靛蓝紫 ===== */
+/* 中文字体:OPPO Sans 自托管,现代清爽有质感,未加载完前退回系统字体 */
+@font-face {
+  font-family:"OPPO Sans";
+  src:url("/fonts/OPPOSans-Regular.ttf") format("truetype");
+  font-weight:400; font-style:normal; font-display:swap;
+}
+@font-face {
+  font-family:"OPPO Sans";
+  src:url("/fonts/OPPOSans-Bold.ttf") format("truetype");
+  font-weight:700; font-style:normal; font-display:swap;
+}
+:root, [data-theme="light"] {
+  --primary:      #4F6BED;
+  --primary-2:    #6D5BF0;
+  --secondary:    #4338CA;
+  --cta:          #F59E0B;
+  --cta-2:        #F97316;
+  --cta-text:     #FFFFFF;
+  --bg:           #F2F4FF;
+  --surface:      #FFFFFF;
+  --surface-2:    #F7F8FF;
+  --text:         #1E2148;
+  --text-muted:   #666C8C;
+  --border:       #E2E5F7;
+  --glass:        rgba(255,255,255,.72);
+  --shadow-sm:    0 1px 2px rgba(30,33,72,.06);
+  --shadow-md:    0 2px 4px rgba(30,33,72,.05), 0 8px 20px rgba(30,33,72,.08);
+  --shadow-lg:    0 8px 16px rgba(30,33,72,.08), 0 20px 48px rgba(30,33,72,.12);
+  --ring:         rgba(79,107,237,.14);
+}
+[data-theme="dark"] {
+  --primary:      #6366F1;
+  --primary-2:    #818CF8;
+  --secondary:    #1E1B3A;
+  --cta:          #818CF8;
+  --cta-2:        #6366F1;
+  --cta-text:     #0E0D1C;
+  --bg:           #0B0A16;
+  --surface:      #16142B;
+  --surface-2:    #1C1A36;
+  --text:         #E6E9FF;
+  --text-muted:   #9491B5;
+  --border:       #272450;
+  --glass:        rgba(22,20,43,.72);
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:    0 2px 6px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.5);
+  --shadow-lg:    0 10px 30px rgba(0,0,0,.55), 0 24px 60px rgba(0,0,0,.6);
+  --ring:         rgba(99,102,241,.28);
+}
+/* 状态色:语义独立于主色,两套各调一版 */
+:root {
+  --pass-bg:#DCFCE7; --pass-fg:#15803D;
+  --fail-bg:#FEE2E2; --fail-fg:#B91C1C;
+  --warn-bg:#FEF3C7; --warn-fg:#B45309;
+  --skip-bg:#F1F5F9; --skip-fg:#64748B;
+}
+[data-theme="dark"] {
+  --pass-bg:#0F2C1A; --pass-fg:#4ADE80;
+  --fail-bg:#3A1414; --fail-fg:#F87171;
+  --warn-bg:#3A2A0C; --warn-fg:#FBBF24;
+  --skip-bg:#1E1B33; --skip-fg:#94A3B8;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body, #app { height:100%; }
+body {
+  font-family:"OPPO Sans",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg); color:var(--text);
+  -webkit-font-smoothing:antialiased;
+  transition:background .3s ease, color .3s ease;
+}
+a { color:inherit; text-decoration:none; }
+::-webkit-scrollbar { width:10px; height:10px; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:99px; border:2px solid transparent; background-clip:content-box; }
+::-webkit-scrollbar-thumb:hover { background:var(--text-muted); background-clip:content-box; }
+
+/* ===== 通用组件类(各页面复用) ===== */
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  height:32px; padding:0 15px; font-size:14px; font-weight:400; line-height:1.5715;
+  border-radius:4px; border:none; cursor:pointer; white-space:nowrap;
+  transition:filter .15s, background .15s; }
+.btn svg { width:14px; height:14px; }
+.btn:hover { filter:brightness(.96); }
+.btn-primary { background:var(--primary); color:#fff; }
+.btn-cta { background:var(--cta); color:var(--cta-text); }
+.btn-ghost { background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
+.btn-ghost:hover { filter:none; border-color:var(--primary); }
+
+.badge { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; padding:4px 11px; border-radius:99px; }
+.badge .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+.b-pass { background:var(--pass-bg); color:var(--pass-fg); }
+.b-fail { background:var(--fail-bg); color:var(--fail-fg); }
+.b-warn { background:var(--warn-bg); color:var(--warn-fg); }
+.b-skip { background:var(--skip-bg); color:var(--skip-fg); }
+
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; box-shadow:var(--shadow-md); }
+.panel-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); font-size:14px; font-weight:700; }
+.panel-head .count { font-size:12px; font-weight:600; color:var(--text-muted); background:var(--surface-2); padding:3px 10px; border-radius:99px; }
+
+.tag-method { font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:6px; font-family:ui-monospace,Consolas,monospace; }
+.m-get  { background:var(--pass-bg); color:var(--pass-fg); }
+.m-post { background:var(--ring); color:var(--primary); }
+.m-put  { background:var(--warn-bg); color:var(--warn-fg); }
+.m-delete { background:var(--fail-bg); color:var(--fail-fg); }
