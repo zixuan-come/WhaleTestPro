@@ -26,6 +26,7 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     ports:
+      - "5672:5672"
       - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
@@ -95,6 +96,24 @@ services:
     depends_on:
       - prometheus
     networks: [whale]
+
+  locust-master:
+    build: .
+    command: locust -f locustfile.py --master
+    environment:
+      # 指向宿主机的本地 Redis（和本地 celery worker 写入的是同一个），读 path 广播给 worker
+      REDIS_URL: redis://host.docker.internal:6379/0
+    ports:
+      - "8089:8089"                           # web UI + API：s_run POST /swarm、人也能开浏览器看
+    networks: [whale]
+
+  locust-worker:
+    build: .
+    # 连主控：主从走 5557，同 whale 网络内网互通，不用发布端口
+    command: locust -f locustfile.py --worker --master-host locust-master
+    depends_on:
+      - locust-master
+    networks: [whale]                         # 扩容用运行时命令：docker compose up -d --scale locust-worker=3
 
 volumes:
   mysql-data:

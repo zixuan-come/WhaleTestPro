@@ -1,49 +1,81 @@
 {
   "uid": "perf-dash",
-  "title": "WhaleTestPro 压测监控",
+  "title": "WhaleTestPro 压测实时",
   "tags": ["whaletestpro"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": { "from": "now-15m", "to": "now" },
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
-      "title": "请求速率 sum(rate(http_requests_total[1m])) by (handler)",
+      "title": "Locust 实时 RPS（客户端视角）",
       "datasource": { "type": "prometheus", "uid": "prom1" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
       "fieldConfig": {
-        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "reqps" },
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "reqps", "min": 0 },
         "overrides": []
       },
       "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prom1" },
-          "expr": "sum(rate(http_requests_total[1m])) by (handler)",
-          "legendFormat": "{{handler}}"
-        }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "whale_perf_rps", "legendFormat": "RPS" }
       ]
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "P95 响应时间 histogram_quantile(0.95) by (handler)",
+      "title": "失败率",
       "datasource": { "type": "prometheus", "uid": "prom1" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "whale_perf_fail_ratio", "legendFormat": "失败率" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "平均响应时间",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "ms", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "whale_perf_avg_response_ms", "legendFormat": "平均响应(ms)" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "app 收到的请求速率（服务端视角）",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "reqps" },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "sum(rate(http_requests_total[1m])) by (handler)", "legendFormat": "{{handler}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "app P95 响应时间（服务端视角）",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "fieldConfig": {
         "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 }, "unit": "s" },
         "overrides": []
       },
       "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prom1" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, handler))",
-          "legendFormat": "{{handler}}"
-        }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prom1" }, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, handler))", "legendFormat": "{{handler}}" }
       ]
     }
   ]

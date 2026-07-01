@@ -41,3 +41,22 @@ logs/
 # --- OS ---
 .DS_Store
 Thumbs.db
+.gstack/
+
+# --- Node / 前端 ---
+node_modules/
+frontend/dist/
+
+# --- 工具/技能环境(个人本地,不入项目库) ---
+.agents/
+.claude/
+skills-lock.json
+
+# --- 本地临时/参考文件(挑色预览、抓包参考、压测产物、聊天草稿) ---
+*_preview.html
+MeterSphere.html
+MeterSphere_files/
+grafana-perf.png
+perf_result_*.csv
+liaotian*.txt
+study111.txt

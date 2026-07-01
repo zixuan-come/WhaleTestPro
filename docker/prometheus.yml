@@ -7,3 +7,9 @@ scrape_configs:
     static_configs:
       # compose 里全在同一网络，直接用服务名 app + 容器内端口 8000（不是宿主机的 8001）
       - targets: ['app:8000']
+
+  - job_name: 'whale-perf-worker'
+    static_configs:
+      # s_run 在本机的 celery worker 进程刷压测指标；worker 用 start_http_server 开了 8002
+      # prometheus 在 docker 里，回连宿主机要走 host.docker.internal（同 B5 Redis 拓扑）
+      - targets: ['host.docker.internal:8002']
