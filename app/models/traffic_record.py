@@ -7,7 +7,7 @@ class TrafficRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     method = Column(String(10), nullable=False)
-    path = Column(String(500), nullable=False)
+    path = Column(String(500), nullable=False, index=True)
     request_headers = Column(JSON, nullable=True)
     request_body = Column(JSON, nullable=True)
     response_status = Column(Integer, nullable=True)
