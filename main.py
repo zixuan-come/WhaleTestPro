@@ -40,7 +40,8 @@ Base.metadata.create_all(bind=engine)
 Base.metadata.create_all(bind=engine_shadow)
 
 # 录制采样最简形式：不录这些"自身"接口（否则录制接口自己也被录、还会污染统计）
-RECORD_SKIP_PREFIXES = ("/traffic", "/metrics", "/docs", "/openapi.json", "/static", "/health")
+# 多项目改造:公共接口(auth/projects)没有 pid 上下文,不录制反而更干净
+RECORD_SKIP_PREFIXES = ("/traffic", "/metrics", "/docs", "/openapi.json", "/static", "/health", "/auth", "/projects")
 
 
 def _safe_json(raw: bytes):
@@ -51,6 +52,25 @@ def _safe_json(raw: bytes):
         return json.loads(raw)
     except Exception:
         return None
+
+
+def _extract_project_id(request):
+    """
+    从请求提取 project_id 用于流量归属,优先级:
+    ① HTTP header X-Project-Id  —— 前端调业务接口时带
+    ② URL 前缀 /mock/{pid}/xxx —— 被测系统调挡板时(URL 里带)
+    ③ 兜底 pid=1(默认项目)—— 极少数漏网,不阻塞录制
+    """
+    pid = request.headers.get("X-Project-Id")
+    if pid:
+        try:
+            return int(pid)
+        except (ValueError, TypeError):
+            pass
+    parts = request.url.path.strip("/").split("/", 2)
+    if len(parts) >= 2 and parts[0] == "mock" and parts[1].isdigit():
+        return int(parts[1])
+    return 1
 
 
 app = FastAPI(docs_url=None)
@@ -87,6 +107,7 @@ async def recording_middleware(request: Request, call_next):
             request_body=_safe_json(req_body),
             response_status=response.status_code,
             response_body=_safe_json(resp_body),
+            project_id=_extract_project_id(request),   # ← 中间件从请求提取项目归属
         )
         # mode="json" 把 datetime 等转成可序列化的字符串，否则丢进 RabbitMQ 会序列化失败
         record_traffic.delay(record.model_dump(mode="json"))

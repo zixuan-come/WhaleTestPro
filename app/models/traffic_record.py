@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, DateTime, func
+from sqlalchemy import Column, Integer, String, JSON, DateTime, func, ForeignKey
 from app.database import Base
 
 
@@ -13,3 +13,4 @@ class TrafficRecord(Base):
     response_status = Column(Integer, nullable=True)
     response_body = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
