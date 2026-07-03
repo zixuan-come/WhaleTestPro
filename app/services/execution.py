@@ -21,12 +21,12 @@ def _env_context(db, env_id):
     return {**(env.variables or {}), "base_url": env.base_url}
 
 
-def run_case(db, case_id, env_id=None):
-    case = case_repo.db_get(db, case_id)
+def run_case(db, case_id, env_id, project_id):
+    case = case_repo.db_get(db, case_id, project_id)
     if case is None:
         return {"error": "用例不存在"}
 
-    interface = interface_repo.db_get(db, case.interface_id)
+    interface = interface_repo.db_get(db, case.interface_id, project_id)
     if interface is None:
         return {"error": "用例关联的接口不存在"}
 
@@ -38,20 +38,20 @@ def run_case(db, case_id, env_id=None):
         result = _run_with_retry(db, case, interface, base_ctx)
         passed = result["passed"]
 
-    report_repo.db_create(db, case_id=case_id, passed=passed, detail=result)
+    report_repo.db_create(db, case_id=case_id, passed=passed, detail=result, project_id=project_id)
     return result
 
 
-def run_chain(db, case_ids, env_id=None):
+def run_chain(db, case_ids, env_id, project_id):
     context = _env_context(db, env_id)
     results = []
     for case_id in case_ids:
-        case = case_repo.db_get(db, case_id)
+        case = case_repo.db_get(db, case_id, project_id)
         if case is None:
             results.append({"case_id": case_id, "error": "用例不存在"})
             continue
 
-        interface = interface_repo.db_get(db, case.interface_id)
+        interface = interface_repo.db_get(db, case.interface_id, project_id)
         if interface is None:
             results.append({"case_id": case_id, "error": "接口不存在"})
             continue
@@ -146,16 +146,16 @@ def _result_passed(result):
     return result.get("passed", False)
 
 
-def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False):
+def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, project_id=None):
     if case_ids is None:
-        cases = case_repo.db_list(db)
+        cases = case_repo.db_list(db, project_id)
         if tag is not None:
             cases = [c for c in cases if c.tags and tag in c.tags]
         case_ids = [c.id for c in cases]
     results = []
     for case_id in case_ids:
         try:
-            result = run_case(db, case_id, env_id)
+            result = run_case(db, case_id, env_id, project_id)
             results.append({"case_id": case_id, "passed": _result_passed(result), "result": result})
         except Exception as e:
             results.append({"case_id": case_id, "passed": False, "error": str(e)})
@@ -164,8 +164,8 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False):
 
     pass_rate = passed_count / total if total else 0
 
-    all_interfaces = interface_repo.db_list(db)
-    covered_ids = {c.interface_id for c in case_repo.db_list(db)}
+    all_interfaces = interface_repo.db_list(db, project_id)
+    covered_ids = {c.interface_id for c in case_repo.db_list(db, project_id)}
     interface_total = len(all_interfaces)
     interface_covered = len(covered_ids)
     coverage = interface_covered / interface_total if interface_total else 0
