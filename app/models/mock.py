@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey
 from app.database import Base
 
 
@@ -12,6 +12,7 @@ class Mock(Base):
     status = Column(Integer, nullable=False, default=200)
     body = Column(JSON, nullable=True)
     delay_ms = Column(Integer, nullable=False, default=0)
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 

@@ -1,8 +1,10 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { listMocks, createMock, updateMock, deleteMock } from '../api/mock'
+import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
 
+const auth = useAuthStore()
 const items = ref([])
 const loading = ref(true)
 const error = ref('')
@@ -15,6 +17,8 @@ const form = reactive({ name: '', path: '', method: 'GET', status: 200, body: ''
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const total = computed(() => items.value.length)
+// 挡板命中 URL 前缀:/mock/{pid} —— 后端多项目改造后,path 必须带 pid,展示时把前缀显式画出来
+const hitUrlPrefix = computed(() => `/mock/${auth.currentProjectId ?? '?'}`)
 
 function methodClass(m) { return 'm-' + (m || 'get').toLowerCase() }
 
@@ -108,7 +112,7 @@ onMounted(load)
 <template>
   <div class="cards">
     <div class="card"><div class="k">挡板规则</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">命中入口</div><div class="v mono">/mock/*</div></div>
+    <div class="card"><div class="k">命中入口</div><div class="v mono">{{ hitUrlPrefix }}/*</div></div>
   </div>
 
   <div class="panel">
@@ -136,7 +140,7 @@ onMounted(load)
       <div v-for="m in items" :key="m.id" class="row">
         <span class="c-method"><span class="tag-method" :class="methodClass(m.method)">{{ (m.method || 'GET').toUpperCase() }}</span></span>
         <span class="c-name"><span class="id">#{{ m.id }}</span>{{ m.name }}</span>
-        <span class="c-path" :title="m.path">{{ m.path }}</span>
+        <span class="c-path" :title="hitUrlPrefix + m.path"><span class="url-prefix">{{ hitUrlPrefix }}</span>{{ m.path }}</span>
         <span class="c-status">{{ m.status }}</span>
         <span class="c-delay">{{ m.delay_ms ? m.delay_ms + ' ms' : '—' }}</span>
         <span class="c-act">
@@ -213,6 +217,7 @@ onMounted(load)
   background:var(--surface-2); padding:2px 8px; border-radius:6px; flex:none; }
 .c-path { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.c-path .url-prefix { color:var(--text-muted); opacity:.55; }
 .c-status, .c-delay { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; }
 .c-act { text-align:right; display:flex; gap:4px; justify-content:flex-end; }
 .icon-btn { display:inline-flex; align-items:center; justify-content:center;
