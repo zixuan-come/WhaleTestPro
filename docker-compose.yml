@@ -41,6 +41,7 @@ services:
     environment:
       # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
+      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     ports:
@@ -61,6 +62,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
+      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     depends_on:
