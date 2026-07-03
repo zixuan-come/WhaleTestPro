@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Boolean, JSON, DateTime, func
+from sqlalchemy import Column, Integer, Boolean, JSON, DateTime, func, ForeignKey
 from app.database import Base
 
 class TestReport(Base):
@@ -8,6 +8,7 @@ class TestReport(Base):
     passed = Column(Boolean, nullable=False)
     detail = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 
