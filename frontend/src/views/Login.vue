@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { login as apiLogin } from '../api/auth'
+import { login as apiLogin, register as apiRegister } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import { useThemeStore } from '../stores/theme'
 import { computed } from 'vue'
@@ -11,10 +11,25 @@ const auth = useAuthStore()
 const themeStore = useThemeStore()
 const isDark = computed(() => themeStore.theme === 'dark')
 
+const mode = ref('login') // 'login' | 'register'
 const username = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
+
+const isRegister = computed(() => mode.value === 'register')
+const title = computed(() => isRegister.value ? '创建账号' : '欢迎回来')
+const subtitle = computed(() => isRegister.value ? '注册后即可开始你的测试工作台' : '登录以继续你的测试工作台')
+const submitText = computed(() => {
+  if (loading.value) return isRegister.value ? '注册中…' : '登录中…'
+  return isRegister.value ? '注 册' : '登 录'
+})
+
+function switchMode(next) {
+  mode.value = next
+  error.value = ''
+}
 
 async function onSubmit() {
   error.value = ''
@@ -24,11 +39,15 @@ async function onSubmit() {
   }
   loading.value = true
   try {
+    if (isRegister.value) {
+      // 注册 → 立刻用同一套账号密码登录进去
+      await apiRegister(username.value, password.value)
+    }
     const res = await apiLogin(username.value, password.value)
     auth.setAuth(res.access_token, username.value)
     router.push({ name: 'interfaces' })
   } catch (e) {
-    error.value = e.message || '登录失败'
+    error.value = e.message || (isRegister.value ? '注册失败' : '登录失败')
   } finally {
     loading.value = false
   }
@@ -75,8 +94,8 @@ async function onSubmit() {
 
       <!-- 表单侧 -->
       <form class="form" @submit.prevent="onSubmit">
-        <h1>欢迎回来</h1>
-        <p class="sub">登录以继续你的测试工作台</p>
+        <h1>{{ title }}</h1>
+        <p class="sub">{{ subtitle }}</p>
 
         <label>账号</label>
         <div class="field">
@@ -87,11 +106,20 @@ async function onSubmit() {
         </div>
 
         <label>密码</label>
-        <div class="field">
+        <div class="field has-eye">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
           </svg>
-          <input v-model="password" type="password" placeholder="请输入密码" autocomplete="current-password" />
+          <input v-model="password" :type="showPassword ? 'text' : 'password'" :placeholder="isRegister ? '设置密码' : '请输入密码'" :autocomplete="isRegister ? 'new-password' : 'current-password'" />
+          <button type="button" class="eye" @click="showPassword = !showPassword" :title="showPassword ? '隐藏密码' : '显示密码'">
+            <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17.94 17.94A10.06 10.06 0 0112 19c-6.5 0-10-7-10-7a19.77 19.77 0 014.22-5.94M9.9 5.24A9.12 9.12 0 0112 5c6.5 0 10 7 10 7a19.86 19.86 0 01-3.17 4.19M1 1l22 22" />
+            </svg>
+          </button>
         </div>
 
         <transition name="fade">
@@ -99,8 +127,17 @@ async function onSubmit() {
         </transition>
 
         <button class="submit" type="submit" :disabled="loading">
-          {{ loading ? '登录中…' : '登 录' }}
+          {{ submitText }}
         </button>
+
+        <p class="switch">
+          <template v-if="isRegister">
+            已有账号?<a href="#" @click.prevent="switchMode('login')">去登录</a>
+          </template>
+          <template v-else>
+            还没账号?<a href="#" @click.prevent="switchMode('register')">立即注册</a>
+          </template>
+        </p>
 
         <p class="foot">测试平台演示环境 · WhaleTestPro</p>
       </form>
@@ -153,6 +190,12 @@ async function onSubmit() {
   padding:12px 13px 12px 40px; font-size:13.5px; color:var(--text); outline:none; transition:border-color .18s; }
 .field input:focus { border-color:var(--primary); }
 .field input:focus + svg, .field:focus-within svg { color:var(--primary); }
+.field.has-eye input { padding-right:44px; }
+.eye { position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  width:30px; height:30px; padding:0; background:none; border:none; border-radius:6px;
+  display:grid; place-items:center; cursor:pointer; color:var(--text-muted); transition:color .15s,background .15s; }
+.eye svg { width:17px; height:17px; }
+.eye:hover { color:var(--primary); background:var(--surface-2); }
 .err { color:var(--fail-fg); font-size:12.5px; margin:-6px 0 14px; }
 .fade-enter-active,.fade-leave-active { transition:opacity .2s; }
 .fade-enter-from,.fade-leave-to { opacity:0; }
@@ -162,6 +205,9 @@ async function onSubmit() {
   background:var(--primary); transition:filter .15s; }
 .submit:hover { filter:brightness(.95); }
 .submit:disabled { opacity:.6; cursor:not-allowed; }
+.switch { text-align:center; font-size:12.5px; color:var(--text-muted); margin-top:14px; }
+.switch a { color:var(--primary); font-weight:600; margin-left:4px; text-decoration:none; }
+.switch a:hover { text-decoration:underline; }
 .foot { text-align:center; font-size:11px; color:var(--text-muted); margin-top:20px; }
 
 /* ===== 响应式:窄屏隐藏品牌侧,卡片收成单栏表单 ===== */
