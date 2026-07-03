@@ -24,7 +24,8 @@ def sync_schedule(schedule):
         _entry_name(schedule.id),
         TASK,
         _parse_cron(schedule.cron),
-        args=[schedule.tag],
+        # args 顺序:project_id 在前,tag 在后 —— task 侧签名要一致
+        args=[schedule.project_id, schedule.tag],
         app=celery_app,
     )
     entry.save()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
 from app.database import Base
 
 
@@ -10,6 +10,7 @@ class Schedule(Base):
     cron = Column(String(100), nullable=False)
     tag = Column(String(50), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 
