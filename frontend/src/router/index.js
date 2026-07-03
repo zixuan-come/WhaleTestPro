@@ -9,6 +9,8 @@ const routes = [
     component: AppLayout,
     children: [
       { path: '', redirect: '/interfaces' },
+      // 项目管理页:不需要选中项目(它自己是选项目的地方)
+      { path: 'projects', name: 'projects', component: () => import('../views/Projects.vue'), meta: { title: '项目管理', crumb: '系统 / 项目', noProjectRequired: true } },
       { path: 'interfaces', name: 'interfaces', component: () => import('../views/Interfaces.vue'), meta: { title: '接口管理', crumb: '接口测试 / 接口定义' } },
       { path: 'cases', name: 'cases', component: () => import('../views/Cases.vue'), meta: { title: '测试用例', crumb: '接口测试 / 用例管理' } },
       { path: 'orchestration', name: 'orchestration', component: () => import('../views/Orchestration.vue'), meta: { title: '场景编排', crumb: '接口测试 / 可视化编排' } },
@@ -25,11 +27,17 @@ const routes = [
 
 const router = createRouter({ history: createWebHashHistory(), routes })
 
-// 路由守卫:非 public 页面必须登录
-router.beforeEach((to) => {
+// 路由守卫:①非 public 必须登录;②登过了别再去登录页;③业务页必须有当前项目(空态引导)
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (!to.meta.public && !auth.token) return { name: 'login' }
   if (to.name === 'login' && auth.token) return { name: 'interfaces' }
+
+  // 已登录 + 走业务页 + 还没选项目 → 尝试自动选一个,选不到就跳项目管理页
+  if (auth.token && !to.meta.public && !to.meta.noProjectRequired && !auth.currentProjectId) {
+    await auth.initProject()
+    if (!auth.currentProjectId) return { name: 'projects' }
+  }
 })
 
 export default router
