@@ -1,32 +1,34 @@
 import time
 import redis
 import requests
+from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core import metrics
 from app.repositories import perf as perf_repo
 
-def s_create(db, perf):
-    return perf_repo.db_create(db, perf)
+
+def s_create(db: Session, perf, project_id: int):
+    return perf_repo.db_create(db, perf, project_id)
 
 
-def s_get(db, task_id):
-    return perf_repo.db_get(db, task_id)
+def s_get(db: Session, task_id: int, project_id: int):
+    return perf_repo.db_get(db, task_id, project_id)
 
 
-def s_list(db):
-    return perf_repo.db_list(db)
+def s_list(db: Session, project_id: int):
+    return perf_repo.db_list(db, project_id)
 
 
-def s_delete(db, task_id):
-    return perf_repo.db_delete(db, task_id)
+def s_delete(db: Session, task_id: int, project_id: int):
+    return perf_repo.db_delete(db, task_id, project_id)
 
 
-def s_run(db, task_id):
-    task = perf_repo.db_get(db, task_id)
+def s_run(db: Session, task_id: int, project_id: int):
+    task = perf_repo.db_get(db, task_id, project_id)
     if task is None:
         return None
 
-    perf_repo.db_update(db, task_id, status="running")
+    perf_repo.db_update(db, task_id, project_id, status="running")
 
     base = settings.LOCUST_MASTER_URL
 
@@ -71,7 +73,7 @@ def s_run(db, task_id):
             break
 
     return perf_repo.db_update(
-        db, task_id,
+        db, task_id, project_id,
         status="done",
         rps=rps,
         avg_response_ms=avg,
@@ -79,15 +81,8 @@ def s_run(db, task_id):
     )
 
 
-def s_mark_running(db, task_id):
-    task = perf_repo.db_get(db, task_id)
+def s_mark_running(db: Session, task_id: int, project_id: int):
+    task = perf_repo.db_get(db, task_id, project_id)
     if task is None:
         return None
-    return perf_repo.db_update(db, task_id, status="running")
-
-
-
-
-
-
-
+    return perf_repo.db_update(db, task_id, project_id, status="running")

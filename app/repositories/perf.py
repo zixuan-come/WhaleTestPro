@@ -1,20 +1,31 @@
+from sqlalchemy.orm import Session
 from app.models.perf import PerfTask
 
-def db_create(db, perf):
-    db_perf = PerfTask(**perf.model_dump())
+
+def db_create(db: Session, perf, project_id: int):
+    db_perf = PerfTask(**perf.model_dump(), project_id=project_id)
     db.add(db_perf)
     db.commit()
     db.refresh(db_perf)
     return db_perf
 
-def db_get(db, task_id):
-    return db.query(PerfTask).filter(PerfTask.id == task_id).first()
 
-def db_list(db):
-    return db.query(PerfTask).all()
+def db_get(db: Session, task_id: int, project_id: int):
+    return db.query(PerfTask).filter(
+        PerfTask.id == task_id,
+        PerfTask.project_id == project_id,
+    ).first()
 
-def db_delete(db, task_id):
-    db_task = db.query(PerfTask).filter(PerfTask.id == task_id).first()
+
+def db_list(db: Session, project_id: int):
+    return db.query(PerfTask).filter(PerfTask.project_id == project_id).all()
+
+
+def db_delete(db: Session, task_id: int, project_id: int):
+    db_task = db.query(PerfTask).filter(
+        PerfTask.id == task_id,
+        PerfTask.project_id == project_id,
+    ).first()
     if db_task is None:
         return None
     db.delete(db_task)
@@ -22,8 +33,11 @@ def db_delete(db, task_id):
     return db_task
 
 
-def db_update(db, task_id, **fields):
-    db_task = db.query(PerfTask).filter(PerfTask.id == task_id).first()
+def db_update(db: Session, task_id: int, project_id: int, **fields):
+    db_task = db.query(PerfTask).filter(
+        PerfTask.id == task_id,
+        PerfTask.project_id == project_id,
+    ).first()
     if db_task is None:
         return None
     for k, v in fields.items():
@@ -31,9 +45,3 @@ def db_update(db, task_id, **fields):
     db.commit()
     db.refresh(db_task)
     return db_task
-
-
-
-
-
-

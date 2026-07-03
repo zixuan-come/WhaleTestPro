@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float
+from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from app.database import Base
 
 
@@ -16,6 +16,7 @@ class PerfTask(Base):
     rps = Column(Float, nullable=True)
     avg_response_ms = Column(Float, nullable=True)
     fail_ratio = Column(Float, nullable=True)
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 
