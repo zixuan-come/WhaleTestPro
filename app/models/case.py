@@ -16,6 +16,9 @@ class Case(Base):
     datasets = Column(JSON, nullable=True)
     retries = Column(Integer, default=0)
     tags = Column(JSON, nullable=True)
+    # 冗余字段:能通过 interface_id JOIN interface 得到,但直接冗余更快、索引简单
+    # 一致性由 service.s_create 保证:建 case 时校验 interface.project_id == case.project_id
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 
