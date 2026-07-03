@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON
+from sqlalchemy import Column, Integer, String, JSON, ForeignKey
 from app.database import Base
 
 class Environment(Base):
@@ -8,6 +8,7 @@ class Environment(Base):
     name = Column(String(100), nullable=False)
     base_url = Column(String(500), nullable=False)
     variables = Column(JSON, nullable=True)
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 
 
