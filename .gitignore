@@ -60,3 +60,6 @@ grafana-perf.png
 perf_result_*.csv
 liaotian*.txt
 study111.txt
+
+# --- 个人学习记录(不入项目库) ---
+study/
