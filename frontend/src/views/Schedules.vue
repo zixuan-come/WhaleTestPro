@@ -129,8 +129,8 @@ onMounted(load)
         <span class="c-status">状态</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="s in items" :key="s.id" class="row">
-        <span class="c-name"><span class="id">#{{ s.id }}</span>{{ s.name }}</span>
+      <div v-for="(s, i) in items" :key="s.id" class="row">
+        <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ s.name }}</span>
         <span class="c-cron">{{ s.cron }}</span>
         <span class="c-tag"><span v-if="s.tag" class="tag">{{ s.tag }}</span><span v-else class="muted">全部</span></span>
         <span class="c-status">

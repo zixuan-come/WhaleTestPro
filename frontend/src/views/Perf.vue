@@ -153,8 +153,8 @@ onMounted(load)
         <span class="c-fail">失败率</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="t in items" :key="t.id" class="row">
-        <span class="c-name"><span class="id">#{{ t.id }}</span>{{ t.name }}</span>
+      <div v-for="(t, i) in items" :key="t.id" class="row">
+        <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ t.name }}</span>
         <span class="c-target" :title="t.target_host + t.target_path">{{ t.target_host }}{{ t.target_path }}</span>
         <span class="c-load">{{ t.users }} VU · {{ t.duration }}s</span>
         <span class="c-status"><span class="badge" :class="statusClass(t.status)"><span class="dot"></span>{{ statusText(t.status) }}</span></span>

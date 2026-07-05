@@ -109,9 +109,9 @@ onMounted(load)
         <span class="c-time">录制时间</span>
         <span class="c-act">回放</span>
       </div>
-      <div v-for="rec in records" :key="rec.id" class="row">
+      <div v-for="(rec, i) in records" :key="rec.id" class="row">
         <span class="c-method"><span class="tag-method" :class="methodClass(rec.method)">{{ (rec.method || 'GET').toUpperCase() }}</span></span>
-        <span class="c-path" :title="rec.path"><span class="id">#{{ rec.id }}</span>{{ rec.path }}</span>
+        <span class="c-path" :title="rec.path"><span class="id">#{{ i + 1 }}</span>{{ rec.path }}</span>
         <span class="c-status"><span class="badge" :class="statusClass(rec.response_status)"><span class="dot"></span>{{ rec.response_status ?? '—' }}</span></span>
         <span class="c-time">{{ fmtTime(rec.created_at) }}</span>
         <span class="c-act">

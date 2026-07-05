@@ -119,9 +119,9 @@ onMounted(load)
         <span class="c-time">创建时间</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="p in items" :key="p.id" class="row" :class="{ current: p.id === auth.currentProjectId }">
+      <div v-for="(p, i) in items" :key="p.id" class="row" :class="{ current: p.id === auth.currentProjectId }">
         <span class="c-name">
-          <span class="id">#{{ p.id }}</span>{{ p.name }}
+          <span class="id">#{{ i + 1 }}</span>{{ p.name }}
           <span v-if="p.id === auth.currentProjectId" class="badge">当前</span>
         </span>
         <span class="c-desc" :title="p.description">{{ p.description || '—' }}</span>

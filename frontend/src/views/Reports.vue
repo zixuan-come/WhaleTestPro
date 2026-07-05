@@ -71,7 +71,7 @@ onMounted(load)
         <span class="c-time">执行时间</span>
         <span class="c-act">明细</span>
       </div>
-      <template v-for="r in items" :key="r.id">
+      <template v-for="(r, i) in items" :key="r.id">
         <div class="row" :class="{ open: openId === r.id }" @click="toggle(r.id)">
           <span class="c-status">
             <span class="badge" :class="r.passed ? 'b-pass' : 'b-fail'">
@@ -79,7 +79,7 @@ onMounted(load)
             </span>
           </span>
           <span class="c-name">
-            <span class="id">#{{ r.id }}</span>用例 {{ r.case_id }}
+            <span class="id">#{{ i + 1 }}</span>用例 {{ r.case_id }}
           </span>
           <span class="c-time">{{ fmtTime(r.created_at) }}</span>
           <span class="c-act">

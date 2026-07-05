@@ -138,8 +138,8 @@ onMounted(load)
         <span class="c-vars">变量</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="env in items" :key="env.id" class="row">
-        <span class="c-name"><span class="id">#{{ env.id }}</span>{{ env.name }}</span>
+      <div v-for="(env, i) in items" :key="env.id" class="row">
+        <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ env.name }}</span>
         <span class="c-url" :title="env.base_url">{{ env.base_url }}</span>
         <span class="c-vars"><span class="pill">{{ varCount(env) }} 个</span></span>
         <span class="c-act">

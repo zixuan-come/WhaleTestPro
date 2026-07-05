@@ -137,9 +137,9 @@ onMounted(load)
         <span class="c-delay">延迟</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="m in items" :key="m.id" class="row">
+      <div v-for="(m, i) in items" :key="m.id" class="row">
         <span class="c-method"><span class="tag-method" :class="methodClass(m.method)">{{ (m.method || 'GET').toUpperCase() }}</span></span>
-        <span class="c-name"><span class="id">#{{ m.id }}</span>{{ m.name }}</span>
+        <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ m.name }}</span>
         <span class="c-path" :title="hitUrlPrefix + m.path"><span class="url-prefix">{{ hitUrlPrefix }}</span>{{ m.path }}</span>
         <span class="c-status">{{ m.status }}</span>
         <span class="c-delay">{{ m.delay_ms ? m.delay_ms + ' ms' : '—' }}</span>
