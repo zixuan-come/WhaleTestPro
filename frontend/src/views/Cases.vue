@@ -1,9 +1,12 @@
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { listCases, createCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
+import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
+
+const auth = useAuthStore()
 
 const items = ref([])
 const interfaces = ref([])
@@ -49,12 +52,27 @@ async function load() {
     items.value = cs
     interfaces.value = ifs
     envs.value = es
+
+    // 恢复上次选的环境:如果记忆的 envId 还存在于当前项目的环境列表里,就选它;否则清空
+    const remembered = auth.getPreferredEnv(auth.currentProjectId)
+    if (remembered && es.some(e => String(e.id) === String(remembered))) {
+      selectedEnv.value = String(remembered)
+    } else if (remembered) {
+      // 记忆的环境被删了 → 清掉这条脏数据
+      auth.setPreferredEnv(auth.currentProjectId, null)
+      selectedEnv.value = ''
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
   }
 }
+
+// 用户手动切换 → 立刻持久化到当前项目名下
+watch(selectedEnv, (v) => {
+  auth.setPreferredEnv(auth.currentProjectId, v || null)
+})
 
 function openCreate() {
   form.name = ''
@@ -198,8 +216,8 @@ onMounted(load)
         <span class="c-tags">标签</span>
         <span class="c-act">操作</span>
       </div>
-      <div v-for="c in items" :key="c.id" class="row">
-        <span class="c-name"><span class="id">#{{ c.id }}</span>{{ c.name }}</span>
+      <div v-for="(c, i) in items" :key="c.id" class="row">
+        <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ c.name }}</span>
         <span class="c-iface" :title="ifaceLabel(c.interface_id)">{{ ifaceLabel(c.interface_id) }}</span>
         <span class="c-exp">{{ c.expected_status }}</span>
         <span class="c-tags">
@@ -230,7 +248,7 @@ onMounted(load)
         <label>关联接口</label>
         <select v-model="form.interface_id">
           <option value="" disabled>请选择接口</option>
-          <option v-for="it in interfaces" :key="it.id" :value="it.id">#{{ it.id }} {{ (it.method||'GET').toUpperCase() }} {{ it.name }}</option>
+          <option v-for="it in interfaces" :key="it.id" :value="it.id">{{ (it.method||'GET').toUpperCase() }} {{ it.name }}</option>
         </select>
       </div>
       <div class="field">

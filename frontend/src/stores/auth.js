@@ -11,6 +11,24 @@ export const useAuthStore = defineStore('auth', () => {
   const currentProjectId = ref(Number(localStorage.getItem('wtp_pid')) || null)
   const currentProjectName = ref(localStorage.getItem('wtp_pname') || '')
 
+  // 每个项目记住上次选的环境,跨会话保留("这个用例上次是在哪个环境跑的")
+  // 存成 {pid: envId} 的 JSON,localStorage 只放字符串所以用 parse/stringify
+  const preferredEnvByProject = ref(JSON.parse(localStorage.getItem('wtp_env_by_pid') || '{}'))
+
+  function setPreferredEnv(pid, envId) {
+    if (!pid) return
+    if (envId) {
+      preferredEnvByProject.value[pid] = envId
+    } else {
+      delete preferredEnvByProject.value[pid]
+    }
+    localStorage.setItem('wtp_env_by_pid', JSON.stringify(preferredEnvByProject.value))
+  }
+
+  function getPreferredEnv(pid) {
+    return preferredEnvByProject.value[pid] || ''
+  }
+
   function setAuth(tk, name) {
     token.value = tk
     username.value = name || ''
@@ -58,5 +76,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('wtp_user')
   }
 
-  return { token, username, currentProjectId, currentProjectName, setAuth, setProject, initProject, logout }
+  return { token, username, currentProjectId, currentProjectName, setAuth, setProject, initProject, logout, getPreferredEnv, setPreferredEnv }
 })
