@@ -12,13 +12,19 @@ from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
 import requests
 
 
-def _env_context(db, env_id):
+def _env_context(db, env_id, project_id):
     if env_id is None:
         return {}
-    env = env_repo.db_get(db, env_id)
+    env = env_repo.db_get(db, env_id, project_id)
     if env is None:
         return {}
     return {**(env.variables or {}), "base_url": env.base_url}
+
+
+def _full_url(interface_url, context):
+    path = render_deep(interface_url, context)
+    base = context.get("base_url", "")
+    return base.rstrip("/") + "/" + path.lstrip("/")
 
 
 def run_case(db, case_id, env_id, project_id):
@@ -30,7 +36,7 @@ def run_case(db, case_id, env_id, project_id):
     if interface is None:
         return {"error": "用例关联的接口不存在"}
 
-    base_ctx = _env_context(db, env_id)
+    base_ctx = _env_context(db, env_id, project_id)
     if case.datasets:
         result = [_run_with_retry(db, case, interface, {**base_ctx, **row}) for row in case.datasets]
         passed = all(r["passed"] for r in result)
@@ -43,7 +49,7 @@ def run_case(db, case_id, env_id, project_id):
 
 
 def run_chain(db, case_ids, env_id, project_id):
-    context = _env_context(db, env_id)
+    context = _env_context(db, env_id, project_id)
     results = []
     for case_id in case_ids:
         case = case_repo.db_get(db, case_id, project_id)
@@ -59,7 +65,7 @@ def run_chain(db, case_ids, env_id, project_id):
         try:
             response = _request(
                 interface,
-                url=render_deep(interface.url, context),
+                url=_full_url(interface.url, context),
                 headers=render_deep(interface.headers, context),
                 params=render_deep(interface.params, context),
                 json=render_deep(interface.body, context),
@@ -110,7 +116,7 @@ def _run_once(db, case, interface, context):
         run_sql(db, render_deep(case.setup_sql, context))
         response = _request(
             interface,
-            url=render_deep(interface.url, context),
+            url=_full_url(interface.url, context),
             headers=render_deep(interface.headers, context),
             params=render_deep(interface.params, context),
             json=render_deep(interface.body, context),
