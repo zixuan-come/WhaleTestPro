@@ -40,8 +40,9 @@ services:
     env_file: .env                            # 注入 SECRET_KEY
     environment:
       # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名
-      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
-      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow
+      # charset=utf8mb4：pymysql 默认不显式声明字符集，中文会双编码(mojibake)，必须显式加
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro?charset=utf8mb4
+      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow?charset=utf8mb4
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     ports:
@@ -61,8 +62,8 @@ services:
     command: celery -A app.core.celery_app worker -l info
     env_file: .env
     environment:
-      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro
-      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro?charset=utf8mb4
+      SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow?charset=utf8mb4
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     depends_on:
