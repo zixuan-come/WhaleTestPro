@@ -39,3 +39,40 @@ def db_delete(db: Session, interface_id: int, project_id: int):
     db.delete(db_interface)
     db.commit()
     return db_interface
+
+
+def db_update(db:Session, interface_id: int, project_id: int, patch):
+    db_interface = db.query(Interface).filter(
+        Interface.id == interface_id,
+        Interface.project_id == project_id,
+    ).first()
+    if db_interface is None:
+        return None
+    for k, v in patch.model_dump().items():
+        setattr(db_interface, k, v)
+    db.commit()
+    db.refresh(db_interface)
+    return db_interface
+
+
+def db_rename_category(db: Session, project_id: int, old_name: str, new_name: str):
+    # bulk UPDATE:一次 SQL 改所有匹配的接口,不循环查改
+    count = db.query(Interface).filter(
+        Interface.project_id == project_id,
+        Interface.category == old_name,
+    ).update({Interface.category: new_name})
+    db.commit()
+    return count
+
+
+def db_delete_category(db: Session, project_id: int, name: str):
+    # 删除分类 = 把所有引用的接口 category 置 NULL(接口本身不删)
+    count = db.query(Interface).filter(
+        Interface.project_id == project_id,
+        Interface.category == name,
+    ).update({Interface.category: None})
+    db.commit()
+    return count
+
+
+

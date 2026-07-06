@@ -19,3 +19,17 @@ def s_list(db: Session, project_id: int):
 
 def s_delete(db: Session, interface_id: int, project_id: int):
     return api_repo.db_delete(db, interface_id, project_id)
+
+
+def s_update(db: Session, interface_id: int, project_id: int, patch):
+    return api_repo.db_update(db, interface_id, project_id, patch)
+
+
+def s_rename_category(db: Session, project_id: int, old_name: str, new_name: str):
+    return api_repo.db_rename_category(db, project_id, old_name, new_name)
+
+
+def s_delete_category(db: Session, project_id: int, name: str):
+    return api_repo.db_delete_category(db, project_id, name)
+
+

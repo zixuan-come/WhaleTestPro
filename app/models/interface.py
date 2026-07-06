@@ -12,6 +12,7 @@ class Interface(Base):
     headers = Column(JSON, nullable=True)
     params = Column(JSON, nullable=True)
     body = Column(JSON, nullable=True)
+    category = Column(String(50), nullable=True)
     # 多项目:每条接口必须归属某个 project,期二迁移已把旧数据全塞到 id=1
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
