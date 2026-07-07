@@ -1,11 +1,15 @@
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   listPerfTasks, createPerfTask, deletePerfTask, runPerfTask,
 } from '../api/perf'
+import { listInterfaces } from '../api/interface'
+import { listEnvironments } from '../api/environment'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
+const interfaces = ref([])
+const envs = ref([])
 const loading = ref(true)
 const error = ref('')
 
@@ -13,7 +17,7 @@ const showModal = ref(false)
 const saving = ref(false)
 const formErr = ref('')
 const runningId = ref(null)      // 正在触发运行的任务 id
-const form = reactive({ name: '', target_host: '', target_path: '', users: 10, spawn_rate: 2, duration: 30 })
+const form = reactive({ name: '', interface_id: '', env_id: '', target_host: '', target_path: '', users: 10, spawn_rate: 2, duration: 30 })
 
 const total = computed(() => items.value.length)
 const runningCount = computed(() => items.value.filter(t => t.status === 'running').length)
@@ -39,7 +43,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    items.value = await listPerfTasks()
+    const [tasks, ifs, es] = await Promise.all([listPerfTasks(), listInterfaces(), listEnvironments()])
+    items.value = tasks
+    interfaces.value = ifs
+    envs.value = es
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -49,6 +56,8 @@ async function load() {
 
 function openCreate() {
   form.name = ''
+  form.interface_id = ''
+  form.env_id = ''
   form.target_host = ''
   form.target_path = ''
   form.users = 10
@@ -56,6 +65,21 @@ function openCreate() {
   form.duration = 30
   formErr.value = ''
   showModal.value = true
+}
+
+// 选接口 → 自动带出目标路径(接口 url 只是路径,host 由环境补)
+function onPickInterface() {
+  const it = interfaces.value.find(i => i.id === form.interface_id)
+  if (!it) return
+  form.target_path = it.url || ''
+  if (!form.name.trim()) form.name = `${it.name} 压测`
+}
+
+// 选环境 → 自动带出目标 Host(环境 base_url)
+function onPickEnv() {
+  const e = envs.value.find(x => x.id === form.env_id)
+  if (!e) return
+  form.target_host = e.base_url || ''
 }
 
 function closeModal() {
@@ -115,7 +139,17 @@ async function onDelete(task) {
   }
 }
 
+// 有任务在 running 时轮询静默刷新,让 running→done + 指标自动更新,不用手动刷新页面
+let pollTimer = null
+async function refresh() {
+  try { items.value = await listPerfTasks() } catch { /* 轮询失败静默,下轮再试 */ }
+}
+function startPoll() { if (!pollTimer) pollTimer = setInterval(refresh, 3000) }
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+watch(runningCount, (n) => { n > 0 ? startPoll() : stopPoll() })
+
 onMounted(load)
+onUnmounted(stopPoll)
 </script>
 
 <template>
@@ -129,10 +163,16 @@ onMounted(load)
   <div class="panel">
     <div class="panel-head">
       压测任务
-      <button class="btn btn-primary" @click="openCreate">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-        新建压测
-      </button>
+      <div class="head-actions">
+        <a class="btn btn-ghost mon" href="http://localhost:8089" target="_blank" rel="noopener"
+           title="Locust 实时监控:RPS/响应时间曲线、P50/P95/P99、各请求明细">Locust 实时</a>
+        <a class="btn btn-ghost mon" href="http://localhost:3000" target="_blank" rel="noopener"
+           title="Grafana 看板:压测指标时序曲线">Grafana</a>
+        <button class="btn btn-primary" @click="openCreate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
+          新建压测
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="state">加载中…</div>
@@ -178,6 +218,22 @@ onMounted(load)
     <div class="field">
       <label>任务名称</label>
       <input v-model="form.name" placeholder="如:下单接口 200 并发" />
+    </div>
+    <div class="grid2 pick">
+      <div class="field">
+        <label>从接口选择 <span class="opt">(可选,自动填路径)</span></label>
+        <select v-model.number="form.interface_id" @change="onPickInterface">
+          <option value="">— 手动填写 —</option>
+          <option v-for="it in interfaces" :key="it.id" :value="it.id">{{ it.name }} · {{ it.method }} {{ it.url }}</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>从环境选择 <span class="opt">(可选,自动填 Host)</span></label>
+        <select v-model.number="form.env_id" @change="onPickEnv">
+          <option value="">— 手动填写 —</option>
+          <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }} · {{ e.base_url }}</option>
+        </select>
+      </div>
     </div>
     <div class="grid2">
       <div class="field">
@@ -250,6 +306,9 @@ onMounted(load)
 .state.err { color:var(--fail-fg); }
 .retry { margin-left:12px; }
 
+.head-actions { display:flex; align-items:center; gap:8px; }
+.head-actions .mon { text-decoration:none; font-size:12.5px; }
+
 /* ===== 弹层 ===== */
 .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
@@ -259,6 +318,14 @@ onMounted(load)
   background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
   transition:border-color .15s; font-family:inherit; }
 .field input:focus { outline:none; border-color:var(--primary); }
+.field select { width:100%; height:38px; padding:0 10px; font-size:13px; color:var(--text);
+  background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+  transition:border-color .15s; font-family:inherit; cursor:pointer; }
+.field select:focus { outline:none; border-color:var(--primary); }
+.field label .opt { color:var(--text-muted); font-weight:400; font-size:11.5px; }
+.pick { padding:12px 14px; margin-bottom:18px; background:var(--surface-2);
+  border:1px dashed var(--border); border-radius:10px; }
+.pick .field { margin-bottom:0; }
 
 .form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
 
