@@ -24,7 +24,7 @@ const navGroups = [
       { to: '/cases', text: '测试用例', icon: 'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },
       { to: '/orchestration', text: '场景编排', icon: 'M4 6h4v4H4zM16 6h4v4h-4zM10 14h4v4h-4zM8 8h8M12 10v4' },
       { to: '/reports', text: '测试报告', icon: 'M9 17V9m4 8V5m4 12v-6 M4 20h16' },
-      { to: '/regression', text: '回归执行', icon: 'M21 12a9 9 0 11-3-6.7M21 3v5h-5' },
+      { to: '/regression', text: '回归测试', icon: 'M21 12a9 9 0 11-3-6.7M21 3v5h-5' },
       { to: '/traffic', text: '流量回放', icon: 'M5 3l14 9-14 9V3z' },
     ],
   },

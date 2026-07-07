@@ -18,7 +18,7 @@ const routes = [
       { path: 'traffic', name: 'traffic', component: () => import('../views/Traffic.vue'), meta: { title: '流量回放', crumb: '接口测试 / 流量回放' } },
       { path: 'perf', name: 'perf', component: () => import('../views/Perf.vue'), meta: { title: '压测监控', crumb: '运维 / 压测' } },
       { path: 'environments', name: 'environments', component: () => import('../views/Environments.vue'), meta: { title: '环境管理', crumb: '运维 / 环境' } },
-      { path: 'regression', name: 'regression', component: () => import('../views/Regression.vue'), meta: { title: '回归执行', crumb: '接口测试 / 回归门禁' } },
+      { path: 'regression', name: 'regression', component: () => import('../views/Regression.vue'), meta: { title: '回归测试', crumb: '接口测试 / 回归测试' } },
       { path: 'mocks', name: 'mocks', component: () => import('../views/Mocks.vue'), meta: { title: 'Mock 挡板', crumb: '运维 / 挡板服务' } },
       { path: 'schedules', name: 'schedules', component: () => import('../views/Schedules.vue'), meta: { title: '定时调度', crumb: '运维 / 定时任务' } },
     ],

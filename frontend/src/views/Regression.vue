@@ -31,7 +31,7 @@ async function onRun() {
       notify: notify.value,
     })
   } catch (e) {
-    error.value = e.message || '回归执行失败'
+    error.value = e.message || '回归失败'
   } finally {
     running.value = false
   }
@@ -42,7 +42,7 @@ onMounted(loadEnvs)
 
 <template>
   <div class="panel run-panel">
-    <div class="panel-head">回归执行</div>
+    <div class="panel-head">回归测试</div>
     <div class="run-body">
       <p class="hint">不填标签则跑全部用例;填标签只跑带该标签的用例。回归会统计通过率与接口覆盖率,并可选飞书通知。</p>
       <div class="controls">
