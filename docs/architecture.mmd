@@ -1,0 +1,62 @@
+flowchart TB
+    User(["用户浏览器"])
+
+    subgraph FE["前端 · Vue 3 SPA"]
+      Vue["Vue3 + Pinia + Vue Router<br/>Vite 构建 · hash 路由"]
+    end
+
+    subgraph APP["后端 · FastAPI 应用 (宿主 :8001 → 容器 :8000)"]
+      direction TB
+      Router["routers 路由层<br/>14 个资源路由"]
+      Service["services 服务层<br/>业务编排 / 执行引擎"]
+      Repo["repositories 仓储层<br/>project_id 多租户过滤"]
+      Model["models + schemas<br/>SQLAlchemy ORM"]
+      Core["core 横切层<br/>JWT 鉴权 · 限流 · 熔断 · 断言<br/>飞书通知 · 影子隔离 · /metrics"]
+      Router --> Service --> Repo --> Model
+      Core -.-> Router
+    end
+
+    subgraph DATA["数据层 · MySQL 8.0"]
+      Main[("主库 whale_test_pro")]
+      Shadow[("影子库 _shadow")]
+    end
+
+    subgraph ASYNC["异步任务"]
+      MQ[["RabbitMQ<br/>Celery Broker"]]
+      Worker["Celery Worker<br/>run_case / run_chain<br/>run_regression / run_perf"]
+      Beat["Celery Beat · RedBeat<br/>定时回归调度"]
+    end
+
+    Redis[("Redis 7<br/>RedBeat 存储 + 压测 target 广播")]
+
+    subgraph PERF["压测 · Locust"]
+      LMaster["locust-master :8089<br/>/swarm API + Web UI"]
+      LWorker["locust-worker ×N"]
+    end
+
+    subgraph OBS["监控"]
+      Prom["Prometheus :9090"]
+      Graf["Grafana :3000"]
+    end
+
+    Feishu{{"飞书 webhook"}}
+    CI[["GitHub Actions CI"]]
+
+    User --> Vue
+    Vue -->|"HTTP REST · JWT + X-Project-Id"| Router
+    Model --> Main
+    Model --> Shadow
+    Service -->|"派发任务"| MQ
+    MQ --> Worker
+    Beat -->|"到点触发回归"| MQ
+    Beat <-->|"调度存储"| Redis
+    Worker --> Main
+    Worker --> Shadow
+    Worker -->|"POST /swarm"| LMaster
+    Worker -->|"写 target_path"| Redis
+    LMaster -->|"读 target_path 广播"| Redis
+    LMaster --> LWorker
+    Prom -->|"抓取 /metrics"| APP
+    Graf --> Prom
+    Service -.->|"回归结果推送"| Feishu
+    CI -.->|"push 触发 pytest"| APP
