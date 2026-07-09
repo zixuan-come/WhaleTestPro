@@ -100,6 +100,14 @@ services:
       - prometheus
     networks: [whale]
 
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"                             # 浏览器访问 http://localhost:8080;Nginx 反代 /api 到 app:8000
+    depends_on:
+      - app
+    networks: [whale]
+
   locust-master:
     build: .
     command: locust -f locustfile.py --master
