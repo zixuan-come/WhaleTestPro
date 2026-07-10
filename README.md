@@ -102,7 +102,7 @@ flowchart TB
 
 ### 方式一:Docker Compose(推荐)
 
-一键拉起 MySQL、Redis、RabbitMQ、后端、Celery Worker、Prometheus、Grafana、Locust。
+一条命令拉起整套:前端(Nginx)、后端、MySQL、Redis、RabbitMQ、Celery Worker、Prometheus、Grafana、Locust。
 
 1. 在项目根准备 `.env`:
 
@@ -114,21 +114,17 @@ flowchart TB
    FEISHU_WEBHOOK=可选,回归结果推送用
    ```
 
-2. 启动后端与基础设施:
+2. 一键启动:
 
    ```bash
    docker compose up -d --build
    ```
 
-3. 启动前端(开发模式,`/api` 自动代理到后端 8001):
-
-   ```bash
-   cd frontend
-   npm install
-   npm run dev        # http://localhost:5173
-   ```
+3. 打开浏览器访问 **http://localhost:8080** —— 即完整平台。前端由 Nginx 托管打包产物,`/api` 反代到后端容器,无需单独起前端。
 
 > 后端首次启动会自动 `create_all` 建表(主库 + 影子库),无需手动初始化。
+
+> 前端热开发(可选):改前端代码想热更新时,可另起 vite dev server —— `cd frontend && npm install && npm run dev`(http://localhost:5173,`/api` 经 vite 代理到后端 8001)。日常部署/演示走 8080 的 Nginx 容器即可。
 
 ### 方式二:本地起后端(不走 Docker)
 
@@ -146,8 +142,9 @@ celery -A app.core.celery_app worker -l info     # 另开终端:Celery Worker
 
 | 服务 | 地址 |
 |------|------|
+| 前端(Nginx 容器)| http://localhost:8080 |
 | 后端 API / Swagger | http://localhost:8001/docs |
-| 前端(dev)| http://localhost:5173 |
+| 前端(vite dev,可选)| http://localhost:5173 |
 | RabbitMQ 管理台 | http://localhost:15672 |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 |
@@ -164,7 +161,7 @@ celery -A app.core.celery_app worker -l info     # 另开终端:Celery Worker
 │   ├── schemas/        # Pydantic 模型
 │   ├── tasks/          # Celery 异步任务
 │   └── core/           # 横切:鉴权 / 限流 / 熔断 / 断言 / 通知 / 调度 / 影子
-├── frontend/           # 前端 Vue 3 + Vite
+├── frontend/           # 前端 Vue 3 + Vite(含 Dockerfile + nginx.conf 容器化)
 ├── migrations/         # 增量 SQL 迁移
 ├── tests/              # pytest 单测
 ├── docker/             # Prometheus / Grafana 配置
