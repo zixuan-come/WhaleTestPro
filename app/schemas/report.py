@@ -10,5 +10,16 @@ class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReportPage(BaseModel):
+    items: list[ReportOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    passed_count: int
+    failed_count: int
+    pass_rate: float
+
+
 
 

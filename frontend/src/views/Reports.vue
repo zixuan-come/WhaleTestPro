@@ -4,14 +4,20 @@ import { listReports } from '../api/report'
 import { formatShanghaiDateTime } from '../utils/time'
 
 const items = ref([])
+const page = ref(1)
+const pageSize = ref(20)
+const totalPages = ref(0)
+const reportTotal = ref(0)
+const passedTotal = ref(0)
+const failedTotal = ref(0)
+const passRateTotal = ref(0)
 const loading = ref(true)
 const error = ref('')
 const openId = ref(null)   // 当前展开查看 detail 的报告 id
 
-const total = computed(() => items.value.length)
-const passCount = computed(() => items.value.filter(r => r.passed).length)
-const failCount = computed(() => items.value.filter(r => !r.passed).length)
-const passRate = computed(() => total.value ? Math.round(passCount.value / total.value * 100) : 0)
+const pageStart = computed(() => reportTotal.value ? (page.value - 1) * pageSize.value + 1 : 0)
+const pageEnd = computed(() => Math.min(page.value * pageSize.value, reportTotal.value))
+const passRate = computed(() => Math.round(passRateTotal.value * 100))
 
 
 function fmtDetail(v) {
@@ -23,11 +29,19 @@ function toggle(id) {
   openId.value = openId.value === id ? null : id
 }
 
-async function load() {
+async function load(targetPage = page.value) {
   loading.value = true
   error.value = ''
   try {
-    items.value = await listReports()
+    const data = await listReports(targetPage, pageSize.value)
+    items.value = data.items
+    page.value = data.page
+    totalPages.value = data.total_pages
+    reportTotal.value = data.total
+    passedTotal.value = data.passed_count
+    failedTotal.value = data.failed_count
+    passRateTotal.value = data.pass_rate
+    openId.value = null
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -35,21 +49,31 @@ async function load() {
   }
 }
 
+function changePage(targetPage) {
+  if (targetPage < 1 || targetPage > totalPages.value || targetPage === page.value) return
+  load(targetPage)
+}
+
+function changePageSize() {
+  page.value = 1
+  load(1)
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div class="cards">
-    <div class="card"><div class="k">报告总数</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">通过</div><div class="v pass">{{ passCount }}</div></div>
-    <div class="card"><div class="k">失败</div><div class="v fail">{{ failCount }}</div></div>
+    <div class="card"><div class="k">报告总数</div><div class="v pri">{{ reportTotal }}</div></div>
+    <div class="card"><div class="k">通过</div><div class="v pass">{{ passedTotal }}</div></div>
+    <div class="card"><div class="k">失败</div><div class="v fail">{{ failedTotal }}</div></div>
     <div class="card"><div class="k">通过率</div><div class="v">{{ passRate }}<span class="unit">%</span></div></div>
   </div>
 
   <div class="panel">
     <div class="panel-head">
       测试报告
-      <span class="count">共 {{ total }} 条</span>
+      <span class="count">共 {{ reportTotal }} 条</span>
     </div>
 
     <div v-if="loading" class="state">加载中…</div>
@@ -57,7 +81,9 @@ onMounted(load)
       {{ error }}
       <button class="btn btn-ghost retry" @click="load">重试</button>
     </div>
-    <div v-else-if="!items.length" class="state">暂无报告,跑一次用例后这里会出现执行结果</div>
+    <div v-else-if="!items.length" class="state">
+      {{ reportTotal ? '当前页暂无报告' : '暂无报告,跑一次用例后这里会出现执行结果' }}
+    </div>
 
     <template v-else>
       <div class="row head">
@@ -74,7 +100,7 @@ onMounted(load)
             </span>
           </span>
           <span class="c-name">
-            <span class="id">#{{ i + 1 }}</span>用例 {{ r.case_id }}
+            <span class="id">#{{ pageStart + i }}</span>用例 {{ r.case_id }}
           </span>
           <span class="c-time">{{ formatShanghaiDateTime(r.created_at) }}</span>
           <span class="c-act">
@@ -88,6 +114,21 @@ onMounted(load)
         </div>
       </template>
     </template>
+
+    <div v-if="reportTotal" class="pagination">
+      <span class="page-summary">显示 {{ pageStart }}-{{ pageEnd }} 条</span>
+      <label class="page-size">每页
+        <select v-model.number="pageSize" @change="changePageSize">
+          <option :value="10">10</option>
+          <option :value="20">20</option>
+          <option :value="50">50</option>
+          <option :value="100">100</option>
+        </select>
+      </label>
+      <button class="btn btn-ghost btn-sm" :disabled="loading || page <= 1" @click="changePage(page - 1)">上一页</button>
+      <span class="page-number">{{ page }} / {{ totalPages }}</span>
+      <button class="btn btn-ghost btn-sm" :disabled="loading || page >= totalPages" @click="changePage(page + 1)">下一页</button>
+    </div>
   </div>
 </template>
 
@@ -126,6 +167,10 @@ onMounted(load)
 .state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
 .state.err { color:var(--fail-fg); }
 .retry { margin-left:12px; }
+.pagination { display:flex; align-items:center; justify-content:flex-end; gap:12px; padding:14px 20px; border-top:1px solid var(--border); color:var(--text-muted); font-size:12px; }
+.page-size { display:flex; align-items:center; gap:6px; }
+.page-size select { height:30px; padding:0 8px; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:6px; font:inherit; }
+.page-number { min-width:52px; text-align:center; color:var(--text); font-weight:600; }
 
 /* ===== 响应式 ===== */
 @media (max-width:1100px) {
@@ -135,5 +180,7 @@ onMounted(load)
   .cards { grid-template-columns:1fr; gap:12px; }
   .row { grid-template-columns:80px 1fr 44px; gap:8px; padding:12px 14px; }
   .c-time { display:none; }
+  .pagination { flex-wrap:wrap; justify-content:center; padding:12px 14px; }
+  .page-summary { width:100%; text-align:center; }
 }
 </style>

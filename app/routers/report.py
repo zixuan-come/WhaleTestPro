@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.report import ReportOut
+from app.schemas.report import ReportOut, ReportPage
 from app.services import report as report_service
 from app.core.deps import get_current_project
 from app.models.project import Project
@@ -21,9 +21,11 @@ def get_report(
     return r
 
 
-@router.get("", response_model=list[ReportOut])
+@router.get("", response_model=ReportPage)
 def list_report(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return report_service.s_list(db, current_project.id)
+    return report_service.s_page(db, current_project.id, page, page_size)

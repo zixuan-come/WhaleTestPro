@@ -17,7 +17,20 @@ def db_get(db: Session, report_id: int, project_id: int):
     ).first()
 
 
-def db_list(db: Session, project_id: int):
-    return db.query(TestReport).filter(
-        TestReport.project_id == project_id,
-    ).order_by(TestReport.id.desc()).all()
+def db_page(db: Session, project_id: int, offset: int, limit: int):
+    base_query = db.query(TestReport).filter(TestReport.project_id == project_id)
+    reports = (
+        base_query.order_by(TestReport.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    total = base_query.count()
+    passed_count = base_query.filter(TestReport.passed.is_(True)).count()
+
+    return {
+        "items": reports,
+        "total": total,
+        "passed_count": passed_count,
+        "failed_count": total - passed_count,
+    }
