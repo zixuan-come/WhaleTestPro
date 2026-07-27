@@ -5,6 +5,7 @@
 services:
   mysql:
     image: mysql:8.0
+    restart: unless-stopped
     # 8.0 用原生密码插件，省得 pymysql 再依赖 cryptography 做 sha2 握手
     command: --default-authentication-plugin=mysql_native_password
     environment:
@@ -21,10 +22,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     networks: [whale]
 
   rabbitmq:
     image: rabbitmq:3-management
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -37,6 +40,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     env_file: .env                            # 注入 SECRET_KEY
     environment:
       # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名
@@ -58,6 +62,7 @@ services:
 
   worker:
     build: .
+    restart: unless-stopped
     # Linux 容器里 prefork 正常，不用 Windows 的 --pool=solo
     command: celery -A app.core.celery_app worker -l info
     env_file: .env
@@ -77,6 +82,7 @@ services:
 
   prometheus:
     image: prom/prometheus
+    restart: unless-stopped
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
@@ -87,6 +93,7 @@ services:
 
   grafana:
     image: grafana/grafana
+    restart: unless-stopped
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"       # 匿名免登录，演示方便
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -102,6 +109,7 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "8080:80"                             # 浏览器访问 http://localhost:8080;Nginx 反代 /api 到 app:8000
     depends_on:
@@ -110,6 +118,7 @@ services:
 
   locust-master:
     build: .
+    restart: unless-stopped
     command: locust -f locustfile.py --master
     environment:
       # 指向宿主机的本地 Redis（和本地 celery worker 写入的是同一个），读 path 广播给 worker
@@ -120,6 +129,7 @@ services:
 
   locust-worker:
     build: .
+    restart: unless-stopped
     # 连主控：主从走 5557，同 whale 网络内网互通，不用发布端口
     command: locust -f locustfile.py --worker --master-host locust-master
     depends_on:
