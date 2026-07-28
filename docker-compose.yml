@@ -13,6 +13,7 @@ services:
       MYSQL_DATABASE: whale_test_pro          # 容器首次启动自动建库，省得手动 create database
     volumes:
       - mysql-data:/var/lib/mysql             # 命名卷持久化数据，容器删了数据还在
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:                              # 让 app/worker 等 MySQL 真正就绪再启动
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
