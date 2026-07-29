@@ -122,8 +122,11 @@ services:
     restart: unless-stopped
     command: locust -f locustfile.py --master
     environment:
-      # 指向宿主机的本地 Redis（和本地 celery worker 写入的是同一个），读 path 广播给 worker
-      REDIS_URL: redis://host.docker.internal:6379/0
+      # 与 Celery Worker 共用 Compose Redis，读取任务写入的目标路径
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_started
     ports:
       - "8089:8089"                           # web UI + API：s_run POST /swarm、人也能开浏览器看
     networks: [whale]
