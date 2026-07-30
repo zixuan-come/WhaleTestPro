@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { listReports } from '../api/report'
+import { formatShanghaiDateTime } from '../utils/time'
 
 const items = ref([])
 const loading = ref(true)
@@ -12,12 +13,6 @@ const passCount = computed(() => items.value.filter(r => r.passed).length)
 const failCount = computed(() => items.value.filter(r => !r.passed).length)
 const passRate = computed(() => total.value ? Math.round(passCount.value / total.value * 100) : 0)
 
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
 
 function fmtDetail(v) {
   if (v == null) return '无明细'
@@ -81,7 +76,7 @@ onMounted(load)
           <span class="c-name">
             <span class="id">#{{ i + 1 }}</span>用例 {{ r.case_id }}
           </span>
-          <span class="c-time">{{ fmtTime(r.created_at) }}</span>
+          <span class="c-time">{{ formatShanghaiDateTime(r.created_at) }}</span>
           <span class="c-act">
             <svg class="chev" :class="{ up: openId === r.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M6 9l6 6 6-6" />
