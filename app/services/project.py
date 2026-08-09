@@ -3,8 +3,8 @@ from app.repositories import project as project_repo
 from app.schemas.project import ProjectCreate
 
 
-def s_create(db: Session, project: ProjectCreate):
-    return project_repo.db_create(db, project)
+def s_create(db: Session, project: ProjectCreate, owner_id: int):
+    return project_repo.db_create(db, project, owner_id)
 
 
 def s_get(db: Session, project_id: int):

@@ -1,11 +1,22 @@
 from sqlalchemy.orm import Session
 from app.models.project import Project
 from app.schemas.project import ProjectCreate
+from app.models.project_member import ProjectMember, ProjectRole
 
 
-def db_create(db: Session, project: ProjectCreate) -> Project:
+def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
     db_project = Project(**project.model_dump())
     db.add(db_project)
+
+    db.flush()
+
+    db_member = ProjectMember(
+        project_id=db_project.id,
+        user_id=owner_id,
+        role=ProjectRole.OWNER.value,
+    )
+    db.add(db_member)
+
     db.commit()
     db.refresh(db_project)
     return db_project

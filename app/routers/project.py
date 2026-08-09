@@ -20,7 +20,7 @@ def create_project(
     # unique=True 冲突时数据库抛 IntegrityError,catch 后转成 409 Conflict
     # 不 catch 的话前端拿到 500,看不出是"重名"还是"服务真挂了"
     try:
-        return project_service.s_create(db, project)
+        return project_service.s_create(db, project, current_user.id)
     except IntegrityError:
         db.rollback()  # 失败事务必须回滚,否则同一 session 后续查询都会报错
         raise HTTPException(status_code=409, detail=f"项目名 '{project.name}' 已存在")

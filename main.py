@@ -18,7 +18,8 @@ from app.routers import traffic_replay as traffic_replay_router
 from app.routers import project as project_router
 from app.routers import scenario as scenario_router
 
-from app.database import Base, engine, engine_shadow
+from app.database import Base, engine, engine_shadow, SessionLocal
+from app.core.bootstrap import backfill_legacy_project_owners
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
@@ -36,10 +37,14 @@ import app.models.demo_order
 import app.models.traffic_record
 import app.models.project
 import app.models.scenario
+import app.models.project_member
 
 
 Base.metadata.create_all(bind=engine)
 Base.metadata.create_all(bind=engine_shadow)
+
+with SessionLocal() as db:
+    backfill_legacy_project_owners(db)
 
 # 录制采样最简形式：不录这些"自身"接口（否则录制接口自己也被录、还会污染统计）
 # 多项目改造:公共接口(auth/projects)没有 pid 上下文,不录制反而更干净
