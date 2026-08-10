@@ -7,12 +7,12 @@ def s_create(db: Session, project: ProjectCreate, owner_id: int):
     return project_repo.db_create(db, project, owner_id)
 
 
-def s_get(db: Session, project_id: int):
-    return project_repo.db_get(db, project_id)
+def s_get(db: Session, project_id: int, user_id: int):
+    return project_repo.db_get_for_user(db, project_id, user_id)
 
 
-def s_list(db: Session):
-    return project_repo.db_list(db)
+def s_list(db: Session, user_id: int):
+    return project_repo.db_list_for_user(db, user_id)
 
 
 def s_delete(db: Session, project_id: int):

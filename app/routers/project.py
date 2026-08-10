@@ -31,7 +31,7 @@ def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return project_service.s_list(db)
+    return project_service.s_list(db, current_user.id)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -40,7 +40,7 @@ def get_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    p = project_service.s_get(db, project_id)
+    p = project_service.s_get(db, project_id, current_user.id)
     # Repository 查不到返 None,Router 层转成 404
     # 不转的话 response_model 会拿 None 去校验 → Pydantic 失败 → 崩 500
     if p is None:

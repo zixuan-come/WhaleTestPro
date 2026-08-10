@@ -8,6 +8,7 @@ from app.repositories import project as project_repo
 from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
+from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -50,12 +51,17 @@ def login_rate_limit(request: Request):
 def get_current_project(
     x_project_id: int = Header(..., alias="X-Project-Id"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Project:
     """
     多项目依赖:从 HTTP header X-Project-Id 读当前项目,校验存在后返回 Project 对象。
     router 里一句 Depends(get_current_project) 就能拿到当前 project,项目不存在自动 404。
     """
-    project = project_repo.db_get(db, x_project_id)
+    project = project_repo.db_get_for_user(
+        db,
+        x_project_id,
+        current_user.id,
+    )
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

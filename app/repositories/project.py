@@ -26,9 +26,23 @@ def db_get(db: Session, project_id: int) -> Project | None:
     return db.query(Project).filter(Project.id == project_id).first()
 
 
+def db_get_for_user(db: Session, project_id: int, user_id: int) -> Project | None:
+    query = db.query(Project)
+    query = query.join(ProjectMember, ProjectMember.project_id == Project.id)
+    query = query.filter(Project.id == project_id, ProjectMember.user_id == user_id)
+    return query.first()
+
+
 def db_list(db: Session) -> list[Project]:
     # 按 created_at 倒序:刚建的项目排在最前面,顶部下拉体验更好
     return db.query(Project).order_by(Project.created_at.desc()).all()
+
+
+def db_list_for_user(db: Session, user_id: int) -> list[Project]:
+    query = db.query(Project)
+    query = query.join(ProjectMember, ProjectMember.project_id == Project.id)
+    query = query.filter(ProjectMember.user_id == user_id)
+    return query.order_by(Project.created_at.desc()).all()
 
 
 def db_delete(db: Session, project_id: int) -> Project | None:
