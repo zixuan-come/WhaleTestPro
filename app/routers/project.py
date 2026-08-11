@@ -5,7 +5,8 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.services import project as project_service
-from app.core.deps import get_current_user
+from app.core.deps import get_current_project_owner, get_current_user
+from app.models.project import Project
 from app.models.user import User
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -52,9 +53,9 @@ def get_project(
 def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_project: Project = Depends(get_current_project_owner),
 ):
-    p = project_service.s_delete(db, project_id)
+    p = project_service.s_delete(db, current_project.id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在")
     return p

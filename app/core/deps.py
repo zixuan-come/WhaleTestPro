@@ -5,6 +5,8 @@ from app.database import get_db
 from app.core.security import decode_access_token
 from app.repositories import user as user_repo
 from app.repositories import project as project_repo
+from app.repositories import project_member as project_member_repo
+from app.models.project_member import ProjectRole
 from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
@@ -69,5 +71,30 @@ def get_current_project(
         )
     return project
 
+
+def get_current_project_owner(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Project:
+    membership = project_member_repo.db_get(
+        db,
+        project_id,
+        current_user.id,
+    )
+
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"项目 id={project_id} 不存在或无权访问",
+        )
+
+    if membership.role != ProjectRole.OWNER.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有项目所有者可以执行此操作",
+        )
+
+    return membership.project
 
 
