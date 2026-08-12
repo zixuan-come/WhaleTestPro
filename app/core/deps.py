@@ -6,7 +6,7 @@ from app.core.security import decode_access_token
 from app.repositories import user as user_repo
 from app.repositories import project as project_repo
 from app.repositories import project_member as project_member_repo
-from app.models.project_member import ProjectRole
+from app.models.project_member import ProjectMember, ProjectRole
 from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
@@ -72,11 +72,11 @@ def get_current_project(
     return project
 
 
-def get_current_project_owner(
+def get_current_project_member(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Project:
+) -> ProjectMember:
     membership = project_member_repo.db_get(
         db,
         project_id,
@@ -89,6 +89,27 @@ def get_current_project_owner(
             detail=f"项目 id={project_id} 不存在或无权访问",
         )
 
+    return membership
+
+
+def get_current_project_admin_or_owner(
+    membership: ProjectMember = Depends(get_current_project_member),
+) -> ProjectMember:
+    if membership.role not in (
+        ProjectRole.OWNER.value,
+        ProjectRole.ADMIN.value,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有项目所有者或管理员可以管理项目成员",
+        )
+
+    return membership
+
+
+def get_current_project_owner(
+    membership: ProjectMember = Depends(get_current_project_member),
+) -> Project:
     if membership.role != ProjectRole.OWNER.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -96,5 +117,3 @@ def get_current_project_owner(
         )
 
     return membership.project
-
-
