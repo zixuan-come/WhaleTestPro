@@ -6,10 +6,10 @@ from app.core.response_diff import diff_response
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"  # 不指定环境就打回本机（录的就是本机接口）
 
 
-def _base_url(db, env_id):
+def _base_url(db, env_id, project_id):
     if env_id is None:
         return DEFAULT_BASE_URL
-    env = env_repo.db_get(db, env_id)
+    env = env_repo.db_get(db, env_id, project_id)
     return env.base_url if env else DEFAULT_BASE_URL
 
 
@@ -21,12 +21,12 @@ def _safe_json(response):
         return None
 
 
-def s_replay(db, record_id, env_id=None, field_rules=None):
-    record = traffic_record_repo.db_get(db, record_id)
+def s_replay(db, record_id, project_id, env_id=None, field_rules=None):
+    record = traffic_record_repo.db_get(db, record_id, project_id)
     if record is None:
         return None
 
-    url = _base_url(db, env_id).rstrip("/") + record.path
+    url = _base_url(db, env_id, project_id).rstrip("/") + record.path
     # 重放只带 X-Shadow:1（写操作落影子库零污染，复用 #17）；body 用 json= 让 requests
     # 自动设 Content-Type/content-length。不原样带录制的 headers：host 是录制时的会错、
     # content-length 跟新 body 不一定符、鉴权头已脱敏成 *** 带过去也没用
