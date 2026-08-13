@@ -21,5 +21,12 @@ def s_list(db: Session, project_id: int):
     return case_repo.db_list(db, project_id)
 
 
+def s_update(db: Session, case_id: int, case, project_id: int):
+    interface = interface_repo.db_get(db, case.interface_id, project_id)
+    if interface is None:
+        return None
+    return case_repo.db_update(db, case_id, case, project_id)
+
+
 def s_delete(db: Session, case_id: int, project_id: int):
     return case_repo.db_delete(db, case_id, project_id)

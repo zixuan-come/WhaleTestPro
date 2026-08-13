@@ -21,6 +21,22 @@ def db_list(db: Session, project_id: int):
     return db.query(Case).filter(Case.project_id == project_id).all()
 
 
+def db_update(db: Session, case_id: int, case, project_id: int):
+    db_case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.project_id == project_id,
+    ).first()
+    if db_case is None:
+        return None
+
+    for key, value in case.model_dump().items():
+        setattr(db_case, key, value)
+
+    db.commit()
+    db.refresh(db_case)
+    return db_case
+
+
 def db_delete(db: Session, case_id: int, project_id: int):
     db_case = db.query(Case).filter(
         Case.id == case_id,

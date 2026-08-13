@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { listCases, createCase, deleteCase, runCase } from '../api/case'
+import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
 import { useAuthStore } from '../stores/auth'
@@ -22,8 +22,9 @@ const showResult = ref(false)
 const resultCase = ref(null)
 const resultData = ref(null)
 
-// 新建弹层
+// 新建/编辑弹层
 const showModal = ref(false)
+const editingId = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const form = reactive({
@@ -75,6 +76,7 @@ watch(selectedEnv, (v) => {
 })
 
 function openCreate() {
+  editingId.value = null
   form.name = ''
   form.interface_id = interfaces.value[0]?.id || ''
   form.expected_status = 200
@@ -85,6 +87,26 @@ function openCreate() {
   form.setup_sql = ''
   form.teardown_sql = ''
   form.datasets = ''
+  formErr.value = ''
+  showModal.value = true
+}
+
+function formatJsonField(value) {
+  return value == null ? '' : JSON.stringify(value, null, 2)
+}
+
+function openEdit(testCase) {
+  editingId.value = testCase.id
+  form.name = testCase.name
+  form.interface_id = testCase.interface_id
+  form.expected_status = testCase.expected_status
+  form.retries = testCase.retries || 0
+  form.tags = (testCase.tags || []).join(', ')
+  form.extract_rules = formatJsonField(testCase.extract_rules)
+  form.assertions = formatJsonField(testCase.assertions)
+  form.setup_sql = formatJsonField(testCase.setup_sql)
+  form.teardown_sql = formatJsonField(testCase.teardown_sql)
+  form.datasets = formatJsonField(testCase.datasets)
   formErr.value = ''
   showModal.value = true
 }
@@ -125,14 +147,20 @@ async function save() {
 
   saving.value = true
   try {
-    await createCase({
+    const payload = {
       name: form.name.trim(),
       interface_id: Number(form.interface_id),
       expected_status: Number(form.expected_status),
       retries: Number(form.retries) || 0,
       tags,
       extract_rules, assertions, setup_sql, teardown_sql, datasets,
-    })
+    }
+
+    if (editingId.value == null) {
+      await createCase(payload)
+    } else {
+      await updateCase(editingId.value, payload)
+    }
     showModal.value = false
     await load()
   } catch (e) {
@@ -229,6 +257,9 @@ onMounted(load)
             <svg v-if="runningId !== c.id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
             <span v-else class="spin"></span>
           </button>
+          <button class="icon-btn edit" title="编辑" @click="openEdit(c)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+          </button>
           <button class="icon-btn del" title="删除" @click="onDelete(c)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
           </button>
@@ -237,8 +268,8 @@ onMounted(load)
     </template>
   </div>
 
-  <!-- 新建用例弹层 -->
-  <Modal v-if="showModal" title="新建测试用例" :max-width="620" :busy="saving" @close="closeModal">
+  <!-- 新建/编辑用例弹层 -->
+  <Modal v-if="showModal" :title="editingId == null ? '新建测试用例' : '编辑测试用例'" :max-width="620" :busy="saving" @close="closeModal">
     <div class="field">
       <label>用例名称</label>
       <input v-model="form.name" placeholder="如:下单成功返回 200" />
@@ -290,7 +321,7 @@ onMounted(load)
 
     <template #foot>
       <button class="btn btn-ghost" @click="closeModal" :disabled="saving">取消</button>
-      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '创建中…' : '创建' }}</button>
+      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>
   </Modal>
 
@@ -344,7 +375,7 @@ onMounted(load)
   background:var(--surface-2); border:1px solid var(--border); border-radius:6px; font-family:inherit; }
 .env-sel:focus { outline:none; border-color:var(--primary); }
 
-.row { display:grid; grid-template-columns:1.6fr 1.6fr 88px 1.2fr 84px; align-items:center; gap:12px;
+.row { display:grid; grid-template-columns:1.6fr 1.6fr 88px 1.2fr 116px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }
 .row:not(.head):hover { background:var(--surface-2); }
@@ -365,6 +396,7 @@ onMounted(load)
   cursor:pointer; border-radius:4px; transition:color .15s,background .15s; }
 .icon-btn svg { width:15px; height:15px; }
 .icon-btn.run:hover { color:var(--pass-fg); background:var(--pass-bg); }
+.icon-btn.edit:hover { color:var(--primary); background:var(--surface-2); }
 .icon-btn.del:hover { color:var(--fail-fg); background:var(--fail-bg); }
 .icon-btn:disabled { opacity:.5; cursor:not-allowed; }
 .spin { width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--primary);
@@ -413,12 +445,12 @@ onMounted(load)
 /* ===== 响应式 ===== */
 @media (max-width:1100px) {
   .cards { grid-template-columns:repeat(3,1fr); }
-  .row { grid-template-columns:1.6fr 88px 1fr 84px; }
+  .row { grid-template-columns:1.6fr 88px 1fr 116px; }
   .c-iface { display:none; }
 }
 @media (max-width:640px) {
   .cards { grid-template-columns:1fr; gap:12px; }
-  .row { grid-template-columns:1fr 72px 84px; gap:8px; padding:12px 14px; }
+  .row { grid-template-columns:1fr 72px 108px; gap:8px; padding:12px 14px; }
   .c-tags { display:none; }
   .grid2, .grid3 { grid-template-columns:1fr; }
   .kv { grid-template-columns:1fr; }

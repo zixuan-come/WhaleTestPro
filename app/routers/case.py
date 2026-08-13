@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.case import CaseCreate, CaseOut
+from app.schemas.case import CaseCreate, CaseOut, CaseUpdate
 from app.services import case as case_service
 from app.services import execution as execution_service
 from app.core.deps import get_current_project
@@ -45,6 +45,26 @@ def list_case(
     current_project: Project = Depends(get_current_project),
 ):
     return case_service.s_list(db, current_project.id)
+
+
+@router.put("/{case_id}", response_model=CaseOut)
+def update_case(
+    case_id: int,
+    case: CaseUpdate,
+    db: Session = Depends(get_db),
+    current_project: Project = Depends(get_current_project),
+):
+    existing = case_service.s_get(db, case_id, current_project.id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"用例 id={case_id} 不存在")
+
+    updated = case_service.s_update(db, case_id, case, current_project.id)
+    if updated is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"接口 id={case.interface_id} 不存在或不属于当前项目",
+        )
+    return updated
 
 
 @router.delete("/{case_id}", response_model=CaseOut)
