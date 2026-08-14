@@ -100,7 +100,7 @@ onMounted(load)
             </span>
           </span>
           <span class="c-name">
-            <span class="id">#{{ pageStart + i }}</span>用例 {{ r.case_id }}
+            <span class="id">#{{ pageStart + i }}</span>{{ r.case_name || '用例已删除' }}
           </span>
           <span class="c-time">{{ formatShanghaiDateTime(r.created_at) }}</span>
           <span class="c-act">

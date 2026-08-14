@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict
 class ReportOut(BaseModel):
     id: int
     case_id: int
+    case_name: str | None = None
     passed: bool
     detail: dict | list | None = None
     created_at: datetime
