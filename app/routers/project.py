@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
-from app.schemas.project import ProjectCreate, ProjectOut
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.schemas.project_member import (
     ProjectMemberCreate,
     ProjectMemberOut,
@@ -60,6 +60,23 @@ def get_project(
     if p is None:
         raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在")
     return p
+
+
+@router.put("/{project_id}", response_model=ProjectOut)
+def update_project(
+    project_id: int,
+    project: ProjectUpdate,
+    db: Session = Depends(get_db),
+    current_project: Project = Depends(get_current_project_owner),
+):
+    try:
+        return project_service.s_update(db, current_project.id, project)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"项目名 '{project.name}' 已存在",
+        )
 
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberOut])

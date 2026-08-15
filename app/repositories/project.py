@@ -45,6 +45,19 @@ def db_list_for_user(db: Session, user_id: int) -> list[Project]:
     return query.order_by(Project.created_at.desc()).all()
 
 
+def db_update(db: Session, project_id: int, project) -> Project | None:
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if db_project is None:
+        return None
+
+    for key, value in project.model_dump().items():
+        setattr(db_project, key, value)
+
+    db.commit()
+    db.refresh(db_project)
+    return db_project
+
+
 def db_delete(db: Session, project_id: int) -> Project | None:
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if db_project is None:
