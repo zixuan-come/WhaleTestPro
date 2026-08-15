@@ -2,6 +2,7 @@ from app.repositories import case as case_repo
 from app.repositories import interface as interface_repo
 from app.repositories import report as report_repo
 from app.repositories import environment as env_repo
+from app.repositories import scenario_report as scenario_report_repo
 from app.core.variables import render, extract, render_deep
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
@@ -10,6 +11,58 @@ from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
 from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
 import requests
+from datetime import datetime
+from time import perf_counter
+
+
+SENSITIVE_KEYS = {
+    "password", "passwd", "pwd", "token", "authorization", "cookie",
+    "set-cookie", "secret", "api-key", "x-api-key", "phone", "mobile",
+    "id_card", "idcard",
+}
+MAX_RESPONSE_BODY_BYTES = 64 * 1024
+
+
+def _is_sensitive_key(key):
+    normalized = str(key).lower().replace("_", "-")
+    return (
+        normalized in SENSITIVE_KEYS
+        or normalized.endswith("-token")
+        or normalized.endswith("-password")
+        or normalized.endswith("-secret")
+    )
+
+
+def _mask_sensitive(value):
+    if isinstance(value, dict):
+        return {
+            key: "***" if _is_sensitive_key(key) else _mask_sensitive(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_sensitive(item) for item in value]
+    return value
+
+
+def _response_detail(response):
+    content = response.content or b""
+    truncated = len(content) > MAX_RESPONSE_BODY_BYTES
+    if not content:
+        body = None
+    elif truncated:
+        body = content[:MAX_RESPONSE_BODY_BYTES].decode(response.encoding or "utf-8", errors="replace")
+    else:
+        try:
+            body = response.json()
+        except ValueError:
+            body = response.text
+
+    return {
+        "status_code": response.status_code,
+        "headers": _mask_sensitive(dict(response.headers)),
+        "body": _mask_sensitive(body),
+        "body_truncated": truncated,
+    }
 
 
 def _env_context(db, env_id, project_id):
@@ -48,48 +101,143 @@ def run_case(db, case_id, env_id, project_id):
     return result
 
 
-def run_chain(db, case_ids, env_id, project_id):
+def run_chain(
+    db,
+    case_ids,
+    env_id,
+    project_id,
+    scenario_id=None,
+    scenario_name=None,
+):
+    report_started_at = datetime.utcnow()
+    report_started = perf_counter()
     context = _env_context(db, env_id, project_id)
     results = []
-    for case_id in case_ids:
+    report_steps = []
+    for sequence, case_id in enumerate(case_ids, start=1):
+        step_started = perf_counter()
         case = case_repo.db_get(db, case_id, project_id)
         if case is None:
-            results.append({"case_id": case_id, "error": "用例不存在"})
+            result = {"case_id": case_id, "case_name": None, "passed": False, "error": "用例不存在"}
+            results.append(result)
+            report_steps.append({
+                "sequence": sequence,
+                "case_id": case_id,
+                "case_name": None,
+                "passed": False,
+                "request_detail": None,
+                "response_detail": None,
+                "assertions": None,
+                "extracted_variables": None,
+                "error": result["error"],
+                "duration_ms": round((perf_counter() - step_started) * 1000),
+            })
             continue
 
         interface = interface_repo.db_get(db, case.interface_id, project_id)
         if interface is None:
-            results.append({"case_id": case_id, "error": "接口不存在"})
+            result = {"case_id": case_id, "case_name": case.name, "passed": False, "error": "接口不存在"}
+            results.append(result)
+            report_steps.append({
+                "sequence": sequence,
+                "case_id": case_id,
+                "case_name": case.name,
+                "passed": False,
+                "request_detail": None,
+                "response_detail": None,
+                "assertions": None,
+                "extracted_variables": None,
+                "error": result["error"],
+                "duration_ms": round((perf_counter() - step_started) * 1000),
+            })
             continue
 
+        request_detail = None
+        response_detail = None
+        assertions_results = []
+        extracted_variables = {}
+        error = None
+        actual_status = None
         try:
+            rendered_url = _full_url(interface.url, context)
+            rendered_headers = render_deep(interface.headers, context)
+            rendered_params = render_deep(interface.params, context)
+            rendered_body = render_deep(interface.body, context)
+            request_detail = {
+                "method": interface.method,
+                "url": rendered_url,
+                "headers": _mask_sensitive(rendered_headers),
+                "params": _mask_sensitive(rendered_params),
+                "body": _mask_sensitive(rendered_body),
+            }
             response = _request(
                 interface,
-                url=_full_url(interface.url, context),
-                headers=render_deep(interface.headers, context),
-                params=render_deep(interface.params, context),
-                json=render_deep(interface.body, context),
+                url=rendered_url,
+                headers=rendered_headers,
+                params=rendered_params,
+                json=rendered_body,
             )
+            actual_status = response.status_code
+            response_detail = _response_detail(response)
+            status_passed = response.status_code == case.expected_status
+            rendered_assertions = render_deep(case.assertions, context)
+            assertions_results = run_assertions(response, rendered_assertions, db)
+            passed = status_passed and all(item["passed"] for item in assertions_results)
+
+            if case.extract_rules:
+                data = response.json()
+                rendered_extract_rules = render_deep(case.extract_rules, context)
+                for var_name, path in rendered_extract_rules.items():
+                    extracted = extract(data, path)
+                    context[var_name] = extracted
+                    extracted_variables[var_name] = extracted
         except Exception as e:
-            results.append({"case_id": case_id, "passed": False, "error": str(e)})
-            continue
+            passed = False
+            error = str(e)
 
-        status_passed = response.status_code == case.expected_status
-        assertions_results = run_assertions(response, case.assertions, db)
-        passed = status_passed and all(r["passed"] for r in assertions_results)
-
-        if case.extract_rules:
-            data = response.json()
-            for var_name, path in case.extract_rules.items():
-                context[var_name] = extract(data, path)
-
-        results.append({
+        result = {
             "case_id": case_id,
+            "case_name": case.name,
             "passed": passed,
             "expected_status": case.expected_status,
-            "actual_status": response.status_code,
+            "actual_status": actual_status,
             "assertions": assertions_results,
+        }
+        if error:
+            result["error"] = error
+        results.append(result)
+        report_assertions = []
+        if actual_status is not None:
+            report_assertions.append({
+                "type": "status_code",
+                "passed": actual_status == case.expected_status,
+                "expected": case.expected_status,
+                "actual": actual_status,
+            })
+        report_assertions.extend(assertions_results)
+        report_steps.append({
+            "sequence": sequence,
+            "case_id": case_id,
+            "case_name": case.name,
+            "passed": passed,
+            "request_detail": request_detail,
+            "response_detail": response_detail,
+            "assertions": report_assertions or None,
+            "extracted_variables": _mask_sensitive(extracted_variables) or None,
+            "error": error,
+            "duration_ms": round((perf_counter() - step_started) * 1000),
         })
+
+    if scenario_id is not None and scenario_name is not None:
+        scenario_report_repo.db_create(
+            db,
+            scenario_id=scenario_id,
+            scenario_name=scenario_name,
+            project_id=project_id,
+            created_at=report_started_at,
+            duration_ms=round((perf_counter() - report_started) * 1000),
+            steps=report_steps,
+        )
 
     return results
 

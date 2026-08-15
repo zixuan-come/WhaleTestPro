@@ -38,6 +38,7 @@ import app.models.traffic_record
 import app.models.project
 import app.models.scenario
 import app.models.project_member
+import app.models.scenario_report
 
 
 Base.metadata.create_all(bind=engine)

@@ -28,4 +28,11 @@ def s_run(db: Session, scenario_id: int, env_id, project_id: int):
     sc = scenario_repo.db_get(db, scenario_id, project_id)
     if sc is None:
         return None
-    return execution_service.run_chain(db, sc.case_ids or [], env_id, project_id)
+    return execution_service.run_chain(
+        db,
+        sc.case_ids or [],
+        env_id,
+        project_id,
+        scenario_id=sc.id,
+        scenario_name=sc.name,
+    )
