@@ -1,5 +1,6 @@
 import bcrypt
 import jwt
+from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from app.core.config import settings
 
@@ -15,7 +16,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_access_token(user_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "exp": expire}
+    payload = {"sub": str(user_id), "exp": expire, "jti": str(uuid4())}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
@@ -26,6 +27,15 @@ def decode_access_token(token: str) -> int | None:
         return None
     sub = payload.get("sub")
     return int(sub) if sub is not None else None
+
+
+def get_token_jti(token: str) -> str | None:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+    jti = payload.get("jti")
+    return jti if isinstance(jti, str) and jti else None
 
 
 def get_token_remaining_seconds(token: str) -> int:
