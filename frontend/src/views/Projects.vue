@@ -1,8 +1,9 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { listProjects, createProject, deleteProject } from '../api/project'
+import { listProjects, createProject, updateProject, deleteProject } from '../api/project'
 import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
+import ProjectMembersModal from '../components/ProjectMembersModal.vue'
 
 const auth = useAuthStore()
 const items = ref([])
@@ -10,9 +11,11 @@ const loading = ref(true)
 const error = ref('')
 
 const showModal = ref(false)
+const editingId = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const form = reactive({ name: '', description: '' })
+const memberProject = ref(null)
 
 const total = computed(() => items.value.length)
 
@@ -29,8 +32,17 @@ async function load() {
 }
 
 function openCreate() {
+  editingId.value = null
   form.name = ''
   form.description = ''
+  formErr.value = ''
+  showModal.value = true
+}
+
+function openEdit(project) {
+  editingId.value = project.id
+  form.name = project.name
+  form.description = project.description || ''
   formErr.value = ''
   showModal.value = true
 }
@@ -46,16 +58,24 @@ async function save() {
 
   saving.value = true
   try {
-    const created = await createProject({
+    const payload = {
       name: form.name.trim(),
       description: form.description.trim() || null,
-    })
+    }
+
+    if (editingId.value == null) {
+      const created = await createProject(payload)
+      auth.setProject(created.id, created.name)
+    } else {
+      const updated = await updateProject(editingId.value, payload)
+      if (updated.id === auth.currentProjectId) {
+        auth.setProject(updated.id, updated.name)
+      }
+    }
     showModal.value = false
-    // 建完顺手切到新项目 — 用户建完通常就想去它下面工作
-    auth.setProject(created.id, created.name)
     await load()
   } catch (e) {
-    formErr.value = e.message || '创建失败'
+    formErr.value = e.message || '保存失败'
   } finally {
     saving.value = false
   }
@@ -78,6 +98,10 @@ async function onDelete(project) {
 function switchTo(project) {
   auth.setProject(project.id, project.name)
   // 顺手刷新一下让列表高亮生效(active class 通过 currentProjectId 计算)
+}
+
+function openMembers(project) {
+  memberProject.value = project
 }
 
 function formatDate(iso) {
@@ -128,6 +152,14 @@ onMounted(load)
         <span class="c-time">{{ formatDate(p.created_at) }}</span>
         <span class="c-act">
           <button v-if="p.id !== auth.currentProjectId" class="btn btn-ghost sm" @click="switchTo(p)">切到这个</button>
+          <button class="icon-btn edit-action" title="编辑" @click="openEdit(p)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+          </button>
+          <button class="icon-btn member-action" title="成员管理" @click="openMembers(p)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+            </svg>
+          </button>
           <button class="icon-btn" title="删除" @click="onDelete(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
@@ -138,7 +170,7 @@ onMounted(load)
     </template>
   </div>
 
-  <Modal v-if="showModal" title="新建项目" :busy="saving" @close="closeModal">
+  <Modal v-if="showModal" :title="editingId == null ? '新建项目' : '编辑项目'" :busy="saving" @close="closeModal">
     <div class="field">
       <label>项目名称</label>
       <input v-model="form.name" placeholder="如:电商压测项目" />
@@ -151,9 +183,11 @@ onMounted(load)
 
     <template #foot>
       <button class="btn btn-ghost" @click="closeModal" :disabled="saving">取消</button>
-      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '创建中…' : '创建' }}</button>
+      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>
   </Modal>
+
+  <ProjectMembersModal v-if="memberProject" :project="memberProject" @close="memberProject = null" />
 </template>
 
 <style scoped>
@@ -188,6 +222,8 @@ onMounted(load)
   cursor:pointer; border-radius:4px; transition:color .15s,background .15s; }
 .icon-btn svg { width:16px; height:16px; }
 .icon-btn:hover { color:var(--fail-fg); background:var(--fail-bg); }
+.icon-btn.edit-action:hover { color:var(--primary); background:var(--surface-2); }
+.icon-btn.member-action:hover { color:var(--primary); background:var(--ring); }
 
 .state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; max-width:560px; margin:0 auto; }
 .state.err { color:var(--fail-fg); }
