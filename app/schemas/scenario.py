@@ -1,9 +1,9 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from app.schemas.base import NamedSchema
 
 
-class ScenarioCreate(BaseModel):
-    name: str
+class ScenarioCreate(NamedSchema):
     description: str | None = None
     case_ids: list[int] = []
 

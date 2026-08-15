@@ -1,9 +1,13 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
 from datetime import datetime
+from app.schemas.base import NamedSchema
 
-class ProjectCreate(BaseModel):
-    name: str
+class ProjectCreate(NamedSchema):
     description: str | None = None
+
+
+class ProjectUpdate(ProjectCreate):
+    pass
 
 
 class ProjectOut(ProjectCreate):

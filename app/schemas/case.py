@@ -1,7 +1,7 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from app.schemas.base import NamedSchema
 
-class CaseCreate(BaseModel):
-    name: str
+class CaseCreate(NamedSchema):
     interface_id: int
     expected_status: int
     extract_rules: dict | None = None

@@ -1,7 +1,7 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from app.schemas.base import NamedSchema
 
-class MockCreate(BaseModel):
-    name: str
+class MockCreate(NamedSchema):
     path: str
     method: str
     status: int = 200

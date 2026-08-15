@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
+from app.schemas.base import NamedSchema
 
-class InterfaceCreate(BaseModel):
-    name: str
+class InterfaceCreate(NamedSchema):
     method: str
     url: str
     headers: dict | None = None

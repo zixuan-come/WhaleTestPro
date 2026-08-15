@@ -1,8 +1,8 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from app.schemas.base import NamedSchema
 
 
-class EnvironmentCreate(BaseModel):
-    name: str
+class EnvironmentCreate(NamedSchema):
     base_url: str
     variables: dict | None = None
 
