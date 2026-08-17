@@ -191,6 +191,8 @@ async function onSubmit() {
 .field input:focus { border-color:var(--primary); }
 .field input:focus + svg, .field:focus-within svg { color:var(--primary); }
 .field.has-eye input { padding-right:44px; }
+.field.has-eye input::-ms-reveal,
+.field.has-eye input::-ms-clear { display:none; }
 .eye { position:absolute; right:8px; top:50%; transform:translateY(-50%);
   width:30px; height:30px; padding:0; background:none; border:none; border-radius:6px;
   display:grid; place-items:center; cursor:pointer; color:var(--text-muted); transition:color .15s,background .15s; }
