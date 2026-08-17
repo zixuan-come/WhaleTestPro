@@ -4,18 +4,18 @@
 
 ## 功能特性
 
-- **项目多租户** — 所有资源按 `project_id` 隔离,请求携带 `X-Project-Id`,仓储层统一过滤。
+- **项目与成员** — 所有资源按 `project_id` 隔离,支持 owner / admin / member 角色、成员维护与项目级权限校验。
 - **接口管理** — 接口定义 + 单层分类,支持编辑。
 - **测试用例** — 用例 CRUD、标签、断言、变量提取、setup/teardown SQL、重试、数据集。
 - **场景编排** — 五层结构可视化编排,链式提参串联多接口。
 - **回归测试** — 按标签 / 全量跑用例,统计通过率与接口覆盖率,可选飞书通知。
 - **Mock 挡板** — 按 path / method 匹配返回挡板响应,支持延时、自定义状态码。
 - **定时调度** — Celery Beat / RedBeat,按 cron 周期触发定时回归。
-- **测试报告** — 每次执行自动落库,列表 + 明细。
+- **测试报告** — 单用例报告分页统计;场景执行生成一份场景报告与多条步骤明细。
 - **压测** — Locust master / worker 驱动,实时指标进 Prometheus / Grafana。
 - **流量录制 / 回放** — 中间件录制真实流量,可按环境回放。
 - **可观测性** — `/metrics` 暴露 Prometheus 指标,Grafana 看板。
-- **稳定性机制** — JWT 鉴权、限流、熔断器、影子库隔离。
+- **稳定性机制** — JWT `jti` 级登出隔离、限流、熔断器、影子库隔离与项目资产事务删除。
 
 ## 系统架构
 
@@ -84,8 +84,6 @@ flowchart TB
     CI -.->|"push 触发 pytest"| APP
 ```
 
-> 静态图见 [`docs/architecture.png`](docs/architecture.png),图源 [`docs/architecture.mmd`](docs/architecture.mmd)。
-
 ## 技术栈
 
 | 层 | 技术 |
@@ -107,11 +105,9 @@ flowchart TB
 1. 在项目根准备 `.env`:
 
    ```dotenv
-   DATABASE_URL=mysql+pymysql://root:你的密码@mysql:3306/whale_test_pro?charset=utf8mb4
-   SHADOW_DATABASE_URL=mysql+pymysql://root:你的密码@mysql:3306/whale_test_pro_shadow?charset=utf8mb4
-   SECRET_KEY=改成一段随机字符串
    MYSQL_ROOT_PASSWORD=你的密码
-   FEISHU_WEBHOOK=可选,回归结果推送用
+   SECRET_KEY=改成一段随机字符串
+   FEISHU_WEBHOOK=
    ```
 
 2. 一键启动:
@@ -122,7 +118,7 @@ flowchart TB
 
 3. 打开浏览器访问 **http://localhost:8080** —— 即完整平台。前端由 Nginx 托管打包产物,`/api` 反代到后端容器,无需单独起前端。
 
-> 后端首次启动会自动 `create_all` 建表(主库 + 影子库),无需手动初始化。
+> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表。初始化脚本只在空数据卷首次启动时执行。
 
 > 前端热开发(可选):改前端代码想热更新时,可另起 vite dev server —— `cd frontend && npm install && npm run dev`(http://localhost:5173,`/api` 经 vite 代理到后端 8001)。日常部署/演示走 8080 的 Nginx 容器即可。
 
@@ -165,7 +161,9 @@ celery -A app.core.celery_app worker -l info     # 另开终端:Celery Worker
 ├── migrations/         # 增量 SQL 迁移
 ├── tests/              # pytest 单测
 ├── docker/             # Prometheus / Grafana 配置
-├── docs/               # 需求文档 / 测试用例 / 缺陷记录 / 架构图
+│   └── mysql/init/     # MySQL 首次启动初始化影子库
+├── scripts/deploy.sh   # 云服务器拉取、构建、健康检查部署脚本
+├── docs/               # 需求文档 / 测试用例 / 缺陷记录 / 部署说明
 ├── locustfile.py       # 压测脚本
 ├── main.py             # 后端入口
 ├── docker-compose.yml  # 一键起
@@ -180,11 +178,14 @@ pytest                 # 运行 tests/ 下单测
 
 CI 走 GitHub Actions,push 自动 checkout → 装依赖 → 跑 pytest。
 
+独立黑盒接口测试位于 [WhaleTestPro-APITest](https://github.com/zixuan-come/WhaleTestPro-APITest),通过 HTTP 验证鉴权、项目隔离、资源 CRUD、执行链路和报告契约,不 import 本仓库代码。
+
 ## 文档
 
 | 文档 | 说明 |
 |------|------|
 | [`docs/spec.md`](docs/spec.md) | 内部规格书 / 需求文档(16 模块,只描述真实行为)|
+| [`docs/deployment.md`](docs/deployment.md) | Ubuntu 云服务器首次部署、日常更新、健康检查与排障 |
 | [`docs/bugs.md`](docs/bugs.md) | 缺陷总账(全局编号 + 交叉引用)|
 | [`docs/测试缺陷/`](docs/测试缺陷/) | 缺陷按模块拆分归档(功能 / 接口)|
 | [`docs/testcases_api.xlsx`](docs/testcases_api.xlsx) | 接口测试用例(361 条)|
