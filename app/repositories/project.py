@@ -1,7 +1,17 @@
 from sqlalchemy.orm import Session
+from app.models.case import Case
+from app.models.environment import Environment
+from app.models.interface import Interface
+from app.models.mock import Mock
+from app.models.perf import PerfTask
 from app.models.project import Project
-from app.schemas.project import ProjectCreate
 from app.models.project_member import ProjectMember, ProjectRole
+from app.models.report import TestReport
+from app.models.scenario import Scenario
+from app.models.scenario_report import ScenarioReport, ScenarioReportStep
+from app.models.schedule import Schedule
+from app.models.traffic_record import TrafficRecord
+from app.schemas.project import ProjectCreate
 
 
 def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
@@ -62,6 +72,37 @@ def db_delete(db: Session, project_id: int) -> Project | None:
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if db_project is None:
         return None
-    db.delete(db_project)
-    db.commit()
+
+    try:
+        report_ids = db.query(ScenarioReport.id).filter(
+            ScenarioReport.project_id == project_id
+        )
+        db.query(ScenarioReportStep).filter(
+            ScenarioReportStep.report_id.in_(report_ids)
+        ).delete(synchronize_session=False)
+
+        # Delete dependants before their parents; test cases reference interfaces.
+        for model in (
+            Case,
+            Interface,
+            Environment,
+            Mock,
+            PerfTask,
+            TestReport,
+            ScenarioReport,
+            Scenario,
+            Schedule,
+            TrafficRecord,
+            ProjectMember,
+        ):
+            db.query(model).filter(model.project_id == project_id).delete(
+                synchronize_session=False
+            )
+
+        db.delete(db_project)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     return db_project

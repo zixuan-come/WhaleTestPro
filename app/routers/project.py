@@ -182,7 +182,13 @@ def delete_project(
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project_owner),
 ):
-    p = project_service.s_delete(db, current_project.id)
+    try:
+        p = project_service.s_delete(db, current_project.id)
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="项目仍有关联资源，暂时无法删除",
+        )
     if p is None:
         raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在")
     return p
