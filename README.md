@@ -185,6 +185,7 @@ CI 走 GitHub Actions,push 自动 checkout → 装依赖 → 跑 pytest。
 | 文档 | 说明 |
 |------|------|
 | [`docs/spec.md`](docs/spec.md) | 内部规格书 / 需求文档(16 模块,只描述真实行为)|
+| [docs/api-response.md](docs/api-response.md) | 业务 API 统一响应结构与异常处理规范 |
 | [`docs/deployment.md`](docs/deployment.md) | Ubuntu 云服务器首次部署、日常更新、健康检查与排障 |
 | [`docs/bugs.md`](docs/bugs.md) | 缺陷总账(全局编号 + 交叉引用)|
 | [`docs/测试缺陷/`](docs/测试缺陷/) | 缺陷按模块拆分归档(功能 / 接口)|
