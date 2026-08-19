@@ -15,15 +15,22 @@ http.interceptors.request.use((config) => {
 
 // 响应拦截器:401 自动登出回登录页;统一抛后端 detail
 http.interceptors.response.use(
-  (res) => res.data,
+  (res) => {
+    const body = res.data
+    if (body && typeof body === 'object' && 'code' in body && 'message' in body && 'data' in body) {
+      if (body.code !== 0) return Promise.reject(new Error(body.message || '请求失败'))
+      return body.data
+    }
+    return body
+  },
   (err) => {
     if (err.response?.status === 401) {
       const auth = useAuthStore()
       auth.logout()
       if (location.hash !== '#/login') location.hash = '#/login'
     }
-    const detail = err.response?.data?.detail
-    return Promise.reject(new Error(detail || err.message || '请求失败'))
+    const message = err.response?.data?.message || err.response?.data?.detail
+    return Promise.reject(new Error(message || err.message || '请求失败'))
   }
 )
 

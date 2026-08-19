@@ -17,18 +17,10 @@ def s_login(db, user):
     if not verify_password(user.password, existing.hashed_password):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     token = create_access_token(existing.id)
-    return {"access_token": token}
+    return {"access_token": token, "token_type": "bearer"}
 
 
 def s_logout(token: str):
     remaining = get_token_remaining_seconds(token)
     add_to_blacklist(token, remaining)
     return {"detail": "已登出"}
-
-
-
-
-
-
-
-

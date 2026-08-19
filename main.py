@@ -1,6 +1,7 @@
 import json
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html
 from app.routers import interface as api_router
@@ -23,6 +24,11 @@ from app.core.bootstrap import backfill_legacy_project_owners
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
+from app.core.exception_handlers import (
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.schemas.traffic_record import TrafficRecordCreate
 from app.tasks.traffic import record_traffic
 import app.models.interface
@@ -82,6 +88,9 @@ def _extract_project_id(request):
 
 
 app = FastAPI(docs_url=None)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 @app.middleware("http")
 async def shadow_middleware(request: Request, call_next):
@@ -164,10 +173,9 @@ def custom_swagger_ui_html():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    from app.schemas.response import success_response
+    return success_response({"status": "ok"}, message="\u670d\u52a1\u6b63\u5e38")
 
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
-
-
