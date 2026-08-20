@@ -7,6 +7,7 @@ from app.schemas.report import (
     ScenarioReportDetail,
     ScenarioReportPage,
 )
+from app.schemas.response import ApiResponse, success_response
 from app.services import report as report_service
 from app.core.deps import get_current_project
 from app.models.project import Project
@@ -14,22 +15,25 @@ from app.models.project import Project
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-@router.get("/scenarios", response_model=ScenarioReportPage)
+@router.get("/scenarios", response_model=ApiResponse[ScenarioReportPage])
 def list_scenario_reports(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return report_service.s_scenario_page(
-        db,
-        current_project.id,
-        page,
-        page_size,
+    return success_response(
+        report_service.s_scenario_page(
+            db,
+            current_project.id,
+            page,
+            page_size,
+        ),
+        message="查询成功",
     )
 
 
-@router.get("/scenarios/{scenario_report_id}", response_model=ScenarioReportDetail)
+@router.get("/scenarios/{scenario_report_id}", response_model=ApiResponse[ScenarioReportDetail])
 def get_scenario_report(
     scenario_report_id: int,
     db: Session = Depends(get_db),
@@ -45,10 +49,10 @@ def get_scenario_report(
             status_code=404,
             detail=f"场景报告 id={scenario_report_id} 不存在",
         )
-    return report
+    return success_response(report, message="查询成功")
 
 
-@router.get("/{report_id}", response_model=ReportOut)
+@router.get("/{report_id}", response_model=ApiResponse[ReportOut])
 def get_report(
     report_id: int,
     db: Session = Depends(get_db),
@@ -57,14 +61,17 @@ def get_report(
     r = report_service.s_get(db, report_id, current_project.id)
     if r is None:
         raise HTTPException(status_code=404, detail=f"报告 id={report_id} 不存在")
-    return r
+    return success_response(r, message="查询成功")
 
 
-@router.get("", response_model=ReportPage)
+@router.get("", response_model=ApiResponse[ReportPage])
 def list_report(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return report_service.s_page(db, current_project.id, page, page_size)
+    return success_response(
+        report_service.s_page(db, current_project.id, page, page_size),
+        message="查询成功",
+    )

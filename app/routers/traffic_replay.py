@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.traffic_replay import ReplayRequest
+from app.schemas.response import ApiResponse, success_response
 from app.services import traffic_replay as traffic_replay_service
 from app.core.deps import get_current_project
 from app.models.project import Project
@@ -9,7 +10,7 @@ from app.models.project import Project
 router = APIRouter(prefix="/traffic/replay", tags=["traffic"])
 
 
-@router.post("/{record_id}")
+@router.post("/{record_id}", response_model=ApiResponse[dict])
 def replay(
     record_id: int,
     req: ReplayRequest | None = None,
@@ -21,5 +22,5 @@ def replay(
         db, record_id, current_project.id, req.env_id, req.field_rules
     )
     if result is None:
-        return {"error": "录制记录不存在"}
-    return result
+        raise HTTPException(status_code=404, detail="录制记录不存在")
+    return success_response(result, message="流量回放完成")
