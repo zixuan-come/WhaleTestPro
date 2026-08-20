@@ -45,12 +45,13 @@ def s_add(
     if existing is not None:
         raise HTTPException(status_code=409, detail="用户已经是项目成员")
 
-    return project_member_repo.db_create(
+    created = project_member_repo.db_create(
         db,
         project_id,
         member.user_id,
         member.role,
     )
+    return project_member_repo.db_get_by_id_for_project(db, project_id, created.id)
 
 
 def s_update_role(
