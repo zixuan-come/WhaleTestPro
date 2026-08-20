@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.interface import InterfaceCreate, InterfaceOut, CategoryRename
+from app.schemas.response import ApiResponse, success_response
 from app.services import interface as api_service
 from app.core.deps import get_current_user, get_current_project
 from app.models.user import User
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/interfaces", tags=["interfaces"])
 # ⚠️ 顺序重要:/categories/... 必须在 /{interface_id} 之前注册,
 # 否则 FastAPI 会尝试把 "categories" 当 int 解析报 422。
 
-@router.patch("/categories/rename")
+@router.patch("/categories/rename", response_model=ApiResponse[dict])
 def rename_category(
     body: CategoryRename,
     db: Session = Depends(get_db),
@@ -21,10 +22,10 @@ def rename_category(
     current_project: Project = Depends(get_current_project),
 ):
     count = api_service.s_rename_category(db, current_project.id, body.old_name, body.new_name)
-    return {"affected": count}
+    return success_response({"affected": count}, message="分类重命名成功")
 
 
-@router.delete("/categories/{name}")
+@router.delete("/categories/{name}", response_model=ApiResponse[dict])
 def delete_category(
     name: str,
     db: Session = Depends(get_db),
@@ -32,20 +33,24 @@ def delete_category(
     current_project: Project = Depends(get_current_project),
 ):
     count = api_service.s_delete_category(db, current_project.id, name)
-    return {"affected": count}
+    return success_response({"affected": count}, message="分类清空成功")
 
 
-@router.post("", response_model=InterfaceOut, status_code=201)
+@router.post("", response_model=ApiResponse[InterfaceOut], status_code=201)
 def create_interface(
     interface: InterfaceCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_project: Project = Depends(get_current_project),   # ← 从 X-Project-Id header 注入
 ):
-    return api_service.s_create(db, interface, current_project.id)
+    return success_response(
+        api_service.s_create(db, interface, current_project.id),
+        message="接口创建成功",
+        status_code=201,
+    )
 
 
-@router.get("/{interface_id}", response_model=InterfaceOut)
+@router.get("/{interface_id}", response_model=ApiResponse[InterfaceOut])
 def get_interface(
     interface_id: int,
     db: Session = Depends(get_db),
@@ -56,19 +61,19 @@ def get_interface(
     p = api_service.s_get(db, interface_id, current_project.id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
-    return p
+    return success_response(p, message="查询成功")
 
 
-@router.get("", response_model=list[InterfaceOut])
+@router.get("", response_model=ApiResponse[list[InterfaceOut]])
 def list_interface(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_project: Project = Depends(get_current_project),
 ):
-    return api_service.s_list(db, current_project.id)
+    return success_response(api_service.s_list(db, current_project.id), message="查询成功")
 
 
-@router.delete("/{interface_id}", response_model=InterfaceOut)
+@router.delete("/{interface_id}", response_model=ApiResponse[None])
 def delete_interface(
     interface_id: int,
     db: Session = Depends(get_db),
@@ -78,10 +83,10 @@ def delete_interface(
     p = api_service.s_delete(db, interface_id, current_project.id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
-    return p
+    return success_response(data=None, message="接口删除成功")
 
 
-@router.put("/{interface_id}", response_model=InterfaceOut)
+@router.put("/{interface_id}", response_model=ApiResponse[InterfaceOut])
 def update_interface(
     interface_id: int,
     patch: InterfaceCreate,
@@ -92,7 +97,6 @@ def update_interface(
     p = api_service.s_update(db, interface_id, current_project.id, patch)
     if p is None:
         raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
-    return p
-
+    return success_response(p, message="接口更新成功")
 
 

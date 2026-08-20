@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.mock import MockCreate, MockOut
+from app.schemas.response import ApiResponse, success_response
 from app.services import mock as mock_service
 from app.core.deps import get_current_project
 from app.models.project import Project
@@ -12,16 +13,20 @@ from app.models.project import Project
 router = APIRouter(prefix="/mocks", tags=["mocks"])
 
 
-@router.post("", response_model=MockOut, status_code=201)
+@router.post("", response_model=ApiResponse[MockOut], status_code=201)
 def create_mock(
     mock: MockCreate,
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return mock_service.s_create(db, mock, current_project.id)
+    return success_response(
+        mock_service.s_create(db, mock, current_project.id),
+        message="Mock 创建成功",
+        status_code=201,
+    )
 
 
-@router.get("/{mock_id}", response_model=MockOut)
+@router.get("/{mock_id}", response_model=ApiResponse[MockOut])
 def get_mock(
     mock_id: int,
     db: Session = Depends(get_db),
@@ -30,18 +35,18 @@ def get_mock(
     m = mock_service.s_get(db, mock_id, current_project.id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"挡板规则 id={mock_id} 不存在")
-    return m
+    return success_response(m, message="查询成功")
 
 
-@router.get("", response_model=list[MockOut])
+@router.get("", response_model=ApiResponse[list[MockOut]])
 def list_mock(
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return mock_service.s_list(db, current_project.id)
+    return success_response(mock_service.s_list(db, current_project.id), message="查询成功")
 
 
-@router.put("/{mock_id}", response_model=MockOut)
+@router.put("/{mock_id}", response_model=ApiResponse[MockOut])
 def update_mock(
     mock_id: int,
     mock: MockCreate,
@@ -51,10 +56,10 @@ def update_mock(
     m = mock_service.s_update(db, mock_id, mock, current_project.id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"挡板规则 id={mock_id} 不存在")
-    return m
+    return success_response(m, message="Mock 更新成功")
 
 
-@router.delete("/{mock_id}", response_model=MockOut)
+@router.delete("/{mock_id}", response_model=ApiResponse[None])
 def delete_mock(
     mock_id: int,
     db: Session = Depends(get_db),
@@ -63,7 +68,7 @@ def delete_mock(
     m = mock_service.s_delete(db, mock_id, current_project.id)
     if m is None:
         raise HTTPException(status_code=404, detail=f"挡板规则 id={mock_id} 不存在")
-    return m
+    return success_response(data=None, message="Mock 删除成功")
 
 
 # ========================================================================
