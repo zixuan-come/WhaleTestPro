@@ -178,6 +178,20 @@ pytest                 # 运行 tests/ 下单测
 
 CI 走 GitHub Actions,push 自动 checkout → 装依赖 → 跑 pytest。
 
+发布前建议完成一轮本地验收:
+
+```bash
+pytest
+cd frontend && npm run build
+cd ..
+sudo docker compose config --quiet
+sudo docker compose ps -a
+curl -fsS http://127.0.0.1:8001/health
+curl -fsS http://127.0.0.1:8080/api/health
+```
+
+业务 API 的成功响应统一为 `code: 0`、`message` 和 `data`;失败响应保留对应 HTTP 状态码,并将状态码写入 `code`。删除接口使用 `200 + data: null`。完整契约见 [`docs/api-response.md`](docs/api-response.md),独立黑盒验收见 [WhaleTestPro-APITest](https://github.com/zixuan-come/WhaleTestPro-APITest)。
+
 独立黑盒接口测试位于 [WhaleTestPro-APITest](https://github.com/zixuan-come/WhaleTestPro-APITest),通过 HTTP 验证鉴权、项目隔离、资源 CRUD、执行链路和报告契约,不 import 本仓库代码。
 
 ## 文档

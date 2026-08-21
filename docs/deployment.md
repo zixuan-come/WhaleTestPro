@@ -105,6 +105,13 @@ curl -fsS http://127.0.0.1:8080/api/health
 sudo docker stats --no-stream
 ```
 
+验收时重点确认:
+
+- `app`、`frontend`、`mysql`、`redis`、`rabbitmq`、`worker` 均处于运行状态;
+- `8001/health` 和 `8080/api/health` 均返回 HTTP `200`;
+- 业务接口成功响应包含 `code`、`message`、`data`,删除接口返回 `data: null`;
+- `/docs` 可以打开 Swagger,`/metrics` 仍保持 Prometheus 文本格式。
+
 浏览器访问 `http://<服务器公网地址>:8080`。首次使用时注册账号,登录后创建项目和环境。
 
 ## 日常更新
@@ -189,3 +196,14 @@ sudo docker compose logs --tail=100 app frontend
 ```
 
 后端直连正常而 `/api/health` 失败时,优先检查 frontend 容器和 Nginx 反向代理;两者都失败时先处理 app 容器。
+
+### 统一响应验收失败
+
+先确认实际返回和容器日志:
+
+```bash
+curl -i http://127.0.0.1:8001/health
+sudo docker compose logs --tail=150 app frontend
+```
+
+业务接口应遵循 [`api-response.md`](api-response.md) 中的 `code/message/data` 契约。若只有某个被测 Mock 命中接口返回非信封格式,这是平台为保留被测系统原始响应而定义的例外,应结合接口配置和 APITest 用例判断,不要直接修改 Mock 命中响应。
