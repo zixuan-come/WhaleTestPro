@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
@@ -7,6 +8,7 @@ import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
 
 const auth = useAuthStore()
+const router = useRouter()
 
 const items = ref([])
 const interfaces = ref([])
@@ -27,6 +29,7 @@ const showModal = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
 const formErr = ref('')
+const showAdvanced = ref(false)
 const form = reactive({
   name: '', interface_id: '', expected_status: 200, retries: 0, tags: '',
   extract_rules: '', assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
@@ -40,6 +43,43 @@ const ifaceMap = computed(() => {
   for (const it of interfaces.value) m[it.id] = it
   return m
 })
+const selectedInterface = computed(() => ifaceMap.value[form.interface_id] || null)
+
+function jsonFieldHasValue(text) {
+  const raw = (text || '').trim()
+  if (!raw) return false
+  try {
+    const value = JSON.parse(raw)
+    if (Array.isArray(value)) return value.length > 0
+    if (value && typeof value === 'object') return Object.keys(value).length > 0
+    return value != null
+  } catch {
+    return true
+  }
+}
+
+const advancedConfigCount = computed(() => [
+  form.assertions,
+  form.extract_rules,
+  form.setup_sql,
+  form.teardown_sql,
+  form.datasets,
+].filter(jsonFieldHasValue).length)
+
+function hasAdvancedConfig(testCase) {
+  return [
+    testCase.assertions,
+    testCase.extract_rules,
+    testCase.setup_sql,
+    testCase.teardown_sql,
+    testCase.datasets,
+  ].some(value => {
+    if (Array.isArray(value)) return value.length > 0
+    if (value && typeof value === 'object') return Object.keys(value).length > 0
+    return value != null && value !== ''
+  })
+}
+
 function ifaceLabel(id) {
   const it = ifaceMap.value[id]
   return it ? `${(it.method || 'GET').toUpperCase()} ${it.name}` : `#${id}`
@@ -78,7 +118,7 @@ watch(selectedEnv, (v) => {
 function openCreate() {
   editingId.value = null
   form.name = ''
-  form.interface_id = interfaces.value[0]?.id || ''
+  form.interface_id = ''
   form.expected_status = 200
   form.retries = 0
   form.tags = ''
@@ -87,6 +127,7 @@ function openCreate() {
   form.setup_sql = ''
   form.teardown_sql = ''
   form.datasets = ''
+  showAdvanced.value = false
   formErr.value = ''
   showModal.value = true
 }
@@ -107,6 +148,7 @@ function openEdit(testCase) {
   form.setup_sql = formatJsonField(testCase.setup_sql)
   form.teardown_sql = formatJsonField(testCase.teardown_sql)
   form.datasets = formatJsonField(testCase.datasets)
+  showAdvanced.value = hasAdvancedConfig(testCase)
   formErr.value = ''
   showModal.value = true
 }
@@ -114,6 +156,12 @@ function openEdit(testCase) {
 function closeModal() {
   if (saving.value) return
   showModal.value = false
+}
+
+function goToInterfaces() {
+  if (saving.value) return
+  showModal.value = false
+  router.push({ name: 'interfaces' })
 }
 
 function parseJsonField(text, label) {
@@ -139,6 +187,7 @@ async function save() {
     teardown_sql = parseJsonField(form.teardown_sql, '后置 SQL')
     datasets = parseJsonField(form.datasets, '数据集')
   } catch (e) {
+    showAdvanced.value = true
     formErr.value = e.message
     return
   }
@@ -234,7 +283,12 @@ onMounted(load)
       {{ error }}
       <button class="btn btn-ghost retry" @click="load">重试</button>
     </div>
-    <div v-else-if="!items.length" class="state">暂无用例,点右上角「新建用例」创建</div>
+    <div v-else-if="!items.length && !interfaces.length" class="state">
+      <div class="state-title">还没有可关联的接口</div>
+      <div class="state-copy">测试用例需要复用接口的请求方法、URL 和参数，请先创建接口。</div>
+      <button class="btn btn-primary state-action" @click="goToInterfaces">前往接口管理</button>
+    </div>
+    <div v-else-if="!items.length" class="state">暂无用例，点右上角「新建用例」创建</div>
 
     <template v-else>
       <div class="row head">
@@ -274,54 +328,93 @@ onMounted(load)
       <label>用例名称</label>
       <input v-model="form.name" placeholder="如:下单成功返回 200" />
     </div>
-    <div class="grid3">
-      <div class="field">
-        <label>关联接口</label>
-        <select v-model="form.interface_id">
-          <option value="" disabled>请选择接口</option>
-          <option v-for="it in interfaces" :key="it.id" :value="it.id">{{ (it.method||'GET').toUpperCase() }} {{ it.name }}</option>
+    <div class="field interface-field">
+      <label for="case-interface">关联接口 <span class="opt">(必选，复用接口请求配置)</span></label>
+      <template v-if="interfaces.length">
+        <select id="case-interface" v-model="form.interface_id">
+          <option value="" disabled>请选择当前项目的接口</option>
+          <option v-for="it in interfaces" :key="it.id" :value="it.id">
+            {{ (it.method || 'GET').toUpperCase() }} · {{ it.name }} · {{ it.url }}
+          </option>
         </select>
+        <div v-if="selectedInterface" class="interface-preview" aria-live="polite">
+          <span class="method-pill">{{ (selectedInterface.method || 'GET').toUpperCase() }}</span>
+          <div class="preview-copy">
+            <strong class="preview-name">{{ selectedInterface.name }}</strong>
+            <code class="preview-url">{{ selectedInterface.url }}</code>
+          </div>
+        </div>
+        <div v-else-if="form.interface_id" class="orphan-warning" role="alert">
+          原关联接口已不存在，请重新选择一个接口。
+        </div>
+      </template>
+      <div v-else class="interface-empty">
+        <div>
+          <strong>当前项目还没有接口</strong>
+          <p>请先创建接口，再回来编写测试用例。接口的 Method、URL、Header、Query 和 Body 会被用例直接复用。</p>
+        </div>
+        <button type="button" class="btn btn-primary" @click="goToInterfaces">前往接口管理</button>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="case-expected-status">期望状态码</label>
+        <input id="case-expected-status" v-model.number="form.expected_status" type="number" />
       </div>
       <div class="field">
-        <label>期望状态码</label>
-        <input v-model.number="form.expected_status" type="number" />
-      </div>
-      <div class="field">
-        <label>失败重试</label>
-        <input v-model.number="form.retries" type="number" min="0" />
+        <label for="case-retries">失败重试</label>
+        <input id="case-retries" v-model.number="form.retries" type="number" min="0" />
       </div>
     </div>
     <div class="field">
       <label>标签 <span class="opt">(逗号分隔,可选)</span></label>
       <input v-model="form.tags" placeholder="smoke, order" />
     </div>
-    <div class="field">
-      <label>断言 <span class="opt">(JSON 数组,可选)</span></label>
-      <textarea v-model="form.assertions" rows="3" placeholder='[{"type":"json_eq","path":"code","expected":0}]'></textarea>
-    </div>
-    <div class="field">
-      <label>提取规则 <span class="opt">(JSON 对象,可选)</span></label>
-      <textarea v-model="form.extract_rules" rows="2" placeholder='{"token":"data.token"}'></textarea>
-    </div>
-    <div class="grid2">
+    <button
+      type="button"
+      class="advanced-toggle"
+      :aria-expanded="showAdvanced"
+      aria-controls="case-advanced-settings"
+      @click="showAdvanced = !showAdvanced"
+    >
+      <span class="advanced-copy">
+        <strong>高级配置</strong>
+        <small v-if="advancedConfigCount">已配置 {{ advancedConfigCount }} 项</small>
+        <small v-else>断言、变量提取、SQL 和数据驱动均为可选</small>
+      </span>
+      <svg :class="{ open: showAdvanced }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </button>
+    <div v-if="showAdvanced" id="case-advanced-settings" class="advanced-panel">
       <div class="field">
-        <label>前置 SQL <span class="opt">(JSON 数组)</span></label>
-        <textarea v-model="form.setup_sql" rows="2" placeholder='["DELETE FROM t WHERE id=1"]'></textarea>
+        <label for="case-assertions">断言 <span class="opt">(JSON 数组，可选)</span></label>
+        <textarea id="case-assertions" v-model="form.assertions" rows="3" placeholder='[{"type":"json_eq","path":"code","expected":0}]'></textarea>
       </div>
       <div class="field">
-        <label>后置 SQL <span class="opt">(JSON 数组)</span></label>
-        <textarea v-model="form.teardown_sql" rows="2" placeholder='["DELETE FROM t WHERE id=1"]'></textarea>
+        <label for="case-extract-rules">提取规则 <span class="opt">(JSON 对象，可选)</span></label>
+        <textarea id="case-extract-rules" v-model="form.extract_rules" rows="2" placeholder='{"token":"data.token"}'></textarea>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="case-setup-sql">前置 SQL <span class="opt">(JSON 数组，可选)</span></label>
+          <textarea id="case-setup-sql" v-model="form.setup_sql" rows="2" placeholder='["DELETE FROM t WHERE id=1"]'></textarea>
+        </div>
+        <div class="field">
+          <label for="case-teardown-sql">后置 SQL <span class="opt">(JSON 数组，可选)</span></label>
+          <textarea id="case-teardown-sql" v-model="form.teardown_sql" rows="2" placeholder='["DELETE FROM t WHERE id=1"]'></textarea>
+        </div>
+      </div>
+      <div class="field advanced-last-field">
+        <label for="case-datasets">数据集 <span class="opt">(JSON 数组，数据驱动，可选)</span></label>
+        <textarea id="case-datasets" v-model="form.datasets" rows="2" placeholder='[{"uid":1},{"uid":2}]'></textarea>
       </div>
     </div>
-    <div class="field">
-      <label>数据集 <span class="opt">(JSON 数组,数据驱动,可选)</span></label>
-      <textarea v-model="form.datasets" rows="2" placeholder='[{"uid":1},{"uid":2}]'></textarea>
-    </div>
-    <div v-if="formErr" class="form-err">{{ formErr }}</div>
+    <div v-if="formErr" class="form-err" role="alert">{{ formErr }}</div>
 
     <template #foot>
       <button class="btn btn-ghost" @click="closeModal" :disabled="saving">取消</button>
-      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
+      <button class="btn btn-primary" @click="save" :disabled="saving || !interfaces.length">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>
   </Modal>
 
@@ -420,6 +513,40 @@ onMounted(load)
 .field textarea { padding:10px 12px; font-family:ui-monospace,Consolas,monospace; font-size:12.5px; resize:vertical; }
 .field input:focus, .field select:focus, .field textarea:focus { outline:none; border-color:var(--primary); }
 
+.interface-field select { font-family:ui-monospace,Consolas,monospace; }
+.interface-preview { display:flex; align-items:flex-start; gap:12px; margin-top:10px; padding:12px 14px;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px; }
+.method-pill { flex:none; min-width:48px; padding:3px 8px; border-radius:6px; color:var(--primary);
+  background:var(--surface); border:1px solid var(--primary); font-size:11px; font-weight:700; text-align:center; }
+.preview-copy { min-width:0; display:flex; flex-direction:column; gap:4px; }
+.preview-name { font-size:13px; color:var(--text); }
+.preview-url { color:var(--text-muted); font-size:12px; overflow-wrap:anywhere; }
+.interface-empty { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:14px;
+  background:var(--surface-2); border:1px dashed var(--border); border-radius:10px; }
+.interface-empty strong { font-size:13px; }
+.interface-empty p { margin:5px 0 0; color:var(--text-muted); font-size:12px; line-height:1.6; }
+.interface-empty .btn { flex:none; }
+.orphan-warning { margin-top:10px; color:var(--fail-fg); font-size:12.5px;
+  background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
+.state-title { color:var(--text); font-size:14px; font-weight:650; }
+.state-copy { margin-top:7px; }
+.state-action { margin-top:16px; }
+
+.advanced-toggle { width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px;
+  margin:2px 0 18px; padding:12px 14px; color:var(--text); background:var(--surface-2);
+  border:1px solid var(--border); border-radius:10px; cursor:pointer; text-align:left;
+  font-family:inherit; transition:border-color .15s, background .15s; }
+.advanced-toggle:hover { border-color:var(--primary); }
+.advanced-toggle:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.advanced-toggle svg { width:18px; height:18px; flex:none; color:var(--text-muted); transition:transform .2s; }
+.advanced-toggle svg.open { transform:rotate(180deg); }
+.advanced-copy { display:flex; flex-direction:column; gap:3px; }
+.advanced-copy strong { font-size:13px; }
+.advanced-copy small { color:var(--text-muted); font-size:11.5px; font-weight:400; }
+.advanced-panel { margin:-8px 0 18px; padding:16px 16px 0; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:10px; }
+.advanced-last-field { margin-bottom:16px; }
+
 .form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
 
 /* ===== 结果弹层 ===== */
@@ -453,6 +580,7 @@ onMounted(load)
   .row { grid-template-columns:1fr 72px 108px; gap:8px; padding:12px 14px; }
   .c-tags { display:none; }
   .grid2, .grid3 { grid-template-columns:1fr; }
+  .interface-empty { align-items:flex-start; flex-direction:column; }
   .kv { grid-template-columns:1fr; }
 }
 </style>
