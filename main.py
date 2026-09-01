@@ -17,6 +17,7 @@ from app.routers import demo_order as demo_order_router
 from app.routers import traffic_record as traffic_record_router
 from app.routers import traffic_replay as traffic_replay_router
 from app.routers import project as project_router
+from app.routers import team as team_router
 from app.routers import scenario as scenario_router
 
 from app.database import Base, engine, engine_shadow, SessionLocal
@@ -44,6 +45,8 @@ import app.models.traffic_record
 import app.models.project
 import app.models.scenario
 import app.models.project_member
+import app.models.team
+import app.models.team_member
 import app.models.scenario_report
 
 
@@ -154,6 +157,7 @@ app.include_router(demo_order_router.router)
 app.include_router(traffic_record_router.router)
 app.include_router(traffic_replay_router.router)
 app.include_router(project_router.router)
+app.include_router(team_router.router)
 app.include_router(scenario_router.router)
 
 # Prometheus 埋点：自动统计每个路由的请求数/耗时/进行中数，并暴露 /metrics 供抓取

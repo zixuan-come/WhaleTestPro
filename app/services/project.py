@@ -1,9 +1,15 @@
 from sqlalchemy.orm import Session
 from app.repositories import project as project_repo
+from app.models.team_member import TeamMember, TeamRole
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
 def s_create(db: Session, project: ProjectCreate, owner_id: int):
+    if project.team_id is not None:
+        membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == owner_id).first()
+        if membership is None or membership.role not in (TeamRole.OWNER.value, TeamRole.ADMIN.value):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="只能在自己所属的团队中创建项目")
     return project_repo.db_create(db, project, owner_id)
 
 

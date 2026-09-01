@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { listInterfaces, createInterface, updateInterface, deleteInterface, renameCategory, deleteCategory } from '../api/interface'
 import Modal from '../components/Modal.vue'
@@ -193,7 +195,7 @@ async function commitRename() {
   }
 }
 async function onDeleteCategory(name, count) {
-  if (!confirm(`确认清空分类「${name}」? 这会把 ${count} 个接口移到"未分类"(接口本身不删)。`)) return
+  if (!(await confirmAction(`确认清空分类「${name}」? 这会把 ${count} 个接口移到"未分类"(接口本身不删)。`))) return
   catBusy.value = true
   try {
     await deleteCategory(name)
@@ -301,12 +303,12 @@ async function save() {
 }
 
 async function onDelete(id) {
-  if (!confirm('确认删除该接口?')) return
+  if (!(await confirmAction('确认删除该接口?'))) return
   try {
     await deleteInterface(id)
     items.value = items.value.filter(i => i.id !== id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

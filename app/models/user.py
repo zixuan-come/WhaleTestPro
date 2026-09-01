@@ -10,15 +10,9 @@ class User(Base):
     username = Column(String(50), nullable=False, unique=True)
     hashed_password = Column(String(200), nullable=False)
     project_memberships = relationship(
-        "ProjectMember",
-        back_populates="user",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
+        "ProjectMember", back_populates="user", cascade="all, delete-orphan", passive_deletes=True,
     )
-
-
-
-
-
-
-
+    team_memberships = relationship(
+        "TeamMember", back_populates="user", cascade="all, delete-orphan", passive_deletes=True,
+        foreign_keys="TeamMember.user_id",
+    )

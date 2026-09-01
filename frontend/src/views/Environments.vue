@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, onMounted } from 'vue'
 import {
   listEnvironments, createEnvironment, updateEnvironment, deleteEnvironment,
@@ -102,12 +104,12 @@ async function save() {
 }
 
 async function onDelete(env) {
-  if (!confirm(`确认删除环境「${env.name}」?`)) return
+  if (!(await confirmAction(`确认删除环境「${env.name}」?`))) return
   try {
     await deleteEnvironment(env.id)
     items.value = items.value.filter(i => i.id !== env.id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

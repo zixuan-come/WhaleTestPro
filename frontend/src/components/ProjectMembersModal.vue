@@ -1,13 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import Modal from './Modal.vue'
+import { useFeedback } from '../composables/feedback'
+const { confirmAction } = useFeedback()
 import {
-  addProjectMember,
-  listProjectMembers,
-  removeProjectMember,
-  searchProjectMemberCandidates,
-  updateProjectMemberRole,
-} from '../api/project'
+  addTeamMember,
+  listTeamMembers,
+  removeTeamMember,
+  searchTeamMemberCandidates,
+  updateTeamMemberRole,
+} from '../api/team'
 
 const props = defineProps({
   project: { type: Object, required: true },
@@ -35,7 +37,7 @@ async function loadMembers() {
   loading.value = true
   error.value = ''
   try {
-    members.value = await listProjectMembers(props.project.id)
+    members.value = await listTeamMembers(props.project.team_id)
   } catch (err) {
     error.value = err.message || '成员列表加载失败'
   } finally {
@@ -64,7 +66,7 @@ function onCandidateInput() {
   searchTimer = setTimeout(async () => {
     candidateLoading.value = true
     try {
-      candidates.value = await searchProjectMemberCandidates(props.project.id, {
+      candidates.value = await searchTeamMemberCandidates(props.project.team_id, {
         keyword,
         limit: 20,
       })
@@ -92,7 +94,7 @@ async function submitMember() {
 
   adding.value = true
   try {
-    await addProjectMember(props.project.id, {
+    await addTeamMember(props.project.team_id, {
       user_id: selectedCandidate.value.id,
       role: addRole.value,
     })
@@ -110,7 +112,7 @@ async function changeRole(member, role) {
   addError.value = ''
   savingMemberId.value = member.id
   try {
-    const updated = await updateProjectMemberRole(props.project.id, member.id, { role })
+    const updated = await updateTeamMemberRole(props.project.team_id, member.id, { role })
     const index = members.value.findIndex((item) => item.id === member.id)
     if (index !== -1) members.value[index] = updated
   } catch (err) {
@@ -122,12 +124,12 @@ async function changeRole(member, role) {
 }
 
 async function removeMember(member) {
-  if (!confirm(`确认移除成员“${member.user.username}”吗？`)) return
+  if (!(await confirmAction(`确认移除成员“${member.user.username}”吗？`))) return
 
   error.value = ''
   removingMemberId.value = member.id
   try {
-    await removeProjectMember(props.project.id, member.id)
+    await removeTeamMember(props.project.team_id, member.id)
     members.value = members.value.filter((item) => item.id !== member.id)
   } catch (err) {
     error.value = err.message || '移除成员失败'
@@ -151,11 +153,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Modal :title="`成员管理 · ${project.name}`" :max-width="760" :busy="busy" @close="emit('close')">
+  <Modal :title="`团队成员 · ${project.name}`" :max-width="760" :busy="busy" @close="emit('close')">
     <div class="member-toolbar">
       <div>
         <div class="section-title">添加成员</div>
-        <div class="section-note">搜索用户名后选择用户，再设置项目角色。</div>
+        <div class="section-note">搜索用户名后选择用户，再设置团队角色。</div>
       </div>
       <span class="member-count">{{ members.length }} 位成员</span>
     </div>
@@ -206,7 +208,7 @@ onBeforeUnmount(() => {
       {{ error }}
       <button class="btn btn-ghost" @click="loadMembers">重试</button>
     </div>
-    <div v-else-if="!members.length" class="state">当前项目还没有成员。</div>
+    <div v-else-if="!members.length" class="state">当前团队还没有成员。</div>
     <div v-else class="member-list">
       <div v-for="member in members" :key="member.id" class="member-row">
         <span class="member-avatar">{{ member.user.username.slice(0, 1).toUpperCase() }}</span>

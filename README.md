@@ -198,6 +198,7 @@ curl -fsS http://127.0.0.1:8080/api/health
 
 | 文档 | 说明 |
 |------|------|
+| [`docs/需求文档/README.md`](docs/需求文档/README.md) | 按功能拆分的当前需求基线（13 个业务域，含权限、流程、异常与验收标准）|
 | [`docs/spec.md`](docs/spec.md) | 内部规格书 / 需求文档(16 模块,只描述真实行为)|
 | [docs/api-response.md](docs/api-response.md) | 业务 API 统一响应结构与异常处理规范 |
 | [`docs/deployment.md`](docs/deployment.md) | Ubuntu 云服务器首次部署、日常更新、健康检查与排障 |

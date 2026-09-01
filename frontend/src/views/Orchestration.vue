@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { listCases } from '../api/case'
 import { listInterfaces } from '../api/interface'
@@ -116,7 +118,7 @@ watch(selectedEnv, (v) => auth.setPreferredEnv(auth.currentProjectId, v || null)
 
 // —— 场景操作 ——
 async function selectScenario(sc) {
-  if (dirty.value && !confirm('当前场景有未保存改动,切换会丢弃。继续?')) return
+  if (dirty.value && !(await confirmAction('当前场景有未保存改动,切换会丢弃。继续?'))) return
   try {
     // 拉全量数据(list 接口跟 get 应该一致,但保险起见)
     const full = await getScenario(sc.id)
@@ -133,7 +135,7 @@ async function selectScenario(sc) {
     chain.value = found.map(c => ({ ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` }))
     snapshotCurrent()
   } catch (e) {
-    alert(e.message || '加载场景失败')
+    showMessage(e.message || '加载场景失败', 'error')
   }
 }
 
@@ -171,19 +173,19 @@ async function saveCurrent() {
     if (idx !== -1) scenarios.value[idx] = sc
     snapshotCurrent()
   } catch (e) {
-    alert(e.message || '保存失败')
+    showMessage(e.message || '保存失败', 'error')
   }
 }
 
 async function deleteCurrent() {
   if (!currentId.value) return
-  if (!confirm(`确认删除场景「${currentName.value}」? (关联的用例不会删)`)) return
+  if (!(await confirmAction(`确认删除场景「${currentName.value}」? (关联的用例不会删)`))) return
   try {
     await deleteScenario(currentId.value)
     scenarios.value = scenarios.value.filter(s => s.id !== currentId.value)
     clearEditor()
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 
@@ -197,7 +199,7 @@ function clearEditor() {
 
 // —— chain 操作 ——
 function addToChain(c) {
-  if (!currentId.value) { alert('请先选择或新建一个场景'); return }
+  if (!currentId.value) { showMessage('请先选择或新建一个场景', 'error'); return }
   chain.value.push({ ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` })
 }
 function removeStep(i) {
@@ -215,14 +217,14 @@ function onDrop(i) {
 // —— 跑 ——
 async function onRun() {
   if (!currentId.value) return
-  if (dirty.value && !confirm('当前场景有未保存改动,跑的是保存过的版本。要不要先保存?')) return
+  if (dirty.value && !(await confirmAction('当前场景有未保存改动,跑的是保存过的版本。要不要先保存?'))) return
   running.value = true
   try {
     const data = await runScenario(currentId.value, selectedEnv.value || undefined)
     results.value = Array.isArray(data) ? data : [data]
     showResult.value = true
   } catch (e) {
-    alert(e.message || '执行失败')
+    showMessage(e.message || '执行失败', 'error')
   } finally {
     running.value = false
   }

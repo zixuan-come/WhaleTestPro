@@ -7,6 +7,7 @@ from app.repositories import user as user_repo
 from app.repositories import project as project_repo
 from app.repositories import project_member as project_member_repo
 from app.models.project_member import ProjectMember, ProjectRole
+from app.models.team_member import TeamMember, TeamRole
 from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
@@ -117,3 +118,45 @@ def get_current_project_owner(
         )
 
     return membership.project
+
+# Team-level permission dependencies. Legacy project dependencies remain for backward compatibility.
+def get_current_team_member(
+    team_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TeamMember:
+    membership = db.query(TeamMember).filter(TeamMember.team_id == team_id, TeamMember.user_id == current_user.id).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="团队不存在或无权访问")
+    return membership
+
+
+def get_current_team_admin_or_owner(
+    membership: TeamMember = Depends(get_current_team_member),
+) -> TeamMember:
+    if membership.role not in (TeamRole.OWNER.value, TeamRole.ADMIN.value):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只有团队所有者或管理员可以执行此操作")
+    return membership
+
+
+def get_current_project_admin_or_owner_team(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Project:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project is None: raise HTTPException(status_code=404, detail=f'项目 id={project_id} 不存在')
+    membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == current_user.id).first() if project.team_id else None
+    if membership is not None:
+        if membership.role not in (TeamRole.OWNER.value, TeamRole.ADMIN.value): raise HTTPException(status_code=403, detail='你是团队成员，无权修改项目详情或管理成员')
+        return project
+    legacy = project_member_repo.db_get(db, project_id, current_user.id)
+    if legacy is None or legacy.role not in (ProjectRole.OWNER.value, ProjectRole.ADMIN.value): raise HTTPException(status_code=403, detail='你是团队成员，无权修改项目详情或管理成员')
+    return project
+
+def get_current_project_owner_team(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Project:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project is None: raise HTTPException(status_code=404, detail=f'项目 id={project_id} 不存在')
+    membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == current_user.id).first() if project.team_id else None
+    if membership is not None:
+        if membership.role != TeamRole.OWNER.value: raise HTTPException(status_code=403, detail='只有团队所有者可以执行此操作')
+        return project
+    legacy = project_member_repo.db_get(db, project_id, current_user.id)
+    if legacy is None or legacy.role != ProjectRole.OWNER.value: raise HTTPException(status_code=403, detail='只有团队所有者可以执行此操作')
+    return project

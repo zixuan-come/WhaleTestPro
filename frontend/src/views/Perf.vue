@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   listPerfTasks, createPerfTask, deletePerfTask, runPerfTask,
@@ -123,19 +125,19 @@ async function onRun(task) {
     const i = items.value.findIndex(t => t.id === task.id)
     if (i !== -1 && updated) items.value[i] = updated
   } catch (e) {
-    alert(e.message || '启动失败')
+    showMessage(e.message || '启动失败', 'error')
   } finally {
     runningId.value = null
   }
 }
 
 async function onDelete(task) {
-  if (!confirm(`确认删除压测任务「${task.name}」?`)) return
+  if (!(await confirmAction(`确认删除压测任务「${task.name}」?`))) return
   try {
     await deletePerfTask(task.id)
     items.value = items.value.filter(t => t.id !== task.id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from '../api/schedule'
 import { listCases } from '../api/case'
@@ -173,17 +175,17 @@ async function toggleEnabled(s) {
     await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, enabled: !s.enabled })
     await load()
   } catch (e) {
-    alert(e.message || '切换失败')
+    showMessage(e.message || '切换失败', 'error')
   }
 }
 
 async function onDelete(s) {
-  if (!confirm(`确认删除定时任务「${s.name}」?`)) return
+  if (!(await confirmAction(`确认删除定时任务「${s.name}」?`))) return
   try {
     await deleteSchedule(s.id)
     items.value = items.value.filter(i => i.id !== s.id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

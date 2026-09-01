@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { listMocks, createMock, updateMock, deleteMock } from '../api/mock'
 import { useAuthStore } from '../stores/auth'
@@ -97,12 +99,12 @@ async function save() {
 }
 
 async function onDelete(m) {
-  if (!confirm(`确认删除挡板规则「${m.name}」?`)) return
+  if (!(await confirmAction(`确认删除挡板规则「${m.name}」?`))) return
   try {
     await deleteMock(m.id)
     items.value = items.value.filter(i => i.id !== m.id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

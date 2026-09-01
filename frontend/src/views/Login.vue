@@ -13,7 +13,7 @@ const isDark = computed(() => themeStore.theme === 'dark')
 
 const USERNAME_MIN_LENGTH = 4
 const USERNAME_MAX_LENGTH = 20
-const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_MIN_LENGTH = 4
 const PASSWORD_MAX_LENGTH = 20
 
 const mode = ref('login') // 'login' | 'register'
@@ -53,7 +53,7 @@ async function onSubmit() {
     return
   }
   if (isRegister.value && (password.value.length < PASSWORD_MIN_LENGTH || password.value.length > PASSWORD_MAX_LENGTH)) {
-    error.value = '密码需 8–20 位'
+    error.value = '密码需 4–20 位'
     return
   }
   if (isRegister.value && password.value !== confirmPassword.value) {

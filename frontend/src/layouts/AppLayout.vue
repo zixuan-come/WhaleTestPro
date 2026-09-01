@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useThemeStore } from '../stores/theme'
 import { useAuthStore } from '../stores/auth'
 import { listProjects, createProject } from '../api/project'
+import { listTeams, createTeam } from '../api/team'
 import Modal from '../components/Modal.vue'
 
 const route = useRoute()
@@ -47,6 +48,12 @@ const navGroups = [
 
 // ==================== 项目切换器 ====================
 const projectDropdownOpen = ref(false)
+const teamDropdownOpen = ref(false)
+const teams = ref([])
+const showCreateTeamModal = ref(false)
+const teamForm = ref({ name: '', description: '' })
+const teamFormErr = ref('')
+const savingTeam = ref(false)
 const projects = ref([])
 const projectsLoading = ref(false)
 const navNotice = ref("")
@@ -68,6 +75,11 @@ function navigateTo(path) {
   }
   router.push(path)
 }
+
+async function toggleTeamDropdown() { teamDropdownOpen.value = !teamDropdownOpen.value; if (teamDropdownOpen.value) { try { teams.value = await listTeams() } catch { teams.value = [] } } }
+function switchTeam(team) { auth.setTeam(team.id, team.name, team.role || ''); auth.setProject(null, ''); teamDropdownOpen.value = false; router.go(0) }
+function openCreateTeam() { teamForm.value = { name: '', description: '' }; teamFormErr.value = ''; showCreateTeamModal.value = true; teamDropdownOpen.value = false }
+async function saveTeam() { teamFormErr.value = ''; if (!teamForm.value.name.trim()) { teamFormErr.value = '请填写团队名称'; return }; savingTeam.value = true; try { const team = await createTeam({ name: teamForm.value.name.trim(), description: teamForm.value.description.trim() || null }); auth.setTeam(team.id, team.name, 'owner'); showCreateTeamModal.value = false; router.go(0) } catch (e) { teamFormErr.value = e.message || '创建失败' } finally { savingTeam.value = false } }
 
 async function loadProjects() {
   projectsLoading.value = true
@@ -108,6 +120,8 @@ function closeCreateProject() {
 async function saveProject() {
   projectFormErr.value = ''
   if (!projectForm.value.name.trim()) { projectFormErr.value = '请填写项目名称'; return }
+  if (projectForm.value.name.trim().length > 100) { projectFormErr.value = '项目名称不能超过 100 个字符'; return }
+  if (projectForm.value.description.length > 500) { projectFormErr.value = '项目简介不能超过 500 个字符'; return }
   savingProject.value = true
   try {
     const created = await createProject({
@@ -185,7 +199,7 @@ function onLogout() {
         <span class="avatar"></span>
         <div class="who">
           <div class="name">{{ auth.username || '测试团队' }}</div>
-          <div class="role">已登录</div>
+          <div class="role">{{ auth.currentTeamRole === 'owner' ? '所有者' : auth.currentTeamRole === 'admin' ? '管理员' : auth.currentTeamRole === 'member' ? '成员' : '未加入团队' }}</div>
         </div>
         <button class="logout" title="退出登录" @click="onLogout">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -203,6 +217,8 @@ function onLogout() {
           <div class="crumb">工作台 / {{ crumb }}</div>
         </div>
         <div class="actions">
+          <div class="project-switcher" :class="{ open: teamDropdownOpen }"><button class="switcher-btn" @click.stop="toggleTeamDropdown"><span class="pname">{{ auth.currentTeamName || '选择团队' }}</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg></button><div v-if="teamDropdownOpen" class="dropdown" @click.stop><div class="dd-head">切换团队</div><div v-if="!teams.length" class="dd-state">还没有团队</div><button v-for="team in teams" :key="team.id" class="dd-item" @click="switchTeam(team)"><span class="dd-name">{{ team.name }}</span><span>{{ team.role }}</span></button><div class="dd-foot"><button class="dd-action" @click="openCreateTeam">＋ 新建团队</button></div></div></div>
+
           <!-- 项目切换器 -->
           <div class="project-switcher" :class="{ open: projectDropdownOpen }">
             <button class="switcher-btn" @click.stop="toggleProjectDropdown" :title="auth.currentProjectName || '未选择项目'">
@@ -262,6 +278,8 @@ function onLogout() {
         <router-view />
       </main>
     </div>
+
+    <Modal v-if="showCreateTeamModal" title="新建团队" :busy="savingTeam" @close="showCreateTeamModal = false"><div class="mfield"><label>团队名称</label><input v-model="teamForm.name" /></div><div class="mfield"><label>简介</label><textarea v-model="teamForm.description" rows="3"></textarea></div><div v-if="teamFormErr" class="mform-err">{{ teamFormErr }}</div><template #foot><button class="btn btn-ghost" @click="showCreateTeamModal = false">取消</button><button class="btn btn-primary" @click="saveTeam">创建</button></template></Modal>
 
     <!-- 快捷新建项目弹窗 -->
     <Modal v-if="showCreateProjectModal" title="新建项目" :busy="savingProject" @close="closeCreateProject">

@@ -66,7 +66,7 @@ def update_project(
     project_id: int,
     project: ProjectUpdate,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project_owner),
+    current_project: Project = Depends(get_current_project_admin_or_owner_team),
 ):
     try:
         result = project_service.s_update(db, current_project.id, project)
@@ -144,7 +144,7 @@ def remove_project_member(
 def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project_owner),
+    current_project: Project = Depends(get_current_project_admin_or_owner_team),
 ):
     try:
         result = project_service.s_delete(db, current_project.id)

@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
 import { listProjects, createProject, updateProject, deleteProject } from '../api/project'
 import { useAuthStore } from '../stores/auth'
@@ -55,6 +57,8 @@ function closeModal() {
 async function save() {
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写项目名称'; return }
+  if (form.name.trim().length > 100) { formErr.value = '项目名称不能超过 100 个字符'; return }
+  if (form.description.length > 500) { formErr.value = '项目简介不能超过 500 个字符'; return }
 
   saving.value = true
   try {
@@ -66,7 +70,7 @@ async function save() {
     if (editingId.value == null) {
       const created = await createProject(payload)
       auth.setProject(created.id, created.name)
-      window.dispatchEvent(new CustomEvent('wtp:notice', { detail: { message: '项目创建成功，已切换到该项目', type: 'success' } }))
+      showMessage('项目创建成功，已切换到该项目', 'success')
     } else {
       const updated = await updateProject(editingId.value, payload)
       if (updated.id === auth.currentProjectId) {
@@ -85,14 +89,14 @@ async function save() {
 async function onDelete(project) {
   const isCurrent = project.id === auth.currentProjectId
   const warn = isCurrent ? '\n\n⚠️ 这是你当前所在的项目,删除后需重新选择。' : ''
-  if (!confirm(`确认删除项目「${project.name}」?此操作不可恢复。${warn}`)) return
+  if (!(await confirmAction(`确认删除项目「${project.name}」?此操作不可恢复。${warn}`))) return
   try {
     await deleteProject(project.id)
     items.value = items.value.filter(p => p.id !== project.id)
     // 删的是当前项目就清一下,下次守卫会重选或跳这里
     if (isCurrent) auth.setProject(null, '')
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 

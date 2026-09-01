@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { listProjects } from '../api/project'
+import { listTeams } from '../api/team'
 
 export const useAuthStore = defineStore('auth', () => {
   // 刷新不掉登录:token 持久化到 localStorage
@@ -10,6 +11,20 @@ export const useAuthStore = defineStore('auth', () => {
   // 当前选中的项目:id + name 都存起来,下拉/topbar 显示要用
   const currentProjectId = ref(Number(localStorage.getItem('wtp_pid')) || null)
   const currentProjectName = ref(localStorage.getItem('wtp_pname') || '')
+  const currentTeamId = ref(Number(localStorage.getItem('wtp_tid')) || null)
+  const currentTeamName = ref(localStorage.getItem('wtp_tname') || '')
+  const currentTeamRole = ref(localStorage.getItem('wtp_trole') || '')
+
+  function setTeam(id, name, role) {
+    currentTeamId.value = id || null; currentTeamName.value = name || ''; currentTeamRole.value = role || ''
+    if (id) { localStorage.setItem('wtp_tid', String(id)); localStorage.setItem('wtp_tname', name || ''); localStorage.setItem('wtp_trole', role || '') }
+    else { localStorage.removeItem('wtp_tid'); localStorage.removeItem('wtp_tname'); localStorage.removeItem('wtp_trole') }
+  }
+
+  async function initTeam() {
+    const teams = await listTeams(); if (!teams.length) { setTeam(null, '', ''); setProject(null, ''); return { teams, activeId: null } }
+    const active = (currentTeamId.value && teams.find(t => t.id === currentTeamId.value)) || teams[0]; setTeam(active.id, active.name, active.role || ''); return { teams, activeId: active.id }
+  }
 
   // 每个项目记住上次选的环境,跨会话保留("这个用例上次是在哪个环境跑的")
   // 存成 {pid: envId} 的 JSON,localStorage 只放字符串所以用 parse/stringify
@@ -76,5 +91,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('wtp_user')
   }
 
-  return { token, username, currentProjectId, currentProjectName, setAuth, setProject, initProject, logout, getPreferredEnv, setPreferredEnv }
+  return { token, username, currentProjectId, currentProjectName, currentTeamId, currentTeamName, currentTeamRole, setAuth, setProject, setTeam, initProject, initTeam, logout, getPreferredEnv, setPreferredEnv }
 })

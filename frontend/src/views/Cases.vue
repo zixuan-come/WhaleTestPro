@@ -1,4 +1,6 @@
 <script setup>
+import { useFeedback } from '../composables/feedback'
+const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
@@ -227,19 +229,19 @@ async function onRun(c) {
     resultData.value = data
     showResult.value = true
   } catch (e) {
-    alert(e.message || '执行失败')
+    showMessage(e.message || '执行失败', 'error')
   } finally {
     runningId.value = null
   }
 }
 
 async function onDelete(c) {
-  if (!confirm(`确认删除用例「${c.name}」?`)) return
+  if (!(await confirmAction(`确认删除用例「${c.name}」?`))) return
   try {
     await deleteCase(c.id)
     items.value = items.value.filter(i => i.id !== c.id)
   } catch (e) {
-    alert(e.message || '删除失败')
+    showMessage(e.message || '删除失败', 'error')
   }
 }
 
