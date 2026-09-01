@@ -49,11 +49,25 @@ const navGroups = [
 const projectDropdownOpen = ref(false)
 const projects = ref([])
 const projectsLoading = ref(false)
+const navNotice = ref("")
+const navNoticeType = ref("error")
+let navNoticeTimer = null
 
 const showCreateProjectModal = ref(false)
 const savingProject = ref(false)
 const projectFormErr = ref('')
 const projectForm = ref({ name: '', description: '' })
+
+function navigateTo(path) {
+  if (path !== "/projects" && !auth.currentProjectId) {
+    navNoticeType.value = "error"
+    navNotice.value = "请先创建并选择一个项目"
+    clearTimeout(navNoticeTimer)
+    navNoticeTimer = setTimeout(() => { navNotice.value = "" }, 3200)
+    return
+  }
+  router.push(path)
+}
 
 async function loadProjects() {
   projectsLoading.value = true
@@ -114,8 +128,21 @@ async function saveProject() {
 function onOutsideClick(e) {
   if (!e.target.closest('.project-switcher')) projectDropdownOpen.value = false
 }
-onMounted(() => document.addEventListener('click', onOutsideClick))
-onBeforeUnmount(() => document.removeEventListener('click', onOutsideClick))
+onMounted(() => {
+  document.addEventListener('click', onOutsideClick)
+  const notice = localStorage.getItem('wtp_project_notice')
+  if (notice) {
+    localStorage.removeItem('wtp_project_notice')
+    navNoticeType.value = 'success'
+    navNotice.value = notice
+    clearTimeout(navNoticeTimer)
+    navNoticeTimer = setTimeout(() => { navNotice.value = "" }, 3200)
+  }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onOutsideClick)
+  clearTimeout(navNoticeTimer)
+})
 
 function onLogout() {
   auth.logout()
@@ -143,6 +170,7 @@ function onLogout() {
           :key="item.to"
           :to="item.to"
           class="nav"
+          @click.prevent="navigateTo(item.to)"
           active-class="active"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -168,6 +196,7 @@ function onLogout() {
 
     <div class="main">
       <header class="topbar">
+        <div v-if="navNotice" class="nav-notice" :class="{ 'success': navNoticeType === 'success' }" role="alert" aria-live="polite">{{ navNotice }}</div>
         <div>
           <h1>{{ title }}</h1>
           <div class="crumb">工作台 / {{ crumb }}</div>
@@ -287,6 +316,12 @@ function onLogout() {
 .logout:hover { color:var(--fail-fg); background:var(--fail-bg); }
 
 .main { display:flex; flex-direction:column; overflow:hidden; }
+.nav-notice { position:fixed; top:50%; left:50%; z-index:20; display:flex; align-items:center; gap:10px; max-width:calc(100vw - 40px); padding:14px 18px; border:1px solid var(--fail-fg); border-radius:10px; background:var(--surface); color:var(--fail-fg); font-size:13px; font-weight:600; box-shadow:var(--shadow-lg); transform:translate(-50%,-50%); animation:nav-notice-in .18s ease; }
+.nav-notice.success { border-color:var(--primary); color:var(--primary); }
+.nav-notice.success::before { content:"✓"; background:var(--ring); }
+.nav-notice::before { content:"!"; display:grid; place-items:center; width:20px; height:20px; border-radius:50%; background:var(--fail-bg); font-size:12px; font-weight:800; }
+@keyframes nav-notice-in { from { opacity:0; transform:translate(-50%,-46%); } to { opacity:1; transform:translate(-50%,-50%); } }
+
 .topbar { position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between;
   padding:15px 26px; background:var(--surface); border-bottom:1px solid var(--border);
   transition:background .3s,border-color .3s; }
