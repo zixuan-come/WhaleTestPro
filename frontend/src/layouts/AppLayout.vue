@@ -116,6 +116,7 @@ async function saveProject() {
     })
     showCreateProjectModal.value = false
     auth.setProject(created.id, created.name)
+    localStorage.setItem('wtp_project_notice', '项目创建成功，已切换到该项目')
     router.go(0)
   } catch (e) {
     projectFormErr.value = e.message || '创建失败'

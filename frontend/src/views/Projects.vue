@@ -66,6 +66,7 @@ async function save() {
     if (editingId.value == null) {
       const created = await createProject(payload)
       auth.setProject(created.id, created.name)
+      window.dispatchEvent(new CustomEvent('wtp:notice', { detail: { message: '项目创建成功，已切换到该项目', type: 'success' } }))
     } else {
       const updated = await updateProject(editingId.value, payload)
       if (updated.id === auth.currentProjectId) {
