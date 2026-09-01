@@ -5,7 +5,7 @@ from app.core.deps import get_current_user, login_rate_limit, oauth2_scheme
 from app.database import get_db
 from app.models.user import User
 from app.schemas.response import ApiResponse, success_response
-from app.schemas.user import TokenOut, UserCreate, UserOut
+from app.schemas.user import TokenOut, UserCreate, UserLogin, UserOut
 from app.services import user as user_service
 
 
@@ -23,7 +23,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=ApiResponse[TokenOut])
 def login(
-    user: UserCreate,
+    user: UserLogin,
     db: Session = Depends(get_db),
     _: None = Depends(login_rate_limit),
 ):

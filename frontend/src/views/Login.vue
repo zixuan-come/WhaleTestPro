@@ -11,9 +11,15 @@ const auth = useAuthStore()
 const themeStore = useThemeStore()
 const isDark = computed(() => themeStore.theme === 'dark')
 
+const USERNAME_MIN_LENGTH = 4
+const USERNAME_MAX_LENGTH = 20
+const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_MAX_LENGTH = 20
+
 const mode = ref('login') // 'login' | 'register'
 const username = ref('')
 const password = ref('')
+const confirmPassword = ref('')
 const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
@@ -29,12 +35,29 @@ const submitText = computed(() => {
 function switchMode(next) {
   mode.value = next
   error.value = ''
+  confirmPassword.value = ''
 }
 
 async function onSubmit() {
   error.value = ''
   if (!username.value || !password.value) {
     error.value = '请输入账号和密码'
+    return
+  }
+  if (isRegister.value && !confirmPassword.value) {
+    error.value = '请确认密码'
+    return
+  }
+  if (isRegister.value && (username.value.length < USERNAME_MIN_LENGTH || username.value.length > USERNAME_MAX_LENGTH)) {
+    error.value = '账号需 4–20 位'
+    return
+  }
+  if (isRegister.value && (password.value.length < PASSWORD_MIN_LENGTH || password.value.length > PASSWORD_MAX_LENGTH)) {
+    error.value = '密码需 8–20 位'
+    return
+  }
+  if (isRegister.value && password.value !== confirmPassword.value) {
+    error.value = '两次输入的密码不一致'
     return
   }
   loading.value = true
@@ -93,7 +116,7 @@ async function onSubmit() {
       </aside>
 
       <!-- 表单侧 -->
-      <form class="form" @submit.prevent="onSubmit">
+      <form class="form" novalidate @submit.prevent="onSubmit">
         <h1>{{ title }}</h1>
         <p class="sub">{{ subtitle }}</p>
 
@@ -102,7 +125,7 @@ async function onSubmit() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0112 0v1" />
           </svg>
-          <input v-model="username" type="text" placeholder="请输入账号" autocomplete="username" />
+          <input v-model="username" type="text" placeholder="请输入账号" autocomplete="username" required :minlength="isRegister ? USERNAME_MIN_LENGTH : undefined" />
         </div>
 
         <label>密码</label>
@@ -110,7 +133,7 @@ async function onSubmit() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
           </svg>
-          <input v-model="password" :type="showPassword ? 'text' : 'password'" :placeholder="isRegister ? '设置密码' : '请输入密码'" :autocomplete="isRegister ? 'new-password' : 'current-password'" />
+          <input v-model="password" :type="showPassword ? 'text' : 'password'" :placeholder="isRegister ? '设置密码' : '请输入密码'" :autocomplete="isRegister ? 'new-password' : 'current-password'" required :minlength="isRegister ? PASSWORD_MIN_LENGTH : undefined" />
           <button type="button" class="eye" @click="showPassword = !showPassword" :title="showPassword ? '隐藏密码' : '显示密码'">
             <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
@@ -121,6 +144,15 @@ async function onSubmit() {
             </svg>
           </button>
         </div>
+        <template v-if="isRegister">
+          <label>确认密码</label>
+          <div class="field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
+            </svg>
+            <input v-model="confirmPassword" type="password" placeholder="再次输入密码" autocomplete="new-password" required />
+          </div>
+        </template>
 
         <transition name="fade">
           <p v-if="error" class="err">{{ error }}</p>
