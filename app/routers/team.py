@@ -21,8 +21,12 @@ def list_teams(db: Session = Depends(get_db), current_user: User = Depends(get_c
 @router.post("", response_model=ApiResponse[TeamOut], status_code=status.HTTP_201_CREATED)
 def create_team(data: TeamCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     try: result = team_service.s_create(db, data, current_user.id)
-    except IntegrityError:
-        db.rollback(); raise HTTPException(409, f"团队名 '{data.name}' 已存在")
+    except IntegrityError as exc:
+        db.rollback()
+        detail = str(getattr(exc, "orig", exc)).lower()
+        if ("duplicate" in detail and "name" in detail) or "unique constraint failed: team.name" in detail:
+            raise HTTPException(409, f"团队名 '{data.name}' 已存在")
+        raise
     return success_response(result, message="团队创建成功", status_code=201)
 
 @router.patch("/{team_id}", response_model=ApiResponse[TeamOut])

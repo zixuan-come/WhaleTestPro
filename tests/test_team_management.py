@@ -9,8 +9,11 @@ from app.models.team_invitation import TeamInvitation
 from app.models.team_member import TeamMember, TeamRole
 from app.models.team_permission import TeamPermission
 from app.models.user import User
+from fastapi import HTTPException
+from app.routers.team import create_team
 from app.services import project as project_service
 from app.services import team as team_service
+from app.schemas.team import TeamCreate
 
 
 def _db():
@@ -64,3 +67,30 @@ def test_member_content_write_permission_can_be_enabled():
     item = team_service.s_set_permission(db, team.id, "member", "content.write", True)
     assert item.enabled is True
     assert db.query(TeamPermission).filter_by(team_id=team.id, permission="content.write").one().enabled is True
+
+
+def test_create_team_sets_owner_and_owner_membership():
+    db = _db()
+    owner = User(username="create-owner", hashed_password="x")
+    db.add(owner); db.flush()
+
+    team = team_service.s_create(db, TeamCreate(name="created-team"), owner.id)
+
+    assert team.owner_id == owner.id
+    assert db.query(TeamMember).filter_by(team_id=team.id, user_id=owner.id, role="owner").one()
+
+
+def test_duplicate_team_name_returns_conflict():
+    db = _db()
+    owner = User(username="duplicate-owner", hashed_password="x")
+    db.add(owner); db.flush()
+    data = TeamCreate(name="duplicate-team")
+
+    create_team(data, db, owner)
+    try:
+        create_team(data, db, owner)
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert "duplicate-team" in exc.detail
+    else:
+        raise AssertionError("duplicate team name should return HTTP 409")

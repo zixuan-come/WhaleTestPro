@@ -20,6 +20,7 @@ def db_list_for_user(db: Session, user_id: int) -> list[Team]:
 
 
 def db_create(db: Session, team: Team, owner_id: int) -> Team:
+    team.owner_id = owner_id
     db.add(team); db.flush(); db.add(TeamMember(team_id=team.id, user_id=owner_id, role="owner")); db.commit(); db.refresh(team); return team
 
 
