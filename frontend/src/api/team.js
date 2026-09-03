@@ -1,5 +1,4 @@
 import http from './http'
-
 export const listTeams = () => http.get('/teams')
 export const createTeam = (data) => http.post('/teams', data)
 export const listTeamMembers = (id) => http.get(`/teams/${id}/members`)
@@ -7,3 +6,12 @@ export const searchTeamMemberCandidates = (id, params) => http.get(`/teams/${id}
 export const addTeamMember = (id, data) => http.post(`/teams/${id}/members`, data)
 export const updateTeamMemberRole = (teamId, memberId, data) => http.patch(`/teams/${teamId}/members/${memberId}`, data)
 export const removeTeamMember = (teamId, memberId) => http.delete(`/teams/${teamId}/members/${memberId}`)
+export const updateTeam = (id, data) => http.patch(`/teams/${id}`, data)
+export const transferTeamOwnership = (id, data) => http.post(`/teams/${id}/transfer`, data)
+export const leaveTeam = (id) => http.post(`/teams/${id}/leave`)
+export const deleteTeam = (id) => http.delete(`/teams/${id}`)
+export const inviteTeamMember = (id, data) => http.post(`/teams/${id}/invitations`, data)
+export const listTeamInvitations = () => http.get('/teams/invitations')
+export const respondTeamInvitation = (id, accept) => http.post(`/teams/invitations/${id}/respond`, null, { params: { accept } })
+export const listTeamPermissions = (id) => http.get(`/teams/${id}/permissions`)
+export const setTeamPermission = (id, data) => http.put(`/teams/${id}/permissions`, data)

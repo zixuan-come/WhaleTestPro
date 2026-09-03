@@ -7,12 +7,14 @@ from app.core.deps import (
     get_current_project_member,
     get_current_project_owner,
     get_current_user,
+    get_current_project_admin_or_owner_team,
+    get_current_project_owner_team,
 )
 from app.database import get_db
 from app.models.project import Project
 from app.models.project_member import ProjectMember
 from app.models.user import User
-from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate, ProjectTeamMove
 from app.schemas.project_member import (
     ProjectMemberCreate,
     ProjectMemberOut,
@@ -43,10 +45,11 @@ def create_project(
 
 @router.get("", response_model=ApiResponse[list[ProjectOut]])
 def list_projects(
+    team_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return success_response(project_service.s_list(db, current_user.id), message="查询成功")
+    return success_response(project_service.s_list(db, current_user.id, team_id), message="查询成功")
 
 
 @router.get("/{project_id}", response_model=ApiResponse[ProjectOut])
@@ -154,3 +157,7 @@ def delete_project(
     if result is None:
         raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在")
     return success_response(result, message="项目删除成功")
+@router.post("/{project_id}/move-team", response_model=ApiResponse[ProjectOut])
+def move_project_team(project_id: int, data: ProjectTeamMove, db: Session = Depends(get_db), current_project: Project = Depends(get_current_project_admin_or_owner_team), current_user: User = Depends(get_current_user)):
+    result = project_service.s_move_team(db, current_project.id, data.team_id, current_user.id)
+    return success_response(result, message="项目已迁移到目标团队")

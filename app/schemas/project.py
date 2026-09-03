@@ -1,4 +1,4 @@
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 from app.schemas.base import NamedSchema
 
@@ -18,3 +18,6 @@ class ProjectOut(ProjectCreate):
     team_role: str | None = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+class ProjectTeamMove(BaseModel):
+    team_id: int

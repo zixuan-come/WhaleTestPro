@@ -47,6 +47,8 @@ import app.models.scenario
 import app.models.project_member
 import app.models.team
 import app.models.team_member
+import app.models.team_invitation
+import app.models.team_permission
 import app.models.scenario_report
 
 

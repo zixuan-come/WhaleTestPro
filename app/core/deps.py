@@ -8,6 +8,7 @@ from app.repositories import project as project_repo
 from app.repositories import project_member as project_member_repo
 from app.models.project_member import ProjectMember, ProjectRole
 from app.models.team_member import TeamMember, TeamRole
+from app.models.team_permission import TeamPermission
 from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
@@ -52,6 +53,7 @@ def login_rate_limit(request: Request):
 
 
 def get_current_project(
+    request: Request,
     x_project_id: int = Header(..., alias="X-Project-Id"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -70,6 +72,26 @@ def get_current_project(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"项目 id={x_project_id} 不存在",
         )
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        path = request.url.path
+        execution_path = path.endswith("/run") or path.startswith("/traffic/replay/") or path.endswith("/chain")
+        if not execution_path:
+            membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == current_user.id).first() if project.team_id else None
+            legacy = project_member_repo.db_get(db, project.id, current_user.id) if membership is None else None
+            role = membership.role if membership else (legacy.role if legacy else None)
+            configurable = False
+            if membership is not None and membership.role == TeamRole.MEMBER.value:
+                permission = "content.write"
+                if path.startswith("/interfaces"): permission = "interface.write"
+                elif path.startswith("/cases"): permission = "case.write"
+                elif path.startswith("/environments"): permission = "environment.write"
+                elif path.startswith("/mock"): permission = "mock.write"
+                elif path.startswith("/schedules"): permission = "schedule.write"
+                elif path.startswith("/perf"): permission = "perf.write"
+                elif path.startswith("/scenarios"): permission = "scenario.write"
+                configurable = db.query(TeamPermission).filter(TeamPermission.team_id == project.team_id, TeamPermission.role == TeamRole.MEMBER.value, TeamPermission.permission == permission, TeamPermission.enabled.is_(True)).first() is not None
+            if role not in (TeamRole.OWNER.value, TeamRole.ADMIN.value, ProjectRole.OWNER.value, ProjectRole.ADMIN.value) and not configurable:
+                raise HTTPException(status_code=403, detail="你是团队成员，无权修改项目内容")
     return project
 
 
@@ -139,6 +161,19 @@ def get_current_team_admin_or_owner(
     return membership
 
 
+def get_current_project_member_team(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> ProjectMember:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project is None: raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在")
+    team_membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == current_user.id).first() if project.team_id else None
+    if team_membership is None: raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在或无权访问")
+    legacy = project_member_repo.db_get(db, project_id, current_user.id)
+    if legacy is None: raise HTTPException(status_code=404, detail=f"项目 id={project_id} 不存在或无权访问")
+    return legacy
+
+def get_current_project_member_team_admin_or_owner(membership: ProjectMember = Depends(get_current_project_member_team)) -> ProjectMember:
+    if membership.role not in (ProjectRole.OWNER.value, ProjectRole.ADMIN.value): raise HTTPException(status_code=403, detail="只有团队所有者或管理员可以管理项目成员")
+    return membership
+
 def get_current_project_admin_or_owner_team(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Project:
     project = db.query(Project).filter(Project.id == project_id).first()
     if project is None: raise HTTPException(status_code=404, detail=f'项目 id={project_id} 不存在')
@@ -149,6 +184,9 @@ def get_current_project_admin_or_owner_team(project_id: int, db: Session = Depen
     legacy = project_member_repo.db_get(db, project_id, current_user.id)
     if legacy is None or legacy.role not in (ProjectRole.OWNER.value, ProjectRole.ADMIN.value): raise HTTPException(status_code=403, detail='你是团队成员，无权修改项目详情或管理成员')
     return project
+
+def get_current_project_team_admin_or_owner(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Project:
+    return get_current_project_admin_or_owner_team(project_id, db, current_user)
 
 def get_current_project_owner_team(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Project:
     project = db.query(Project).filter(Project.id == project_id).first()

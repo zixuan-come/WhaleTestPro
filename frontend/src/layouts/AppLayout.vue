@@ -42,6 +42,7 @@ const navGroups = [
     label: '系统',
     items: [
       { to: '/projects', text: '项目管理', icon: 'M3 7l9-4 9 4-9 4-9-4z M3 12l9 4 9-4 M3 17l9 4 9-4' },
+      { to: '/teams', text: '团队管理', icon: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8z M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75' },
     ],
   },
 ]
@@ -66,7 +67,7 @@ const projectFormErr = ref('')
 const projectForm = ref({ name: '', description: '' })
 
 function navigateTo(path) {
-  if (path !== "/projects" && !auth.currentProjectId) {
+  if (path !== "/projects" && path !== "/teams" && !auth.currentProjectId) {
     navNoticeType.value = "error"
     navNotice.value = "请先创建并选择一个项目"
     clearTimeout(navNoticeTimer)
@@ -84,7 +85,7 @@ async function saveTeam() { teamFormErr.value = ''; if (!teamForm.value.name.tri
 async function loadProjects() {
   projectsLoading.value = true
   try {
-    projects.value = await listProjects()
+    projects.value = await listProjects(auth.currentTeamId ? { team_id: auth.currentTeamId } : {})
   } catch (e) {
     // 静默失败,下拉会显示"加载失败"提示
     projects.value = []

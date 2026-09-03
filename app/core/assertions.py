@@ -1,7 +1,26 @@
+import re
+
 from sqlalchemy import text
 from app.core.variables import extract
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
+
+
+_READ_ONLY_SQL = re.compile(r"^\s*select\b", re.IGNORECASE)
+_FORBIDDEN_SQL = re.compile(
+    r"\b(?:insert|update|delete|drop|alter|truncate|create|replace|grant|revoke|call|do|load|outfile|dumpfile|into)\b",
+    re.IGNORECASE,
+)
+
+
+def _execute_read_only(db, sql):
+    """Execute a conservative, single-statement SELECT for db_eq assertions."""
+    if not isinstance(sql, str) or not _READ_ONLY_SQL.match(sql):
+        raise ValueError("db_eq 只允许执行单条只读 SELECT 语句")
+    if ";" in sql or _FORBIDDEN_SQL.search(sql):
+        raise ValueError("db_eq 只允许执行单条只读 SELECT 语句")
+    return db.execute(text(sql)).scalar()
+
 
 def run_assertions(response, assertions, db):
     results = []
@@ -34,7 +53,7 @@ def run_assertions(response, assertions, db):
                 actual = "schema 校验通过"
                 passed = True
             elif a_type == "db_eq":
-                actual = db.execute(text(a["sql"])).scalar()
+                actual = _execute_read_only(db, a["sql"])
                 passed = actual == a["expected"]
             else:
                 actual = f"未知断言类型: {a_type}"
@@ -54,15 +73,3 @@ def run_assertions(response, assertions, db):
         })
 
     return results
-
-
-
-
-
-
-
-
-
-
-
-

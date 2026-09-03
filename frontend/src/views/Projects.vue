@@ -2,7 +2,8 @@
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
-import { listProjects, createProject, updateProject, deleteProject } from '../api/project'
+import { listProjects, createProject, updateProject, deleteProject, moveProjectToTeam } from '../api/project'
+import { listTeams } from '../api/team'
 import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
 import ProjectMembersModal from '../components/ProjectMembersModal.vue'
@@ -18,14 +19,19 @@ const saving = ref(false)
 const formErr = ref('')
 const form = reactive({ name: '', description: '' })
 const memberProject = ref(null)
+const moveProject = ref(null)
+const moveTeams = ref([])
+const moveTargetTeam = ref(null)
+const moving = ref(false)
 
 const total = computed(() => items.value.length)
+const canManageTeam = computed(() => !auth.currentTeamId || ['owner', 'admin'].includes(auth.currentTeamRole))
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    items.value = await listProjects()
+    items.value = await listProjects(auth.currentTeamId ? { team_id: auth.currentTeamId } : {})
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -65,6 +71,7 @@ async function save() {
     const payload = {
       name: form.name.trim(),
       description: form.description.trim() || null,
+      ...(editingId.value == null && auth.currentTeamId ? { team_id: auth.currentTeamId } : {}),
     }
 
     if (editingId.value == null) {
@@ -105,6 +112,9 @@ function switchTo(project) {
   // 顺手刷新一下让列表高亮生效(active class 通过 currentProjectId 计算)
 }
 
+async function openMove(project) { moveProject.value = project; moveTargetTeam.value = null; moveTeams.value = (await listTeams()).filter(t => t.id !== project.team_id) }
+async function submitMove() { if (!moveProject.value || !moveTargetTeam.value) return; moving.value = true; try { await moveProjectToTeam(moveProject.value.id, Number(moveTargetTeam.value)); showMessage("项目迁移成功", "success"); moveProject.value = null; await load() } catch (e) { showMessage(e.message || "迁移失败", "error") } finally { moving.value = false } }
+
 function openMembers(project) {
   memberProject.value = project
 }
@@ -132,6 +142,8 @@ onMounted(load)
       </button>
     </div>
 
+    <div v-if="!canManageTeam" class="permission-tip">你是团队成员，只能使用项目功能，不能修改项目详情、删除项目或管理成员。</div>
+
     <div v-if="loading" class="state">加载中…</div>
     <div v-else-if="error" class="state err">
       {{ error }}
@@ -157,15 +169,16 @@ onMounted(load)
         <span class="c-time">{{ formatDate(p.created_at) }}</span>
         <span class="c-act">
           <button v-if="p.id !== auth.currentProjectId" class="btn btn-ghost sm" @click="switchTo(p)">切到这个</button>
-          <button class="icon-btn edit-action" title="编辑" @click="openEdit(p)">
+          <button v-if="canManageTeam" class="icon-btn edit-action" title="编辑" @click="openEdit(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>
-          <button class="icon-btn member-action" title="成员管理" @click="openMembers(p)">
+          <button v-if="canManageTeam" class="icon-btn member-action" title="成员管理" @click="openMembers(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
             </svg>
           </button>
-          <button class="icon-btn" title="删除" @click="onDelete(p)">
+          <button v-if="canManageTeam" class="icon-btn" title="迁移团队" @click="openMove(p)">↗</button>
+<button v-if="canManageTeam" class="icon-btn" title="删除" @click="onDelete(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
             </svg>
@@ -237,7 +250,7 @@ onMounted(load)
 .field { margin-bottom:18px; }
 .field label { display:block; font-size:12.5px; font-weight:600; margin-bottom:8px; color:var(--text); }
 .field label .opt { color:var(--text-muted); font-weight:400; }
-.field input, .field textarea { width:100%; padding:0 12px; font-size:13px; color:var(--text);
+.field input, .field textarea, .field select { width:100%; padding:0 12px; font-size:13px; color:var(--text);
   background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
   transition:border-color .15s; font-family:inherit; }
 .field input { height:38px; }
@@ -245,6 +258,7 @@ onMounted(load)
 .field input:focus, .field textarea:focus { outline:none; border-color:var(--primary); }
 
 .form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
+.permission-tip { margin:0 0 16px; padding:10px 12px; border-radius:8px; background:var(--surface-2); color:var(--text-muted); font-size:12px; }
 
 @media (max-width:900px) {
   .row { grid-template-columns:1.4fr 1.5fr 130px; gap:8px; padding:12px 14px; }

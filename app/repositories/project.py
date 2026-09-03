@@ -29,7 +29,9 @@ def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
         db.flush()
         db_project.team_id = team.id
         team_id = team.id
-    db.add(TeamMember(team_id=team_id, user_id=owner_id, role=TeamRole.OWNER.value))
+    membership = db.query(TeamMember).filter(TeamMember.team_id == team_id, TeamMember.user_id == owner_id).first()
+    if membership is None:
+        db.add(TeamMember(team_id=team_id, user_id=owner_id, role=TeamRole.OWNER.value))
     db.add(ProjectMember(project_id=db_project.id, user_id=owner_id, role=ProjectRole.OWNER.value))
     db.commit()
     db.refresh(db_project)
@@ -47,12 +49,14 @@ def db_get_for_user(db: Session, project_id: int, user_id: int) -> Project | Non
         .first())
 
 
-def db_list_for_user(db: Session, user_id: int) -> list[Project]:
-    return (db.query(Project)
+def db_list_for_user(db: Session, user_id: int, team_id: int | None = None) -> list[Project]:
+    query = (db.query(Project)
         .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
         .outerjoin(TeamMember, and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id))
-        .filter(or_(ProjectMember.user_id == user_id, TeamMember.user_id == user_id))
-        .order_by(Project.created_at.desc()).all())
+        .filter(or_(ProjectMember.user_id == user_id, TeamMember.user_id == user_id)))
+    if team_id is not None:
+        query = query.filter(Project.team_id == team_id)
+    return query.order_by(Project.created_at.desc()).all()
 
 
 def db_update(db: Session, project_id: int, project) -> Project | None:

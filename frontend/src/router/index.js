@@ -11,6 +11,7 @@ const routes = [
       { path: '', redirect: '/interfaces' },
       // 项目管理页:不需要选中项目(它自己是选项目的地方)
       { path: 'projects', name: 'projects', component: () => import('../views/Projects.vue'), meta: { title: '项目管理', crumb: '系统 / 项目', noProjectRequired: true } },
+      { path: 'teams', name: 'teams', component: () => import('../views/Teams.vue'), meta: { title: '团队管理', crumb: '系统 / 团队', noProjectRequired: true } },
       { path: 'interfaces', name: 'interfaces', component: () => import('../views/Interfaces.vue'), meta: { title: '接口管理', crumb: '接口测试 / 接口定义' } },
       { path: 'cases', name: 'cases', component: () => import('../views/Cases.vue'), meta: { title: '测试用例', crumb: '接口测试 / 用例管理' } },
       { path: 'orchestration', name: 'orchestration', component: () => import('../views/Orchestration.vue'), meta: { title: '场景编排', crumb: '接口测试 / 可视化编排' } },
