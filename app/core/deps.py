@@ -13,6 +13,7 @@ from app.core.blacklist import is_blacklisted
 from app.core.ratelimit import check_rate_limit
 from app.models.project import Project
 from app.models.user import User
+from app.core.permissions import is_execution_path, permission_for_project_path
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -74,21 +75,14 @@ def get_current_project(
         )
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         path = request.url.path
-        execution_path = path.endswith("/run") or path.startswith("/traffic/replay/") or path.endswith("/chain")
+        execution_path = is_execution_path(path)
         if not execution_path:
             membership = db.query(TeamMember).filter(TeamMember.team_id == project.team_id, TeamMember.user_id == current_user.id).first() if project.team_id else None
             legacy = project_member_repo.db_get(db, project.id, current_user.id) if membership is None else None
             role = membership.role if membership else (legacy.role if legacy else None)
             configurable = False
-            if membership is not None and membership.role == TeamRole.MEMBER.value:
-                permission = "content.write"
-                if path.startswith("/interfaces"): permission = "interface.write"
-                elif path.startswith("/cases"): permission = "case.write"
-                elif path.startswith("/environments"): permission = "environment.write"
-                elif path.startswith("/mock"): permission = "mock.write"
-                elif path.startswith("/schedules"): permission = "schedule.write"
-                elif path.startswith("/perf"): permission = "perf.write"
-                elif path.startswith("/scenarios"): permission = "scenario.write"
+            permission = permission_for_project_path(path)
+            if membership is not None and membership.role == TeamRole.MEMBER.value and permission is not None:
                 configurable = db.query(TeamPermission).filter(TeamPermission.team_id == project.team_id, TeamPermission.role == TeamRole.MEMBER.value, TeamPermission.permission == permission, TeamPermission.enabled.is_(True)).first() is not None
             if role not in (TeamRole.OWNER.value, TeamRole.ADMIN.value, ProjectRole.OWNER.value, ProjectRole.ADMIN.value) and not configurable:
                 raise HTTPException(status_code=403, detail="你是团队成员，无权修改项目内容")

@@ -1,5 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import pytest
+from pydantic import ValidationError
 
 from app.database import Base
 from app.models.project import Project
@@ -13,7 +15,8 @@ from fastapi import HTTPException
 from app.routers.team import create_team
 from app.services import project as project_service
 from app.services import team as team_service
-from app.schemas.team import TeamCreate
+from app.schemas.team import TeamCreate, TeamPermissionUpdate
+from app.core.permissions import is_execution_path, permission_for_project_path
 
 
 def _db():
@@ -64,9 +67,9 @@ def test_member_content_write_permission_can_be_enabled():
     owner = User(username="owner3", hashed_password="x")
     db.add(owner); db.flush()
     team = Team(name="permission-team", owner_id=owner.id); db.add(team); db.flush()
-    item = team_service.s_set_permission(db, team.id, "member", "content.write", True)
+    item = team_service.s_set_permission(db, team.id, "member", "interface.write", True)
     assert item.enabled is True
-    assert db.query(TeamPermission).filter_by(team_id=team.id, permission="content.write").one().enabled is True
+    assert db.query(TeamPermission).filter_by(team_id=team.id, permission="interface.write").one().enabled is True
 
 
 def test_create_team_sets_owner_and_owner_membership():
@@ -94,3 +97,16 @@ def test_duplicate_team_name_returns_conflict():
         assert "duplicate-team" in exc.detail
     else:
         raise AssertionError("duplicate team name should return HTTP 409")
+
+
+def test_permission_keys_are_canonical_and_route_mapping_is_explicit():
+    assert permission_for_project_path("/mocks") == "mock.write"
+    assert permission_for_project_path("/mocks/12") == "mock.write"
+    assert permission_for_project_path("/unknown") is None
+    assert is_execution_path("/regression") is True
+    assert is_execution_path("/cases/1/run") is True
+    assert is_execution_path("/cases") is False
+
+    assert TeamPermissionUpdate(permission="interface.write", enabled=True).permission == "interface.write"
+    with pytest.raises(ValidationError):
+        TeamPermissionUpdate(permission="content.write", enabled=True)
