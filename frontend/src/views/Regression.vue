@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { runRegression } from '../api/regression'
 import { listEnvironments } from '../api/environment'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 
 const envs = ref([])
 const selectedEnv = ref('')
@@ -48,10 +49,7 @@ onMounted(loadEnvs)
       <div class="controls">
         <div class="field">
           <label>环境</label>
-          <select v-model="selectedEnv">
-            <option value="">不指定环境</option>
-            <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
-          </select>
+          <EnvironmentSelect v-model="selectedEnv" :environments="envs" />
         </div>
         <div class="field">
           <label>标签筛选 <span class="opt">(可选)</span></label>

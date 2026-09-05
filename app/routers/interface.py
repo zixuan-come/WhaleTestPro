@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.schemas.interface import InterfaceCreate, InterfaceOut, CategoryRename
+from app.schemas.interface import InterfaceCreate, InterfaceOut, CategoryRename, InterfaceMigrate
 from app.schemas.response import ApiResponse, success_response
 from app.services import interface as api_service
 from app.core.deps import get_current_user, get_current_project
@@ -50,6 +51,19 @@ def create_interface(
     )
 
 
+
+@router.get("/{interface_id}/references", response_model=ApiResponse[dict])
+def interface_references(interface_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), current_project: Project = Depends(get_current_project)):
+    result = api_service.s_references(db, interface_id, current_project.id)
+    if result is None: raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
+    return success_response(result, message="查询接口引用成功")
+
+@router.post("/{interface_id}/migrate", response_model=ApiResponse[dict])
+def migrate_interface_cases(interface_id: int, body: InterfaceMigrate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), current_project: Project = Depends(get_current_project)):
+    if interface_id == body.target_interface_id: raise HTTPException(status_code=400, detail="目标接口不能与当前接口相同")
+    count = api_service.s_migrate_cases(db, interface_id, body.target_interface_id, current_project.id)
+    if count is None: raise HTTPException(status_code=404, detail="源接口或目标接口不存在")
+    return success_response({"migrated_count": count}, message="用例迁移成功")
 @router.get("/{interface_id}", response_model=ApiResponse[InterfaceOut])
 def get_interface(
     interface_id: int,
@@ -80,7 +94,12 @@ def delete_interface(
     current_user: User = Depends(get_current_user),
     current_project: Project = Depends(get_current_project),
 ):
-    p = api_service.s_delete(db, interface_id, current_project.id)
+    try:
+        p = api_service.s_delete(db, interface_id, current_project.id)
+    except IntegrityError:
+        db.rollback()
+        references = api_service.s_references(db, interface_id, current_project.id) or {"case_count": 0, "cases": []}
+        raise HTTPException(status_code=409, detail={"message": "接口仍被测试用例引用", "data": {"interface_id": interface_id, "case_count": references["case_count"], "cases": [{"id": c["id"], "name": c["name"]} for c in references["cases"][:50]], "truncated": references["case_count"] > 50}})
     if p is None:
         raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
     return success_response(data=None, message="接口删除成功")

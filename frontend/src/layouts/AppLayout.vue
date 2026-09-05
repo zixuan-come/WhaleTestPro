@@ -128,6 +128,8 @@ async function saveProject() {
     const created = await createProject({
       name: projectForm.value.name.trim(),
       description: projectForm.value.description.trim() || null,
+      // 快捷创建项目应归入当前选中的团队；没有当前团队时才由后端创建默认团队。
+      ...(auth.currentTeamId ? { team_id: auth.currentTeamId } : {}),
     })
     showCreateProjectModal.value = false
     auth.setProject(created.id, created.name)

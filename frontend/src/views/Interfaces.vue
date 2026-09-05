@@ -2,7 +2,7 @@
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
-import { listInterfaces, createInterface, updateInterface, deleteInterface, renameCategory, deleteCategory } from '../api/interface'
+import { listInterfaces, createInterface, updateInterface, deleteInterface, renameCategory, deleteCategory, getInterfaceReferences, migrateInterfaceCases } from '../api/interface'
 import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 
@@ -26,6 +26,10 @@ const renamingCat = ref(null)  // 正在重命名的分类原名(null=无)
 const newCatName = ref('')
 const catErr = ref('')
 const catBusy = ref(false)
+const showReferencesModal = ref(false)
+const referenceData = ref(null)
+const referenceSource = ref(null)
+const migrationTarget = ref("")
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const UNCATEGORIZED = '未分类'
@@ -300,6 +304,12 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function openReferences(item) {
+  referenceSource.value = item
+  referenceData.value = await getInterfaceReferences(item.id)
+  showReferencesModal.value = true
 }
 
 async function onDelete(id) {

@@ -7,6 +7,7 @@ import {
 } from '../api/perf'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
@@ -231,10 +232,7 @@ onUnmounted(stopPoll)
       </div>
       <div class="field">
         <label>从环境选择 <span class="opt">(可选,自动填 Host)</span></label>
-        <select v-model.number="form.env_id" @change="onPickEnv">
-          <option value="">— 手动填写 —</option>
-          <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }} · {{ e.base_url }}</option>
-        </select>
+        <EnvironmentSelect v-model="form.env_id" :environments="envs" placeholder="— 手动填写 —" title="从环境选择" @change="onPickEnv" />
       </div>
     </div>
     <div class="grid2">

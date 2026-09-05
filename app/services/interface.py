@@ -33,3 +33,10 @@ def s_delete_category(db: Session, project_id: int, name: str):
     return api_repo.db_delete_category(db, project_id, name)
 
 
+
+
+def s_references(db: Session, interface_id: int, project_id: int):
+    return api_repo.db_references(db, interface_id, project_id)
+
+def s_migrate_cases(db: Session, source_id: int, target_id: int, project_id: int):
+    return api_repo.db_migrate_cases(db, source_id, target_id, project_id)

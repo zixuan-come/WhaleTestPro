@@ -73,6 +73,34 @@ def db_delete_category(db: Session, project_id: int, name: str):
     ).update({Interface.category: None})
     db.commit()
     return count
+def db_references(db: Session, interface_id: int, project_id: int):
+    interface = db.query(Interface).filter(
+        Interface.id == interface_id,
+        Interface.project_id == project_id,
+    ).first()
+    if interface is None:
+        return None
+    from app.models.case import Case
+    from app.models.report import TestReport
+    from app.models.scenario import Scenario
+    cases = db.query(Case).filter(Case.interface_id == interface_id, Case.project_id == project_id).all()
+    scenarios = db.query(Scenario).filter(Scenario.project_id == project_id).all()
+    result = []
+    for case in cases:
+        latest = db.query(TestReport).filter(TestReport.case_id == case.id, TestReport.project_id == project_id).order_by(TestReport.created_at.desc(), TestReport.id.desc()).first()
+        scenario_ids = [scenario.id for scenario in scenarios if case.id in (scenario.case_ids or [])]
+        result.append({"id": case.id, "name": case.name, "scenario_ids": scenario_ids, "last_passed": latest.passed if latest else None})
+    return {"interface": interface, "case_count": len(result), "cases": result}
 
 
-
+def db_migrate_cases(db: Session, source_id: int, target_id: int, project_id: int):
+    from app.models.case import Case
+    source = db.query(Interface).filter(Interface.id == source_id, Interface.project_id == project_id).first()
+    target = db.query(Interface).filter(Interface.id == target_id, Interface.project_id == project_id).first()
+    if source is None or target is None:
+        return None
+    cases = db.query(Case).filter(Case.interface_id == source_id, Case.project_id == project_id).all()
+    for case in cases:
+        case.interface_id = target_id
+    db.commit()
+    return len(cases)

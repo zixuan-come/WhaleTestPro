@@ -5,6 +5,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { listCases } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import {
   listScenarios, getScenario, createScenario, updateScenario, deleteScenario, runScenario,
 } from '../api/scenario'
@@ -26,6 +27,7 @@ const currentId = ref(null)              // null=未选;数字=编辑中
 const currentName = ref('')
 const currentDesc = ref('')
 const chain = ref([])                    // [{case obj}] 有序
+const selectedStep = ref(null)
 // 快照:加载/保存时打一份,dirty = 当前 vs 快照 (避免用 watch 追踪的时序 bug)
 const originalSnapshot = ref(null)
 
@@ -200,7 +202,9 @@ function clearEditor() {
 // —— chain 操作 ——
 function addToChain(c) {
   if (!currentId.value) { showMessage('请先选择或新建一个场景', 'error'); return }
-  chain.value.push({ ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` })
+  const step = { ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` }
+  chain.value.push(step)
+  selectedStep.value = step._uid
 }
 function removeStep(i) {
   chain.value.splice(i, 1)
@@ -297,10 +301,7 @@ onMounted(load)
             <span v-if="dirty" class="dirty-dot" title="有未保存改动">●</span>
           </div>
           <div class="editor-actions">
-            <select v-model="selectedEnv" class="env-sel" title="跑测试用的环境">
-              <option value="">不指定环境</option>
-              <option v-for="e in envs" :key="e.id" :value="e.id">环境:{{ e.name }}</option>
-            </select>
+            <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="跑测试用的环境" />
             <button class="btn btn-ghost btn-sm" @click="deleteCurrent">删除</button>
             <button class="btn btn-ghost btn-sm" @click="saveCurrent" :disabled="!dirty">保存</button>
             <button class="btn btn-primary btn-sm" @click="onRun" :disabled="running || !chain.length">
@@ -313,13 +314,15 @@ onMounted(load)
           <input v-model="currentDesc" placeholder="场景描述(可选)" class="desc-input" />
         </div>
 
-        <div v-if="!chain.length" class="empty">
+        <div v-if="!chain.length" class="canvas-empty">
           从中间"用例库"点 <b>+</b> 加用例到这里,可拖拽排序
         </div>
-        <div v-else class="steps">
+        <div v-else class="workflow-layout">
+          <div class="steps">
           <div v-for="(c, i) in chain" :key="c._uid"
                class="step"
-               :class="{ dragging: dragIdx === i }"
+               :class="{ dragging: dragIdx === i, selected: selectedStep === c._uid }"
+               @click="selectedStep = c._uid"
                draggable="true"
                @dragstart="onDragStart(i)"
                @dragover.prevent
@@ -334,6 +337,18 @@ onMounted(load)
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
             </button>
           </div>
+          </div>
+          <aside class="step-inspector" v-if="selectedStep && chain.find(c => c._uid === selectedStep)">
+            <div v-for="step in chain.filter(c => c._uid === selectedStep)" :key="step._uid">
+              <div class="inspector-kicker">当前步骤 · {{ chain.findIndex(c => c._uid === step._uid) + 1 }}</div>
+              <h3>{{ step.name }}</h3>
+              <div class="inspector-row"><span>请求方法</span><strong class="tag-method" :class="methodClass(methodOf(step))">{{ methodOf(step) }}</strong></div>
+              <div class="inspector-row"><span>关联接口</span><strong>{{ ifaceMap[step.interface_id]?.name || '未关联' }}</strong></div>
+              <div class="inspector-row"><span>期望状态</span><strong class="mono">{{ step.expected_status || '—' }}</strong></div>
+              <div class="inspector-note">步骤顺序可在流程画布中拖拽调整，执行时会按当前顺序依次运行。</div>
+              <button class="btn btn-ghost inspector-remove" @click="removeStep(chain.findIndex(c => c._uid === step._uid))">移除步骤</button>
+            </div>
+          </aside>
         </div>
       </template>
     </section>
@@ -391,6 +406,21 @@ onMounted(load)
 </template>
 
 <style scoped>
+.workflow-layout { display:grid; grid-template-columns:minmax(0,1fr) 220px; flex:1; min-height:0; }
+.canvas-empty { margin:14px; padding:70px 20px; text-align:center; color:var(--text-muted); font-size:12.5px; border:1px dashed var(--border); border-radius:12px; background:var(--surface-2); }
+.step { position:relative; }
+.step:not(:last-child)::after { content:""; position:absolute; left:25px; top:100%; width:2px; height:8px; background:var(--primary); opacity:.35; }
+.step.selected { border-color:var(--primary); box-shadow:0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent); }
+.step-inspector { border-left:1px solid var(--border); padding:18px 16px; background:var(--surface-2); }
+.inspector-kicker { color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+.step-inspector h3 { margin:8px 0 20px; font-size:15px; line-height:1.4; }
+.inspector-row { display:flex; flex-direction:column; gap:5px; padding:10px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.inspector-row span { color:var(--text-muted); }
+.inspector-row strong { color:var(--text); }
+.mono { font-family:ui-monospace,Consolas,monospace; }
+.inspector-note { margin-top:16px; color:var(--text-muted); font-size:11.5px; line-height:1.6; }
+.inspector-remove { margin-top:18px; width:100%; }
+
 .state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
 .state.err { color:var(--fail-fg); }
 

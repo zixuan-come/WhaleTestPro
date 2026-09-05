@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
 
@@ -269,10 +270,7 @@ onMounted(load)
     <div class="panel-head">
       测试用例
       <div class="head-actions">
-        <select v-model="selectedEnv" class="env-sel" title="跑测试时使用的环境">
-          <option value="">不指定环境</option>
-          <option v-for="e in envs" :key="e.id" :value="e.id">环境:{{ e.name }}</option>
-        </select>
+        <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="跑测试时使用的环境" />
         <button class="btn btn-primary" @click="openCreate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
           新建用例
@@ -309,9 +307,8 @@ onMounted(load)
           <span v-if="!(c.tags && c.tags.length)" class="muted">—</span>
         </span>
         <span class="c-act">
-          <button class="icon-btn run" title="跑测试" :disabled="runningId === c.id" @click="onRun(c)">
-            <svg v-if="runningId !== c.id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
-            <span v-else class="spin"></span>
+          <button class="icon-btn run" title="运行" :disabled="runningId === c.id" @click="onRun(c)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
           <button class="icon-btn edit" title="编辑" @click="openEdit(c)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
@@ -427,7 +424,7 @@ onMounted(load)
       <span v-if="runs.length > 1" class="muted">共 {{ runs.length }} 组数据驱动</span>
     </div>
 
-    <div v-for="(r, i) in runs" :key="i" class="run">
+    <div v-for="(r, i) in runs" :key="i" class="run-result">
       <div class="run-head">
         <span class="badge" :class="r.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ r.passed ? '通过' : '失败' }}</span>
         <span v-if="runs.length > 1" class="run-idx">数据 #{{ i + 1 }}</span>
@@ -493,7 +490,7 @@ onMounted(load)
 .icon-btn.run:hover { color:var(--pass-fg); background:var(--pass-bg); }
 .icon-btn.edit:hover { color:var(--primary); background:var(--surface-2); }
 .icon-btn.del:hover { color:var(--fail-fg); background:var(--fail-bg); }
-.icon-btn:disabled { opacity:.5; cursor:not-allowed; }
+.icon-btn:disabled { opacity:.4; cursor:not-allowed; }
 .spin { width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--primary);
   border-radius:50%; animation:spin .7s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
@@ -554,8 +551,8 @@ onMounted(load)
 /* ===== 结果弹层 ===== */
 .verdict { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 .verdict .muted { color:var(--text-muted); font-size:12.5px; }
-.run { border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
-.run:last-child { margin-bottom:0; }
+.run-result { border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+.run-result:last-child { margin-bottom:0; }
 .run-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
 .run-head .run-idx { font-weight:600; font-size:12.5px; }
 .run-head .muted { color:var(--text-muted); font-size:12px; }

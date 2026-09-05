@@ -11,6 +11,8 @@ const totalPages = ref(0)
 const reportTotal = ref(0)
 const passedTotal = ref(0)
 const failedTotal = ref(0)
+const statusFilter = ref('all')
+const search = ref('')
 const passRateTotal = ref(0)
 const loading = ref(true)
 const error = ref('')
@@ -24,6 +26,10 @@ const isScenario = computed(() => reportType.value === 'scenario')
 const pageStart = computed(() => reportTotal.value ? (page.value - 1) * pageSize.value + 1 : 0)
 const pageEnd = computed(() => Math.min(page.value * pageSize.value, reportTotal.value))
 const passRate = computed(() => Math.round(passRateTotal.value * 100))
+const filteredItems = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return items.value.filter(r => (statusFilter.value === 'all' || (statusFilter.value === 'passed' ? r.passed : !r.passed)) && (!q || String(isScenario.value ? r.scenario_name : (r.case_name || '')).toLowerCase().includes(q)))
+})
 
 function fmtDetail(value) {
   if (value == null) return '无'
@@ -130,6 +136,10 @@ onMounted(() => load())
     </div>
 
     <template v-else>
+      <div class="report-filters">
+        <div class="filter-tabs"><button :class="{ active: statusFilter === 'all' }" @click="statusFilter = 'all'">全部</button><button :class="{ active: statusFilter === 'passed' }" @click="statusFilter = 'passed'">通过</button><button :class="{ active: statusFilter === 'failed' }" @click="statusFilter = 'failed'">失败</button></div>
+        <input v-model="search" class="report-search" :placeholder="isScenario ? '搜索场景…' : '搜索用例…'" />
+      </div>
       <div v-if="isScenario" class="row scenario head">
         <span>状态</span><span>场景</span><span>步骤</span><span>耗时</span><span>执行时间</span><span class="c-act">明细</span>
       </div>
@@ -137,7 +147,7 @@ onMounted(() => load())
         <span>状态</span><span>用例</span><span>执行时间</span><span class="c-act">明细</span>
       </div>
 
-      <template v-for="(report, index) in items" :key="report.id">
+      <template v-for="(report, index) in filteredItems" :key="report.id">
         <div
           class="row"
           :class="[isScenario ? 'scenario' : 'single', { open: openId === report.id }]"
@@ -206,7 +216,13 @@ onMounted(() => load())
             <div v-if="!scenarioDetails[report.id].steps.length" class="detail-state">该场景没有执行步骤</div>
           </template>
         </div>
-        <div v-else-if="openId === report.id" class="detail single-detail"><pre>{{ fmtDetail(report.detail) }}</pre></div>
+        <div v-else-if="openId === report.id" class="detail single-detail">
+          <div class="single-summary"><div><span>执行结果</span><strong :class="report.passed ? 'ok' : 'bad'">{{ report.passed ? '通过' : '失败' }}</strong></div><div><span>执行时间</span><strong>{{ formatShanghaiDateTime(report.created_at) }}</strong></div></div>
+          <section v-if="report.detail?.request_detail" class="single-section"><h3>请求</h3><div class="request-line"><span class="tag-method" :class="methodClass(report.detail.request_detail.method)">{{ report.detail.request_detail.method }}</span><code>{{ report.detail.request_detail.url }}</code></div><pre>{{ fmtDetail(report.detail.request_detail) }}</pre></section>
+          <section v-if="report.detail?.response_detail" class="single-section"><h3>响应</h3><pre>{{ fmtDetail(report.detail.response_detail) }}</pre></section>
+          <section v-if="report.detail?.assertions" class="single-section"><h3>断言</h3><pre>{{ fmtDetail(report.detail.assertions) }}</pre></section>
+          <details class="raw-detail"><summary>查看原始数据</summary><pre>{{ fmtDetail(report.detail) }}</pre></details>
+        </div>
       </template>
     </template>
 
@@ -221,6 +237,23 @@ onMounted(() => load())
 </template>
 
 <style scoped>
+.report-filters { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 20px; border-bottom:1px solid var(--border); background:var(--surface); }
+.filter-tabs { display:flex; gap:4px; }
+.filter-tabs button { border:1px solid transparent; background:transparent; color:var(--text-muted); border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; }
+.filter-tabs button.active { color:var(--primary); background:var(--surface-2); border-color:var(--border); }
+.report-search { width:220px; height:32px; padding:0 10px; border:1px solid var(--border); border-radius:7px; background:var(--surface-2); color:var(--text); font:inherit; font-size:12px; }
+.report-search:focus { outline:none; border-color:var(--primary); }
+.single-summary { display:flex; gap:28px; padding:16px 20px; border-bottom:1px solid var(--border); }
+.single-summary div { display:flex; flex-direction:column; gap:5px; font-size:11px; color:var(--text-muted); }
+.single-summary strong { font-size:14px; color:var(--text); }
+.single-summary strong.ok { color:var(--pass-fg); }
+.single-summary strong.bad { color:var(--fail-fg); }
+.single-section { padding:16px 20px 0; }
+.single-section h3 { margin:0 0 10px; font-size:12px; }
+.single-section pre { max-height:220px; overflow:auto; padding:12px; border:1px solid var(--border); border-radius:7px; background:var(--bg); }
+.raw-detail { margin:16px 20px; border-top:1px solid var(--border); padding-top:12px; }
+.raw-detail summary { cursor:pointer; color:var(--text-muted); font-size:12px; }
+
 .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
 .card:hover { border-color:var(--primary); }

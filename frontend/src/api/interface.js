@@ -11,3 +11,6 @@ export const renameCategory = (oldName, newName) =>
   http.patch('/interfaces/categories/rename', { old_name: oldName, new_name: newName })
 export const deleteCategory = (name) =>
   http.delete(`/interfaces/categories/${encodeURIComponent(name)}`)
+
+export const getInterfaceReferences = (id) => http.get(`/interfaces/${id}/references`)
+export const migrateInterfaceCases = (id, targetInterfaceId) => http.post(`/interfaces/${id}/migrate`, { target_interface_id: targetInterfaceId })

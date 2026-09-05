@@ -29,3 +29,7 @@ class CategoryRename(BaseModel):
 
 
 
+
+
+class InterfaceMigrate(BaseModel):
+    target_interface_id: int
