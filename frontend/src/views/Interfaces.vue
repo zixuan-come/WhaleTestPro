@@ -30,6 +30,10 @@ const showReferencesModal = ref(false)
 const referenceData = ref(null)
 const referenceSource = ref(null)
 const migrationTarget = ref("")
+const referenceLoading = ref(false)
+const referenceError = ref("")
+const migrationBusy = ref(false)
+const targetMenuOpen = ref(false)
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const UNCATEGORIZED = '未分类'
@@ -308,8 +312,43 @@ async function save() {
 
 async function openReferences(item) {
   referenceSource.value = item
-  referenceData.value = await getInterfaceReferences(item.id)
+  migrationTarget.value = ''
+  targetMenuOpen.value = false
+  referenceError.value = ''
+  referenceLoading.value = true
   showReferencesModal.value = true
+  try {
+    referenceData.value = await getInterfaceReferences(item.id)
+  } catch (e) {
+    referenceError.value = e.message || '加载引用失败'
+  } finally {
+    referenceLoading.value = false
+  }
+}
+
+function toggleTargetMenu() {
+  targetMenuOpen.value = !targetMenuOpen.value
+}
+
+function closeTargetMenu() {
+  targetMenuOpen.value = false
+}
+
+function selectMigrationTarget(id) {
+  migrationTarget.value = String(id)
+  closeTargetMenu()
+}
+
+async function migrateCases() {
+  if (!migrationTarget.value || !referenceSource.value) return
+  migrationBusy.value = true
+  try {
+    const result = await migrateInterfaceCases(referenceSource.value.id, Number(migrationTarget.value))
+    showMessage("Migration completed", "success")
+    referenceData.value = await getInterfaceReferences(referenceSource.value.id)
+    await load()
+  } catch (e) { referenceError.value = e.message || '迁移失败' }
+  finally { migrationBusy.value = false }
 }
 
 async function onDelete(id) {
@@ -318,7 +357,9 @@ async function onDelete(id) {
     await deleteInterface(id)
     items.value = items.value.filter(i => i.id !== id)
   } catch (e) {
-    showMessage(e.message || '删除失败', 'error')
+    const item = items.value.find(i => i.id === id)
+    if (item && (e.response?.status === 409 || String(e.message || '').includes('引用'))) await openReferences(item)
+    else showMessage(e.message || '删除失败', 'error')
   }
 }
 
@@ -381,6 +422,7 @@ onMounted(load)
                   <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
                 </svg>
               </button>
+              <button class="icon-btn" title="查看引用" @click="openReferences(it)">引</button>
               <button class="icon-btn danger" title="删除" @click="onDelete(it.id)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
@@ -392,6 +434,17 @@ onMounted(load)
       </template>
     </template>
   </div>
+
+  <Modal v-if="showReferencesModal" title="接口引用" :max-width="680" :busy="migrationBusy" allow-overflow @close="showReferencesModal=false">
+    <div v-if="referenceLoading" class="state">加载引用中…</div>
+    <div v-else-if="referenceError" class="state err">{{ referenceError }}</div>
+    <template v-else-if="referenceData">
+      <div class="reference-summary"><div class="reference-icon">↗</div><div><div class="reference-title">{{ referenceSource?.name }}</div><div class="reference-meta">{{ referenceSource?.method }} · {{ referenceSource?.url }}</div></div><span class="reference-badge">{{ referenceData.case_count }} 个引用</span></div><div class="reference-section-title">关联测试用例</div>
+      <div v-if="referenceData.cases.length" class="reference-list"><div v-for="c in referenceData.cases" :key="c.id" class="ref-case"><span class="ref-id">#{{ c.id }}</span><span>{{ c.name }}</span></div></div>
+      <div v-if="referenceData.case_count" class="reference-migrate"><div class="reference-section-title">批量迁移</div><div class="reference-migrate-row"><div class="interface-picker" :class="{ open: targetMenuOpen }"><button type="button" class="interface-picker-trigger" @click.stop="toggleTargetMenu"><span v-if="!migrationTarget" class="picker-placeholder">请选择目标接口</span><template v-else><span class="picker-method">{{ items.find(it => String(it.id) === migrationTarget)?.method }}</span><span class="picker-name">{{ items.find(it => String(it.id) === migrationTarget)?.name }}</span><span class="picker-url">{{ items.find(it => String(it.id) === migrationTarget)?.url }}</span></template><span class="picker-chevron">⌄</span></button><div v-if="targetMenuOpen" class="interface-picker-menu" @click.stop><button type="button" class="interface-option" @click="selectMigrationTarget('')"><span class="picker-placeholder">请选择目标接口</span></button><button v-for="it in items" :key="it.id" type="button" class="interface-option" :class="{ selected: String(it.id) === migrationTarget }" :disabled="it.id === referenceSource?.id" @click="selectMigrationTarget(it.id)"><span class="picker-method" :class="methodClass(it.method)">{{ it.method }}</span><span class="picker-option-main"><strong>{{ it.name }}</strong><small>{{ it.url }}</small></span><span v-if="String(it.id) === migrationTarget" class="picker-check">✓</span></button></div></div><button class="btn btn-primary" :disabled="!migrationTarget || migrationBusy" @click="migrateCases">{{ migrationBusy ? "迁移中…" : "批量迁移" }}</button></div></div>
+      <p v-else class="state">暂无引用，可以直接删除接口。</p>
+    </template>
+  </Modal>
 
   <!-- 新建/编辑接口弹层 -->
   <Modal v-if="showModal" :title="editingId ? '编辑接口' : '新建接口'" :max-width="760" :busy="saving" @close="closeModal">
@@ -707,4 +760,4 @@ onMounted(load)
   .body-type { align-items:flex-start; flex-wrap:wrap; }
   .body-type legend { width:100%; line-height:1.4; margin-bottom:2px; }
 }
-</style>
+.reference-summary{display:flex;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(135deg,var(--primary-bg),var(--surface-2));border:1px solid var(--border);border-radius:12px}.reference-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--primary);color:#fff;font-size:18px}.reference-title{font-weight:700;color:var(--text);font-size:14px}.reference-meta{margin-top:3px;color:var(--text-muted);font:12px ui-monospace,Consolas,monospace}.reference-badge{margin-left:auto;padding:5px 10px;border-radius:999px;background:var(--surface);color:var(--primary);font-size:12px;font-weight:600}.reference-section-title{margin:18px 0 9px;font-size:12px;font-weight:700;color:var(--text-muted)}.reference-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto}.ref-case{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);font-size:13px}.ref-id{color:var(--primary);font:12px ui-monospace,Consolas,monospace}.reference-migrate-row{display:flex;gap:10px}.interface-picker{position:relative;flex:1}.interface-picker-trigger{width:100%;height:42px;display:flex;align-items:center;gap:8px;padding:0 13px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);cursor:pointer;text-align:left}.interface-picker.open .interface-picker-trigger{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent)}.picker-placeholder{color:var(--text-muted)}.picker-method{font:700 10px ui-monospace,Consolas,monospace;padding:4px 7px;border-radius:5px;background:var(--primary-bg);color:var(--primary)}.picker-name{font-weight:650}.picker-url{color:var(--text-muted);font:12px ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.picker-chevron{margin-left:auto;color:var(--text-muted);font-size:18px;line-height:1}.interface-picker-menu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-lg);max-height:240px;overflow:auto}.interface-option{width:100%;display:flex;align-items:center;gap:9px;padding:10px 11px;border:0;border-radius:7px;background:transparent;color:var(--text);cursor:pointer;text-align:left}.interface-option:hover{background:var(--primary-bg)}.interface-option.selected{background:var(--primary-bg)}.interface-option:disabled{opacity:.45;cursor:not-allowed}.picker-option-main{display:flex;flex-direction:column;gap:2px;min-width:0}.picker-option-main strong{font-size:12.5px}.picker-option-main small{color:var(--text-muted);font:11px ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.picker-check{margin-left:auto;color:var(--primary);font-weight:700}.reference-migrate-row .btn{white-space:nowrap}</style>

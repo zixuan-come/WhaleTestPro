@@ -8,6 +8,7 @@ const props = defineProps({
   title: { type: String, default: '' },
   maxWidth: { type: Number, default: 560 },
   busy: { type: Boolean, default: false },
+  allowOverflow: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close'])
 
@@ -20,7 +21,7 @@ function onClose() {
 <template>
   <Teleport to="body">
     <div class="mask" @click.self="onClose">
-      <div class="modal" :style="{ maxWidth: maxWidth + 'px' }">
+      <div class="modal" :class="{ 'allow-overflow': allowOverflow }" :style="{ maxWidth: maxWidth + 'px' }">
         <div class="modal-head">
           <slot name="title">{{ title }}</slot>
           <button class="x" @click="onClose">
@@ -47,5 +48,7 @@ function onClose() {
 .modal-head .x svg { width:18px; height:18px; }
 .modal-head .x:hover { background:var(--surface-2); color:var(--text); }
 .modal-body { padding:20px 22px; overflow:auto; }
+.modal.allow-overflow { overflow:visible; }
+.modal.allow-overflow .modal-body { overflow:visible; }
 .modal-foot { display:flex; justify-content:flex-end; gap:10px; padding:16px 22px; border-top:1px solid var(--border); }
 </style>
