@@ -310,3 +310,21 @@ def test_environment_schema_validates_base_url():
     with pytest.raises(ValidationError):
         EnvironmentCreate(name='bad', base_url='   ')
 
+
+def test_schedule_create_removes_orphan_on_sync_failure(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import schedule as schedule_service
+
+    deleted = []
+    obj = SimpleNamespace(id=3)
+    monkeypatch.setattr(schedule_service.schedule_repo, 'db_create', lambda db, schedule, project_id: obj)
+    monkeypatch.setattr(schedule_service.scheduler, 'sync_schedule', lambda schedule: (_ for _ in ()).throw(ValueError('cron invalid')))
+    class Db:
+        def delete(self, value): deleted.append(value)
+        def commit(self): pass
+        def rollback(self): pass
+
+    with pytest.raises(ValueError, match='cron invalid'):
+        schedule_service.s_create(Db(), object(), 7)
+    assert deleted == [obj]
+

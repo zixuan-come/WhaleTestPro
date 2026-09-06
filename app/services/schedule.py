@@ -5,8 +5,15 @@ from app.core import scheduler
 
 def s_create(db: Session, schedule, project_id: int):
     obj = schedule_repo.db_create(db, schedule, project_id)
-    # sync_schedule 会读 obj.project_id 塞进 celery args,定时触发的任务就能带上 pid
-    scheduler.sync_schedule(obj)
+    try:
+        scheduler.sync_schedule(obj)
+    except Exception:
+        try:
+            db.delete(obj)
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
     return obj
 
 
@@ -30,3 +37,4 @@ def s_delete(db: Session, schedule_id: int, project_id: int):
     if obj is not None:
         scheduler.remove_schedule(schedule_id)
     return obj
+
