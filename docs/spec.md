@@ -302,18 +302,18 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 ---
 
-### 模块 12 · 压测（`/perf`）
+### 模块 12 · 压测（`/perf/tasks`）
 
 **数据模型 `perf_tasks`**：`id`、`name`、`target_host`、`target_path`、`users`、`spawn_rate`、`duration`、`status`(默认pending)、`rps`、`avg_response_ms`、`fail_ratio`、`project_id`。
 
 **接口清单**（登录 + `X-Project-Id`）
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/perf` | 新建压测任务 |
-| GET | `/perf` | 列表 |
-| GET | `/perf/{id}` | 取单个 |
-| DELETE | `/perf/{id}` | 删除 |
-| POST | `/perf/{id}/run` | 运行压测 |
+| POST | `/perf/tasks` | 新建压测任务 |
+| GET | `/perf/tasks` | 列表 |
+| GET | `/perf/tasks/{id}` | 取单个 |
+| DELETE | `/perf/tasks/{id}` | 删除 |
+| POST | `/perf/tasks/{id}/run` | 运行压测 |
 
 **运行逻辑**
 1. 标记任务 `running`。
@@ -338,16 +338,16 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 **数据模型 `traffic_records`**：`id`、`method`、`path`(索引)、`request_headers`、`request_body`、`response_status`、`response_body`、`created_at`、`project_id`。
 
-**录制查询接口**（`/traffic`，登录 + `X-Project-Id`）
+**录制查询接口**（`/traffic/records`，登录 + `X-Project-Id`）
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/traffic?limit=100` | 列出录制记录（默认最多 100 条）|
-| GET | `/traffic/{id}` | 取单条记录 |
+| GET | `/traffic/records?limit=100` | 列出录制记录（默认最多 100 条）|
+| GET | `/traffic/records/{id}` | 取单条记录 |
 
-**回放接口**（`/replay`）
+**回放接口**（`/traffic/replay`）
 | 方法 | 路径 | 入参 |
 |------|------|------|
-| POST | `/replay/{record_id}` | 可选 `{env_id?, field_rules?}` |
+| POST | `/traffic/replay/{record_id}` | 可选 `{env_id?, field_rules?}` |
 
 **回放逻辑**
 - 用录制的 method + body 重放到目标（不传 env 打回本机 `http://127.0.0.1:8000`）。
@@ -381,7 +381,7 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 ### 模块 16 · demo_order（被测样例，非平台功能）
 
-- `/demo-order`（`demo_orders` 表：`id`、`item`）：POST 创建、GET 列表，**无认证、无项目**。用作平台自测的最简被测接口。
+- `/demo/orders`（`demo_orders` 表：`id`、`item`）：POST 创建、GET 列表，**无认证、无项目**。用作平台自测的最简被测接口。
 - 另有独立 Go 服务 **WhaleShop**（同级仓库）作为跨语言被测系统（SUT），提供订单 CRUD/慢接口/错误接口，供 WhaleTestPro 做真实 HTTP 契约测试。
 
 ---
@@ -410,3 +410,6 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 | 7 | 断言 `db_eq` 可执行任意 SQL | **确认危险，需限制只读**（仅允许 SELECT）| 【后端】`db_eq` 加 SQL 白名单/只读校验；测试用例覆盖「塞危险 SQL 被拒」|
 
 > 说明：后端改动按项目约定由本人手敲，前端改动由 Claude 代写。以上待办不在本文档范围内实施，仅作记录，供测试用例设计时把「已知 Bug / 待补功能」也纳入覆盖。
+
+
+

@@ -3,7 +3,7 @@ import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
-  listPerfTasks, createPerfTask, deletePerfTask, runPerfTask,
+  listPerfTasks, createPerfTask, deletePerfTask, runPerfTask, stopPerfTask,
 } from '../api/perf'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
@@ -30,11 +30,12 @@ const maxRps = computed(() => {
   return vals.length ? Math.max(...vals).toFixed(1) : '—'
 })
 
-const STATUS_TEXT = { pending: '待运行', running: '运行中', done: '已完成' }
+const STATUS_TEXT = { pending: '待运行', running: '运行中', done: '已完成', failed: '失败', cancelled: '已停止' }
 function statusText(s) { return STATUS_TEXT[s] || s || '—' }
 function statusClass(s) {
   if (s === 'done') return 'b-pass'
   if (s === 'running') return 'b-warn'
+  if (s === 'failed') return 'b-fail'
   return 'b-skip'
 }
 
@@ -132,6 +133,16 @@ async function onRun(task) {
   }
 }
 
+async function onStop(task) {
+  try {
+    const updated = await stopPerfTask(task.id)
+    const i = items.value.findIndex(t => t.id === task.id)
+    if (i !== -1 && updated) items.value[i] = updated
+  } catch (e) {
+    showMessage(e.message || '停止失败', 'error')
+  }
+}
+
 async function onDelete(task) {
   if (!(await confirmAction(`确认删除压测任务「${task.name}」?`))) return
   try {
@@ -205,9 +216,10 @@ onUnmounted(stopPoll)
         <span class="c-ms">{{ fmtMs(t.avg_response_ms) }}</span>
         <span class="c-fail" :class="{ bad: t.fail_ratio > 0 }">{{ fmtFail(t.fail_ratio) }}</span>
         <span class="c-act">
-          <button class="icon-btn run" title="运行" :disabled="t.status === 'running' || runningId === t.id" @click="onRun(t)">
+          <button v-if="t.status !== 'running'" class="icon-btn run" title="运行" :disabled="runningId === t.id" @click="onRun(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
+          <button v-if="t.status === 'running'" class="icon-btn stop" title="停止" @click="onStop(t)">■</button>
           <button class="icon-btn del" title="删除" @click="onDelete(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
           </button>
@@ -342,3 +354,4 @@ onUnmounted(stopPoll)
   .grid2, .grid3 { grid-template-columns:1fr; }
 }
 </style>
+

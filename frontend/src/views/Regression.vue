@@ -89,8 +89,8 @@ onMounted(loadEnvs)
           <span class="c-res">结果</span>
           <span class="c-note">说明</span>
         </div>
-        <div v-for="r in summary.results" :key="r.case_id" class="row">
-          <span class="c-id"><span class="id">#{{ r.case_id }}</span></span>
+        <div v-for="(r, index) in summary.results" :key="`${index}-${r.case_id}`" class="row">
+          <span class="c-id"><span class="id">#{{ index + 1 }}</span></span>
           <span class="c-res"><span class="badge" :class="r.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ r.passed ? '通过' : '失败' }}</span></span>
           <span class="c-note">{{ r.error || '' }}</span>
         </div>
