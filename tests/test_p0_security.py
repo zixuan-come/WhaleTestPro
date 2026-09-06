@@ -281,3 +281,32 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
     assert updates[-1] == {'status': 'cancelled'}
     assert redis_values['locust:cancel:11:8'] == '1'
 
+
+def test_direct_chain_writes_test_reports(monkeypatch):
+    from app.services import execution
+
+    monkeypatch.setattr(execution.case_repo, 'db_get', lambda db, case_id, project_id: None)
+    reports = []
+    monkeypatch.setattr(execution.report_repo, 'db_create', lambda db, **kwargs: reports.append(kwargs))
+
+    result = execution.run_chain(object(), [42], None, 7)
+
+    assert result[0]['passed'] is False
+    assert reports[0]['case_id'] == 42
+    assert reports[0]['passed'] is False
+    assert reports[0]['project_id'] == 7
+    assert reports[0]['detail']['chain'] is True
+
+
+def test_environment_schema_validates_base_url():
+    from pydantic import ValidationError
+    from app.schemas.environment import EnvironmentCreate
+
+    env = EnvironmentCreate(name='local', base_url='https://api.example.com/')
+    assert env.base_url == 'https://api.example.com'
+
+    with pytest.raises(ValidationError):
+        EnvironmentCreate(name='bad', base_url='api.example.com')
+    with pytest.raises(ValidationError):
+        EnvironmentCreate(name='bad', base_url='   ')
+

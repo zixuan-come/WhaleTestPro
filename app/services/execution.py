@@ -228,6 +228,16 @@ def run_chain(
             "duration_ms": round((perf_counter() - step_started) * 1000),
         })
 
+    if scenario_id is None:
+        for result, step in zip(results, report_steps):
+            report_repo.db_create(
+                db,
+                case_id=result["case_id"],
+                passed=result["passed"],
+                detail={"chain": True, "step": step},
+                project_id=project_id,
+            )
+
     if scenario_id is not None and scenario_name is not None:
         scenario_report_repo.db_create(
             db,
