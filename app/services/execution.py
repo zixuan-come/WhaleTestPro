@@ -306,6 +306,9 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, proje
         if tag is not None:
             cases = [c for c in cases if c.tags and tag in c.tags]
         case_ids = [c.id for c in cases]
+    else:
+        selected_case_ids = set(case_ids)
+        cases = [c for c in case_repo.db_list(db, project_id) if c.id in selected_case_ids]
     results = []
     for case_id in case_ids:
         try:
@@ -319,7 +322,8 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, proje
     pass_rate = passed_count / total if total else 0
 
     all_interfaces = interface_repo.db_list(db, project_id)
-    covered_ids = {c.interface_id for c in case_repo.db_list(db, project_id)}
+    interface_ids = {interface.id for interface in all_interfaces}
+    covered_ids = {case.interface_id for case in cases if case.interface_id in interface_ids}
     interface_total = len(all_interfaces)
     interface_covered = len(covered_ids)
     coverage = interface_covered / interface_total if interface_total else 0
@@ -341,9 +345,4 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, proje
         content = f"回归结果: {summary['passed_count']}/{summary['total']} 通过, 通过率 {pass_rate:.0%}, 接口覆盖率 {coverage:.0%}"
         send_feishu(settings.FEISHU_WEBHOOK, content)
     return summary
-
-
-
-
-
 

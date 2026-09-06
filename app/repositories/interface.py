@@ -80,18 +80,50 @@ def db_references(db: Session, interface_id: int, project_id: int):
     ).first()
     if interface is None:
         return None
+
     from app.models.case import Case
     from app.models.report import TestReport
     from app.models.scenario import Scenario
-    cases = db.query(Case).filter(Case.interface_id == interface_id, Case.project_id == project_id).all()
-    scenarios = db.query(Scenario).filter(Scenario.project_id == project_id).all()
-    result = []
-    for case in cases:
-        latest = db.query(TestReport).filter(TestReport.case_id == case.id, TestReport.project_id == project_id).order_by(TestReport.created_at.desc(), TestReport.id.desc()).first()
-        scenario_ids = [scenario.id for scenario in scenarios if case.id in (scenario.case_ids or [])]
-        result.append({"id": case.id, "name": case.name, "scenario_ids": scenario_ids, "last_passed": latest.passed if latest else None})
-    return {"interface": interface, "case_count": len(result), "cases": result}
 
+    cases = db.query(Case).filter(
+        Case.interface_id == interface_id,
+        Case.project_id == project_id,
+    ).all()
+    case_ids = [case.id for case in cases]
+
+    # 批量取报告：按时间倒序，首次出现的 case_id 就是该用例的最新报告。
+    latest_passed = {}
+    if case_ids:
+        reports = db.query(TestReport).filter(
+            TestReport.project_id == project_id,
+            TestReport.case_id.in_(case_ids),
+        ).all()
+        latest_reports = {}
+        for report in reports:
+            previous = latest_reports.get(report.case_id)
+            current_key = (report.created_at or 0, report.id)
+            previous_key = ((previous.created_at or 0), previous.id) if previous else None
+            if previous is None or current_key > previous_key:
+                latest_reports[report.case_id] = report
+        latest_passed = {case_id: report.passed for case_id, report in latest_reports.items()}
+
+    # 场景只查一次，并建立 case_id -> scenario_ids 索引，避免逐 case 扫描全部场景。
+    scenario_ids_by_case = {}
+    scenarios = db.query(Scenario).filter(Scenario.project_id == project_id).all()
+    for scenario in scenarios:
+        for case_id in scenario.case_ids or []:
+            scenario_ids_by_case.setdefault(case_id, []).append(scenario.id)
+
+    result = [
+        {
+            "id": case.id,
+            "name": case.name,
+            "scenario_ids": scenario_ids_by_case.get(case.id, []),
+            "last_passed": latest_passed.get(case.id),
+        }
+        for case in cases
+    ]
+    return {"interface": interface, "case_count": len(result), "cases": result}
 
 def db_migrate_cases(db: Session, source_id: int, target_id: int, project_id: int):
     from app.models.case import Case

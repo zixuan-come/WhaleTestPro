@@ -1,4 +1,4 @@
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from app.schemas.base import NamedSchema
 
 class CaseCreate(NamedSchema):
@@ -9,7 +9,7 @@ class CaseCreate(NamedSchema):
     setup_sql: list | None = None
     teardown_sql: list | None = None
     datasets: list | None = None
-    retries: int | None = 0
+    retries: int | None = Field(default=0, ge=0)
     tags: list | None = None
 
 

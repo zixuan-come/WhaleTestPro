@@ -56,6 +56,17 @@ def delete_task(
     return success_response(data=None, message="压测任务删除成功")
 
 
+@router.post("/{task_id}/stop", response_model=ApiResponse[PerfTaskOut])
+def stop_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_project: Project = Depends(get_current_project),
+):
+    task = perf_service.s_cancel(db, task_id, current_project.id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在或不可停止")
+    return success_response(task, message="压测任务已停止")
+
 @router.post("/{task_id}/run", response_model=ApiResponse[PerfTaskOut])
 def run_task(
     task_id: int,

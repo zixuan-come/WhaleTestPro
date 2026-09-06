@@ -52,8 +52,12 @@ def db_match(db: Session, project_id: int, path: str, method: str):
     挡板命中匹配:project_id 从 URL 前缀取(/mock/{pid}/xxx),不是从 header。
     因为调用方是被测系统/测试脚本,URL 里带 pid 是业界标准做法(Apifox/Postman Mock 同)。
     """
+    normalized_path = "/" + path.lstrip("/")
+    normalized_method = method.strip().upper()
     return db.query(Mock).filter(
         Mock.project_id == project_id,
-        Mock.path == path,
-        Mock.method == method,
+        Mock.path == normalized_path,
+        Mock.method == normalized_method,
     ).first()
+
+
