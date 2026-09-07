@@ -17,6 +17,8 @@ const loading = ref(true)
 const error = ref('')
 
 const showModal = ref(false)
+const showDetail = ref(false)
+const detailTask = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const runningId = ref(null)      // 正在触发运行的任务 id
@@ -28,6 +30,31 @@ const doneCount = computed(() => items.value.filter(t => t.status === 'done').le
 const maxRps = computed(() => {
   const vals = items.value.map(t => t.rps).filter(v => v != null)
   return vals.length ? Math.max(...vals).toFixed(1) : '—'
+})
+
+const historyChart = computed(() => {
+  const samples = detailTask.value?.history_samples || []
+  if (samples.length < 2) return null
+  const width = 640
+  const height = 170
+  const padX = 28
+  const padY = 18
+  const plotW = width - padX * 2
+  const plotH = height - padY * 2
+  const maxRpsValue = Math.max(...samples.map(s => Number(s.rps) || 0), 1)
+  const maxLatency = Math.max(...samples.map(s => Number(s.avg_response_ms) || 0), 1)
+  const toPoints = (key, maxValue) => samples.map((sample, index) => {
+    const x = padX + (index / (samples.length - 1)) * plotW
+    const y = padY + plotH - ((Number(sample[key]) || 0) / maxValue) * plotH
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return {
+    rpsPoints: toPoints('rps', maxRpsValue),
+    latencyPoints: toPoints('avg_response_ms', maxLatency),
+    maxRps: maxRpsValue,
+    maxLatency,
+    lastElapsed: samples[samples.length - 1].elapsed_s,
+  }
 })
 
 const STATUS_TEXT = { pending: '待运行', running: '运行中', done: '已完成', failed: '失败', cancelled: '已停止' }
@@ -143,6 +170,8 @@ async function onStop(task) {
   }
 }
 
+function openDetail(task) { detailTask.value = task; showDetail.value = true }
+
 async function onDelete(task) {
   if (!(await confirmAction(`确认删除压测任务「${task.name}」?`))) return
   try {
@@ -156,7 +185,14 @@ async function onDelete(task) {
 // 有任务在 running 时轮询静默刷新,让 running→done + 指标自动更新,不用手动刷新页面
 let pollTimer = null
 async function refresh() {
-  try { items.value = await listPerfTasks() } catch { /* 轮询失败静默,下轮再试 */ }
+  try {
+    const tasks = await listPerfTasks()
+    items.value = tasks
+    if (showDetail.value && detailTask.value) {
+      const latest = tasks.find(t => t.id === detailTask.value.id)
+      if (latest) detailTask.value = latest
+    }
+  } catch { /* 轮询失败静默,下轮再试 */ }
 }
 function startPoll() { if (!pollTimer) pollTimer = setInterval(refresh, 3000) }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
@@ -204,6 +240,8 @@ onUnmounted(stopPoll)
         <span class="c-status">状态</span>
         <span class="c-rps">RPS</span>
         <span class="c-ms">平均耗时</span>
+        <span class="c-p95">P95</span>
+        <span class="c-p99">P99</span>
         <span class="c-fail">失败率</span>
         <span class="c-act">操作</span>
       </div>
@@ -214,12 +252,15 @@ onUnmounted(stopPoll)
         <span class="c-status"><span class="badge" :class="statusClass(t.status)"><span class="dot"></span>{{ statusText(t.status) }}</span></span>
         <span class="c-rps">{{ fmtRps(t.rps) }}</span>
         <span class="c-ms">{{ fmtMs(t.avg_response_ms) }}</span>
+        <span class="c-p95">{{ fmtMs(t.p95_response_ms) }}</span>
+        <span class="c-p99">{{ fmtMs(t.p99_response_ms) }}</span>
         <span class="c-fail" :class="{ bad: t.fail_ratio > 0 }">{{ fmtFail(t.fail_ratio) }}</span>
         <span class="c-act">
           <button v-if="t.status !== 'running'" class="icon-btn run" title="运行" :disabled="runningId === t.id" @click="onRun(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
           <button v-if="t.status === 'running'" class="icon-btn stop" title="停止" @click="onStop(t)">■</button>
+          <button class="icon-btn detail" title="查看详情" @click="openDetail(t)">≡</button>
           <button class="icon-btn del" title="删除" @click="onDelete(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
           </button>
@@ -228,6 +269,16 @@ onUnmounted(stopPoll)
     </template>
   </div>
 
+<Modal v-if="showDetail" title="压测结果详情" :max-width="760" @close="showDetail = false">
+    <div v-if="detailTask" class="perf-detail">
+      <div class="detail-head"><div><strong>{{ detailTask.name }}</strong><small>{{ detailTask.target_host }}{{ detailTask.target_path }}</small></div><span class="badge" :class="statusClass(detailTask.status)"><span class="dot"></span>{{ statusText(detailTask.status) }}</span></div>
+      <div class="detail-metrics"><div><span>RPS</span><strong>{{ fmtRps(detailTask.rps) }}</strong></div><div><span>平均耗时</span><strong>{{ fmtMs(detailTask.avg_response_ms) }}</strong></div><div><span>P95</span><strong>{{ fmtMs(detailTask.p95_response_ms) }}</strong></div><div><span>P99</span><strong>{{ fmtMs(detailTask.p99_response_ms) }}</strong></div><div><span>失败率</span><strong>{{ fmtFail(detailTask.fail_ratio) }}</strong></div></div>
+      <div class="detail-section"><div class="detail-title">请求明细</div><div v-if="detailTask.request_stats?.length" class="detail-table"><div class="detail-row detail-row-head"><span>请求</span><span>请求数</span><span>失败数</span><span>P95</span><span>P99</span></div><div v-for="row in detailTask.request_stats" :key="row.name" class="detail-row"><span>{{ row.method }} {{ row.name }}</span><span>{{ row.num_requests ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ row.num_failures ?? 0 }}</span><span>{{ fmtMs(row.p95_response_ms) }}</span><span>{{ fmtMs(row.p99_response_ms) }}</span></div></div><div v-else class="state">暂无按请求统计。</div></div>
+      <div class="detail-section"><div class="detail-title">历史趋势</div><div v-if="historyChart" class="history-chart"><div class="history-chart-head"><span>RPS / 平均耗时</span><small>最近 {{ historyChart.lastElapsed }}s</small></div><svg viewBox="0 0 640 170" role="img" aria-label="压测历史趋势图" preserveAspectRatio="none"><line x1="28" y1="18" x2="28" y2="152" /><line x1="28" y1="152" x2="612" y2="152" /><polyline class="trend-rps" :points="historyChart.rpsPoints" /><polyline class="trend-latency" :points="historyChart.latencyPoints" /></svg><div class="history-legend"><span><i class="legend-rps"></i>RPS（峰值 {{ fmtRps(historyChart.maxRps) }}）</span><span><i class="legend-latency"></i>平均耗时（峰值 {{ fmtMs(historyChart.maxLatency) }}）</span></div></div><div v-else class="state">采样点不足，完成一次压测后显示趋势。</div></div><div class="detail-section"><div class="detail-title">历史采样明细</div><div v-if="detailTask.history_samples?.length" class="history-list"><div v-for="sample in detailTask.history_samples" :key="sample.elapsed_s" class="history-row"><span>{{ sample.elapsed_s }}s</span><span>RPS {{ fmtRps(sample.rps) }}</span><span>平均 {{ fmtMs(sample.avg_response_ms) }}</span><span>P95 {{ fmtMs(sample.p95_response_ms) }}</span><span>失败 {{ fmtFail(sample.fail_ratio) }}</span></div></div><div v-else class="state">暂无历史采样。</div></div>
+      <div class="detail-section"><div class="detail-title">错误分布</div><div v-if="detailTask.error_summary?.length" class="error-list"><div v-for="err in detailTask.error_summary" :key="err.name + err.message" class="error-row"><span>{{ err.name }}</span><strong>{{ err.error_count }}</strong><small>{{ err.message || '未提供错误信息' }}</small></div></div><div v-else class="state">本次压测没有记录错误。</div></div>
+    </div>
+    <template #foot><button class="btn btn-primary" @click="showDetail = false">关闭</button></template>
+  </Modal>
   <!-- 新建压测弹层 -->
   <Modal v-if="showModal" title="新建压测任务" :busy="saving" @close="closeModal">
     <div class="field">
@@ -281,6 +332,8 @@ onUnmounted(stopPoll)
 </template>
 
 <style scoped>
+.history-chart{padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px}.history-chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--text-muted);font-size:11.5px}.history-chart-head small{font:11px ui-monospace,Consolas,monospace}.history-chart svg{display:block;width:100%;height:170px;background:linear-gradient(to bottom,transparent 49.5%,var(--border) 50%,transparent 50.5%);border-radius:6px}.history-chart line{stroke:var(--border);stroke-width:1}.history-chart polyline{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.history-chart .trend-rps{stroke:var(--primary)}.history-chart .trend-latency{stroke:var(--warn-fg);stroke-dasharray:6 5}.history-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;color:var(--text-muted);font-size:11px}.history-legend span{display:inline-flex;align-items:center;gap:5px}.history-legend i{display:inline-block;width:18px;height:3px;border-radius:3px}.legend-rps{background:var(--primary)}.legend-latency{background:var(--warn-fg)}.history-list{display:flex;flex-direction:column;gap:5px;max-height:210px;overflow:auto}.history-row{display:grid;grid-template-columns:55px 1fr 1fr 1fr 1fr;gap:8px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-muted);font:11.5px ui-monospace,Consolas,monospace}.history-row span:first-child{color:var(--text);font-weight:600}@media (max-width:640px){.history-row{grid-template-columns:55px 1fr 1fr}.history-row span:nth-child(n+4){display:none}}
+.icon-btn.detail:hover{color:var(--primary);background:var(--surface-2)}.perf-detail{display:flex;flex-direction:column;gap:16px}.detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}.detail-head strong{display:block;font-size:14px}.detail-head small{display:block;margin-top:4px;color:var(--text-muted);font:11.5px ui-monospace,Consolas,monospace;overflow-wrap:anywhere}.detail-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.detail-metrics>div{padding:10px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}.detail-metrics span{display:block;color:var(--text-muted);font-size:11px}.detail-metrics strong{display:block;margin-top:5px;font:700 15px ui-monospace,Consolas,monospace}.detail-section{display:flex;flex-direction:column;gap:8px}.detail-title{font-size:12px;font-weight:700;color:var(--text-muted)}.detail-table{border:1px solid var(--border);border-radius:8px;overflow:hidden}.detail-row{display:grid;grid-template-columns:2fr .7fr .7fr .8fr .8fr;gap:8px;padding:9px 11px;border-bottom:1px solid var(--border);font-size:12px}.detail-row:last-child{border-bottom:0}.detail-row-head{background:var(--surface-2);color:var(--text-muted);font-weight:600}.detail-row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail-row .bad{color:var(--fail-fg)}.error-list{display:flex;flex-direction:column;gap:6px}.error-row{display:grid;grid-template-columns:1.2fr 60px 2fr;gap:8px;align-items:center;padding:9px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px}.error-row strong{color:var(--fail-fg)}.error-row small{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:640px){.detail-metrics{grid-template-columns:repeat(2,1fr)}.error-row{grid-template-columns:1fr 44px}.error-row small{grid-column:1/-1}.detail-row{grid-template-columns:1.6fr .6fr .6fr}}
 .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);
   border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
@@ -291,7 +344,7 @@ onUnmounted(stopPoll)
 .card .v.warn { color:var(--warn-fg); }
 .card .v.pri { color:var(--primary); }
 
-.row { display:grid; grid-template-columns:1.3fr 1.7fr 118px 88px 64px 88px 72px 76px; align-items:center; gap:10px;
+.row { display:grid; grid-template-columns:1.3fr 1.7fr 118px 88px 64px 82px 64px 64px 72px 76px; align-items:center; gap:10px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }
 .row:not(.head):hover { background:var(--surface-2); }
@@ -303,8 +356,9 @@ onUnmounted(stopPoll)
 .c-target { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .c-load { color:var(--text-muted); font-size:12px; }
-.c-rps, .c-ms, .c-fail { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; font-weight:600; }
+.c-rps, .c-ms, .c-p95, .c-p99, .c-fail { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; font-weight:600; }
 .c-fail.bad { color:var(--fail-fg); }
+.c-p95, .c-p99 { color:var(--text-muted); }
 .c-act { text-align:right; display:flex; gap:4px; justify-content:flex-end; }
 .icon-btn { display:inline-flex; align-items:center; justify-content:center;
   width:32px; height:32px; padding:0; background:none; border:none; color:var(--text-muted);
@@ -344,8 +398,8 @@ onUnmounted(stopPoll)
 /* ===== 响应式 ===== */
 @media (max-width:1100px) {
   .cards { grid-template-columns:repeat(2,1fr); }
-  .row { grid-template-columns:1.2fr 100px 80px 64px 72px 76px; }
-  .c-target, .c-ms { display:none; }
+  .row { grid-template-columns:1.2fr 100px 80px 64px 64px 64px 72px 76px; }
+  .c-target, .c-ms, .c-p95, .c-p99 { display:none; }
 }
 @media (max-width:640px) {
   .cards { grid-template-columns:1fr; gap:12px; }
