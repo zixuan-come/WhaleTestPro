@@ -272,6 +272,7 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
     redis_values = {}
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda db, task_id, project_id, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
+    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
     monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: SimpleNamespace(set=lambda key, value, **kwargs: redis_values.update({key: value})))
     monkeypatch.setattr(perf_service.requests, 'get', lambda *args, **kwargs: SimpleNamespace())
 
@@ -281,6 +282,19 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
     assert updates[-1] == {'status': 'cancelled'}
     assert redis_values['locust:cancel:11:8'] == '1'
 
+
+def test_perf_run_does_not_restart_cancelled_task(monkeypatch):
+    from app.services import perf as perf_service
+
+    task = SimpleNamespace(id=9, status='cancelled')
+    updates = []
+    monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
+    monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda *args, **kwargs: updates.append(kwargs))
+
+    result = perf_service.s_run(object(), 9, 11)
+
+    assert result is task
+    assert updates == []
 
 def test_direct_chain_writes_test_reports(monkeypatch):
     from app.services import execution
@@ -328,3 +342,85 @@ def test_schedule_create_removes_orphan_on_sync_failure(monkeypatch):
         schedule_service.s_create(Db(), object(), 7)
     assert deleted == [obj]
 
+
+def test_mock_match_supports_path_parameters(monkeypatch):
+    from app.repositories import mock as mock_repo
+
+    exact = SimpleNamespace(path='/orders/123', method='GET')
+    wildcard = SimpleNamespace(path='/orders/{id}', method='GET')
+    class Query:
+        def __init__(self, rows): self.rows = rows
+        def filter(self, *args): return self
+        def first(self): return self.rows[0] if self.rows else None
+        def all(self): return self.rows
+    class Db:
+        def __init__(self): self.calls = 0
+        def query(self, model):
+            self.calls += 1
+            return Query([exact] if self.calls == 1 else [wildcard])
+
+    assert mock_repo.db_match(Db(), 1, '/orders/123', 'get') is exact
+
+    class WildDb:
+        def query(self, model): return Query([wildcard])
+    assert mock_repo.db_match(WildDb(), 1, '/orders/456', 'GET') is wildcard
+
+
+def test_schedule_schema_validates_field_lengths():
+    from pydantic import ValidationError
+    from app.schemas.schedule import ScheduleCreate
+
+    schedule = ScheduleCreate(name='daily', cron='0 0 * * *', tag=' smoke ')
+    assert schedule.tag == 'smoke'
+
+    with pytest.raises(ValidationError):
+        ScheduleCreate(name='daily', cron='0 0 * * *', tag='x' * 51)
+    with pytest.raises(ValidationError):
+        ScheduleCreate(name='daily', cron='   ')
+
+
+
+def test_scenario_schema_validates_description_length():
+    import pytest
+    from pydantic import ValidationError
+    from app.schemas.scenario import ScenarioCreate
+
+    ScenarioCreate(name='场景', description='a' * 500)
+    with pytest.raises(ValidationError):
+        ScenarioCreate(name='场景', description='a' * 501)
+
+
+def test_interface_schema_validates_request_fields():
+    import pytest
+    from pydantic import ValidationError
+    from app.schemas.interface import InterfaceCreate
+
+    normalized = InterfaceCreate(name='查询', method=' get ', url=' /health ', category='  系统  ')
+    assert normalized.method == 'GET'
+    assert normalized.url == '/health'
+    assert normalized.category == '系统'
+    with pytest.raises(ValidationError):
+        InterfaceCreate(name='查询', method='TRACE', url='/health')
+    with pytest.raises(ValidationError):
+        InterfaceCreate(name='查询', method='GET', url='health')
+    with pytest.raises(ValidationError):
+        InterfaceCreate(name='查询', method='GET', url='/' + 'a' * 500)
+
+
+def test_execution_rejects_missing_or_foreign_environment(monkeypatch):
+    from app.services import execution
+
+    monkeypatch.setattr(execution.env_repo, "db_get", lambda db, env_id, project_id: None)
+
+    with pytest.raises(ValueError, match="不存在或不属于当前项目"):
+        execution._env_context(object(), 999, 7)
+
+
+def test_traffic_replay_safe_json_handles_non_json_response():
+    from app.services import traffic_replay
+
+    class Response:
+        def json(self):
+            raise ValueError("not json")
+
+    assert traffic_replay._safe_json(Response()) is None
