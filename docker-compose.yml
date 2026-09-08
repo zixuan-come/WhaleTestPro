@@ -29,9 +29,11 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     restart: unless-stopped
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    # P0 安全修复：RabbitMQ 端口仅限容器内访问，不暴露到宿主机
+    # 如需本地调试管理界面，临时改为 "127.0.0.1:15672:15672"
+    # ports:
+    #   - "5672:5672"
+    #   - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s
@@ -86,8 +88,11 @@ services:
     restart: unless-stopped
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
+    # P0 安全修复：Prometheus 仅限容器内访问，不暴露到宿主机
+    # Grafana 通过内网访问 prometheus:9090，无需暴露端口
+    # 如需本地调试，临时改为 "127.0.0.1:9090:9090"
+    # ports:
+    #   - "9090:9090"
     depends_on:
       - app
     networks: [whale]
@@ -96,9 +101,11 @@ services:
     image: grafana/grafana
     restart: unless-stopped
     environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"       # 匿名免登录，演示方便
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # P0 安全修复：禁用匿名访问，要求登录认证
+      # 默认账号：admin / admin（首次登录会要求修改密码）
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # GF_AUTH_ANONYMOUS_ORG_ROLE: Admin      # 已禁用匿名，此行无效
+      # GF_AUTH_DISABLE_LOGIN_FORM: "true"     # 已禁用匿名，需要登录表单
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning   # 数据源+仪表盘 provider
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards    # 仪表盘 json 本体
