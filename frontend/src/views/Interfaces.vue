@@ -2,13 +2,20 @@
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { listInterfaces, createInterface, updateInterface, deleteInterface, renameCategory, deleteCategory, getInterfaceReferences, migrateInterfaceCases } from '../api/interface'
+import { listInterfaces, createInterface, updateInterface, deleteInterface, runInterface, renameCategory, deleteCategory, getInterfaceReferences, migrateInterfaceCases } from '../api/interface'
 import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
+import { listEnvironments } from '../api/environment'
 
 const items = ref([])
 const loading = ref(true)
 const error = ref('')
+const envs = ref([])
+const selectedEnv = ref('')
+const runningId = ref(null)
+const showRunResult = ref(false)
+const runResult = ref(null)
 
 const showModal = ref(false)
 const saving = ref(false)
@@ -36,6 +43,7 @@ const migrationBusy = ref(false)
 const targetMenuOpen = ref(false)
 const pickerTriggerEl = ref(null)
 const targetMenuStyle = ref({})
+const searchKeyword = ref('')
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const UNCATEGORIZED = '未分类'
@@ -62,7 +70,7 @@ const existingCategories = computed(() => {
 // 按分类分组,"未分类"永远排最后
 const groups = computed(() => {
   const map = new Map()
-  for (const it of items.value) {
+  for (const it of filteredItems.value) {
     const key = (it.category && it.category.trim()) || UNCATEGORIZED
     if (!map.has(key)) map.set(key, [])
     map.get(key).push(it)
@@ -74,6 +82,18 @@ const groups = computed(() => {
     return a.localeCompare(b, 'zh-CN')
   })
   return entries.map(([name, list]) => ({ name, items: list }))
+})
+
+const filteredItems = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword) return items.value
+  return items.value.filter((item) => {
+    const haystack = [item.name, item.url, item.method, item.category]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(keyword)
+  })
 })
 
 function methodClass(m) {
@@ -219,14 +239,20 @@ async function onDeleteCategory(name, count) {
 
 async function load() {
   loading.value = true
-  error.value = ''
-  try {
-    items.value = await listInterfaces()
-  } catch (e) {
-    error.value = e.message || '加载失败'
-  } finally {
-    loading.value = false
+  error.value = ""
+  const [interfacesResult, environmentsResult] = await Promise.allSettled([listInterfaces(), listEnvironments()])
+  if (interfacesResult.status === "fulfilled") {
+    items.value = interfacesResult.value
+  } else {
+    error.value = interfacesResult.reason?.message || "接口加载失败"
   }
+  if (environmentsResult.status === "fulfilled") {
+    envs.value = environmentsResult.value
+  }
+  if (interfacesResult.status === "rejected" && environmentsResult.status === "rejected") {
+    error.value = interfacesResult.reason?.message || "加载失败"
+  }
+  loading.value = false
 }
 
 function openCreate() {
@@ -378,6 +404,11 @@ async function migrateCases() {
     migrationBusy.value = false
   }
 }
+async function onRun(item) {
+  runningId.value = item.id
+  try { runResult.value = await runInterface(item.id, selectedEnv.value || undefined); showRunResult.value = true } catch (e) { showMessage(e.message || '执行失败', 'error') } finally { runningId.value = null }
+}
+
 async function onDelete(id) {
   if (!(await confirmAction('确认删除该接口?'))) return
   try {
@@ -407,8 +438,10 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 
   <div class="panel">
     <div class="panel-head">
-      接口列表
+      <span>接口列表</span>
       <div class="head-actions">
+        <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="执行接口时使用的环境" />
+        <label class="interface-search" aria-label="搜索接口"><span class="search-icon">⌕</span><input v-model="searchKeyword" placeholder="搜索名称、URL、方法或分类"/><button v-if="searchKeyword" type="button" class="search-clear" aria-label="清空搜索" @click="searchKeyword=''">×</button></label>
         <button class="btn btn-ghost" @click="openCategoryManage">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h4l2-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
           分类管理
@@ -426,6 +459,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
       <button class="btn btn-ghost retry" @click="load">重试</button>
     </div>
     <div v-else-if="!items.length" class="state">暂无接口,点右上角「新建接口」添加</div>
+    <div v-else-if="!filteredItems.length" class="state">没有匹配的接口，请尝试其他关键词。</div>
 
     <template v-else>
       <div class="row head">
@@ -448,6 +482,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
             </span>
             <span class="c-url" :title="it.url">{{ it.url }}</span>
             <span class="c-act">
+<button class="icon-btn run" title="执行" :disabled="runningId === it.id" @click="onRun(it)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg></button>
               <button class="icon-btn" title="编辑" @click="openEdit(it)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
@@ -477,6 +512,18 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
     </template>
   </Modal>
 
+
+  <Modal v-if="showRunResult" title="接口执行结果" :max-width="680" @close="showRunResult = false">
+    <div v-if="runResult" class="run-result-panel">
+      <div class="run-verdict"><span class="badge" :class="runResult.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ runResult.passed ? '通过' : '失败' }}</span><span class="muted">{{ runResult.interface_name }}</span><span class="muted">{{ runResult.duration_ms }} ms</span></div>
+      <div v-if="runResult.error" class="form-err">{{ runResult.error }}</div>
+      <template v-else>
+        <div class="run-kv"><div><span>请求</span><code>{{ runResult.request?.method }} {{ runResult.request?.url }}</code></div><div><span>响应状态</span><strong :class="runResult.response?.status_code >= 400 ? 'bad' : 'ok'">{{ runResult.response?.status_code }}</strong></div></div>
+        <details class="run-detail"><summary>查看响应体</summary><pre>{{ JSON.stringify(runResult.response?.body, null, 2) }}</pre></details>
+      </template>
+    </div>
+    <template #foot><button class="btn btn-primary" @click="showRunResult = false">关闭</button></template>
+  </Modal>
   <!-- 新建/编辑接口弹层 -->
   <Modal v-if="showModal" :title="editingId ? '编辑接口' : '新建接口'" :max-width="760" :busy="saving" @close="closeModal">
     <div class="field">
@@ -667,6 +714,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 </template>
 
 <style scoped>
+.interface-search{position:relative;display:flex;align-items:center;width:260px;height:34px;margin-right:4px}.search-icon{position:absolute;left:10px;color:var(--text-muted);font-size:18px;line-height:1;pointer-events:none}.interface-search input{width:100%;height:100%;padding:0 30px 0 30px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font:12px inherit}.interface-search input:focus{outline:none;border-color:var(--primary)}.search-clear{position:absolute;right:6px;width:22px;height:22px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text-muted);font-size:18px;line-height:18px;cursor:pointer}.search-clear:hover{background:var(--border);color:var(--text)}
 .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);
   border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm);
@@ -678,6 +726,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 .card .v.fail { color:var(--fail-fg); }
 .card .v.pri { color:var(--primary); }
 
+.run-result-panel{display:flex;flex-direction:column;gap:14px}.run-verdict{display:flex;align-items:center;gap:12px}.run-kv{display:grid;grid-template-columns:2fr 1fr;gap:10px}.run-kv>div{display:flex;flex-direction:column;gap:6px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}.run-kv span{font-size:11px;color:var(--text-muted)}.run-kv code{font:12px ui-monospace,Consolas,monospace;overflow-wrap:anywhere}.run-kv strong{font:700 18px ui-monospace,Consolas,monospace}.run-kv strong.ok{color:var(--pass-fg)}.run-kv strong.bad{color:var(--fail-fg)}.run-detail{border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface-2)}.run-detail summary{cursor:pointer;font-size:12px;font-weight:600}.run-detail pre{margin:10px 0 0;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:11.5px/1.5 ui-monospace,Consolas,monospace;color:var(--text-muted)}
 .row { display:grid; grid-template-columns:80px 1.4fr 2fr 100px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }

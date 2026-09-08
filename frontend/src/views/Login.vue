@@ -40,7 +40,9 @@ function switchMode(next) {
 
 async function onSubmit() {
   error.value = ''
-  if (!username.value || !password.value) {
+  const normalizedUsername = username.value.trim()
+  const normalizedPassword = password.value
+  if (!normalizedUsername || !normalizedPassword) {
     error.value = '请输入账号和密码'
     return
   }
@@ -48,15 +50,15 @@ async function onSubmit() {
     error.value = '请确认密码'
     return
   }
-  if (isRegister.value && (username.value.length < USERNAME_MIN_LENGTH || username.value.length > USERNAME_MAX_LENGTH)) {
+  if (isRegister.value && (normalizedUsername.length < USERNAME_MIN_LENGTH || normalizedUsername.length > USERNAME_MAX_LENGTH)) {
     error.value = '账号需 4–20 位'
     return
   }
-  if (isRegister.value && (password.value.length < PASSWORD_MIN_LENGTH || password.value.length > PASSWORD_MAX_LENGTH)) {
+  if (isRegister.value && (normalizedPassword.length < PASSWORD_MIN_LENGTH || normalizedPassword.length > PASSWORD_MAX_LENGTH)) {
     error.value = '密码需 4–20 位'
     return
   }
-  if (isRegister.value && password.value !== confirmPassword.value) {
+  if (isRegister.value && normalizedPassword !== confirmPassword.value) {
     error.value = '两次输入的密码不一致'
     return
   }
@@ -64,10 +66,10 @@ async function onSubmit() {
   try {
     if (isRegister.value) {
       // 注册 → 立刻用同一套账号密码登录进去
-      await apiRegister(username.value, password.value)
+      await apiRegister(normalizedUsername, normalizedPassword)
     }
-    const res = await apiLogin(username.value, password.value)
-    auth.setAuth(res.access_token, username.value)
+    const res = await apiLogin(normalizedUsername, normalizedPassword)
+    auth.setAuth(res.access_token, normalizedUsername)
     router.push({ name: 'interfaces' })
   } catch (e) {
     error.value = e.message || (isRegister.value ? '注册失败' : '登录失败')
@@ -125,7 +127,7 @@ async function onSubmit() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0112 0v1" />
           </svg>
-          <input v-model="username" type="text" placeholder="请输入账号" autocomplete="username" required :minlength="isRegister ? USERNAME_MIN_LENGTH : undefined" />
+          <input v-model="username" type="text" placeholder="请输入账号" autocomplete="username" required :minlength="isRegister ? USERNAME_MIN_LENGTH : undefined" :maxlength="isRegister ? USERNAME_MAX_LENGTH : undefined" />
         </div>
 
         <label>密码</label>
@@ -133,7 +135,7 @@ async function onSubmit() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
           </svg>
-          <input v-model="password" :type="showPassword ? 'text' : 'password'" :placeholder="isRegister ? '设置密码' : '请输入密码'" :autocomplete="isRegister ? 'new-password' : 'current-password'" required :minlength="isRegister ? PASSWORD_MIN_LENGTH : undefined" />
+          <input v-model="password" :type="showPassword ? 'text' : 'password'" :placeholder="isRegister ? '设置密码' : '请输入密码'" :autocomplete="isRegister ? 'new-password' : 'current-password'" required :minlength="isRegister ? PASSWORD_MIN_LENGTH : undefined" :maxlength="isRegister ? PASSWORD_MAX_LENGTH : undefined" />
           <button type="button" class="eye" @click="showPassword = !showPassword" :title="showPassword ? '隐藏密码' : '显示密码'">
             <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
@@ -150,7 +152,7 @@ async function onSubmit() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
             </svg>
-            <input v-model="confirmPassword" type="password" placeholder="再次输入密码" autocomplete="new-password" required />
+            <input v-model="confirmPassword" type="password" placeholder="再次输入密码" autocomplete="new-password" required :minlength="PASSWORD_MIN_LENGTH" :maxlength="PASSWORD_MAX_LENGTH" />
           </div>
         </template>
 
@@ -251,3 +253,4 @@ async function onSubmit() {
   .form { padding:38px 26px; }
 }
 </style>
+

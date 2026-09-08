@@ -5,6 +5,7 @@ export const getInterface = (id) => http.get(`/interfaces/${id}`)
 export const createInterface = (data) => http.post('/interfaces', data)
 export const updateInterface = (id, data) => http.put(`/interfaces/${id}`, data)
 export const deleteInterface = (id) => http.delete(`/interfaces/${id}`)
+export const runInterface = (id, envId) => http.post(`/interfaces/${id}/run`, null, { params: envId ? { env_id: envId } : {} })
 
 // 分类批量操作:后端一次 SQL 改所有匹配的接口,快过前端循环 PUT
 export const renameCategory = (oldName, newName) =>
