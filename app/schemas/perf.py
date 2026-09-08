@@ -29,5 +29,10 @@ class PerfTaskOut(PerfTaskCreate):
     status: str
     rps: float | None = None
     avg_response_ms: float | None = None
+    p95_response_ms: float | None = None
+    p99_response_ms: float | None = None
+    request_stats: list | None = None
+    error_summary: list | None = None
+    history_samples: list | None = None
     fail_ratio: float | None = None
     model_config = ConfigDict(from_attributes=True)

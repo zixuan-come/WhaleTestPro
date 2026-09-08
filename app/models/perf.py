@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, JSON
 from app.database import Base
 
 
@@ -15,6 +15,11 @@ class PerfTask(Base):
     status = Column(String(50), nullable=False, default="pending")
     rps = Column(Float, nullable=True)
     avg_response_ms = Column(Float, nullable=True)
+    p95_response_ms = Column(Float, nullable=True)
+    p99_response_ms = Column(Float, nullable=True)
+    request_stats = Column(JSON, nullable=True)
+    error_summary = Column(JSON, nullable=True)
+    history_samples = Column(JSON, nullable=True)
     fail_ratio = Column(Float, nullable=True)
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 

@@ -45,3 +45,14 @@ def db_update(db: Session, task_id: int, project_id: int, **fields):
     db.commit()
     db.refresh(db_task)
     return db_task
+
+
+def db_update_if_status(db: Session, task_id: int, project_id: int, expected_status: str, **fields):
+    db_task = db.query(PerfTask).filter(PerfTask.id == task_id, PerfTask.project_id == project_id, PerfTask.status == expected_status).first()
+    if db_task is None:
+        return None
+    for k, v in fields.items():
+        setattr(db_task, k, v)
+    db.commit()
+    db.refresh(db_task)
+    return db_task

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
     FEISHU_WEBHOOK: str = ""
     LOCUST_MASTER_URL: str = "http://localhost:8089"
+    REQUEST_TIMEOUT_SECONDS: float = 30.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

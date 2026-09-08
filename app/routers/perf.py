@@ -77,5 +77,9 @@ def run_task(
     if task is None:
         raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在")
     # pid 一起传给 celery worker,s_run 里所有 repo 调用都强制带 pid,不留信任漏洞
-    run_perf_task.delay(task_id, current_project.id)
+    try:
+        run_perf_task.delay(task_id, current_project.id)
+    except Exception:
+        perf_service.s_mark_failed(db, task_id, current_project.id)
+        raise HTTPException(status_code=503, detail="压测任务入队失败，请稍后重试")
     return success_response(task, message="压测任务已启动")
