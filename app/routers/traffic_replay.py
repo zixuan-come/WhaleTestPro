@@ -18,9 +18,12 @@ def replay(
     current_project: Project = Depends(get_current_project),
 ):
     req = req or ReplayRequest()
-    result = traffic_replay_service.s_replay(
-        db, record_id, current_project.id, req.env_id, req.field_rules
-    )
+    try:
+        result = traffic_replay_service.s_replay(
+            db, record_id, current_project.id, req.env_id, req.field_rules
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="录制记录不存在")
     return success_response(result, message="流量回放完成")

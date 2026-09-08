@@ -8,6 +8,29 @@ from app.models.team_member import TeamMember, TeamRole
 from app.models.user import User
 
 
+PERF_SCHEMA_COLUMNS = {
+    "p95_response_ms": "FLOAT NULL",
+    "p99_response_ms": "FLOAT NULL",
+    "request_stats": "JSON NULL",
+    "error_summary": "JSON NULL",
+    "history_samples": "JSON NULL",
+}
+
+
+def ensure_perf_schema(db: Session) -> None:
+    """为已有数据库补齐压测观测字段，避免 create_all 升级时漏列。"""
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if not inspector.has_table("perf_tasks"):
+        return
+    existing = {column["name"] for column in inspector.get_columns("perf_tasks")}
+    missing = [name for name in PERF_SCHEMA_COLUMNS if name not in existing]
+    for name in missing:
+        db.execute(text(f"ALTER TABLE perf_tasks ADD COLUMN {name} {PERF_SCHEMA_COLUMNS[name]}"))
+    if missing:
+        db.commit()
+
+
 def ensure_team_schema(db: Session) -> None:
     """Create team tables via metadata and add team_id to legacy project tables."""
     bind = db.get_bind()
@@ -78,4 +101,5 @@ def backfill_teams(db: Session) -> int:
 
 # Backward-compatible name used by the app bootstrap.
 def backfill_legacy_project_owners(db: Session) -> int:
+    ensure_perf_schema(db)
     return backfill_teams(db)

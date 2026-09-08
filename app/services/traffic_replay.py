@@ -2,15 +2,9 @@ import requests
 from app.repositories import traffic_record as traffic_record_repo
 from app.repositories import environment as env_repo
 from app.core.response_diff import diff_response
+from app.core.config import settings
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"  # 不指定环境就打回本机（录的就是本机接口）
-
-
-def _base_url(db, env_id, project_id):
-    if env_id is None:
-        return DEFAULT_BASE_URL
-    env = env_repo.db_get(db, env_id, project_id)
-    return env.base_url if env else DEFAULT_BASE_URL
 
 
 def _safe_json(response):
@@ -19,6 +13,15 @@ def _safe_json(response):
         return response.json()
     except Exception:
         return None
+
+
+def _base_url(db, env_id, project_id):
+    if env_id is None:
+        return DEFAULT_BASE_URL
+    env = env_repo.db_get(db, env_id, project_id)
+    if env is None:
+        raise ValueError(f"环境 id={env_id} 不存在或不属于当前项目")
+    return env.base_url
 
 
 def s_replay(db, record_id, project_id, env_id=None, field_rules=None):
@@ -31,10 +34,10 @@ def s_replay(db, record_id, project_id, env_id=None, field_rules=None):
     # 自动设 Content-Type/content-length。不原样带录制的 headers：host 是录制时的会错、
     # content-length 跟新 body 不一定符、鉴权头已脱敏成 *** 带过去也没用
     response = requests.request(
-        method=record.method,
-        url=url,
-        json=record.request_body,
         headers={"X-Shadow": "1"},
+        url=url,
+        timeout=settings.REQUEST_TIMEOUT_SECONDS,
+        json=record.request_body,
     )
 
     replayed_body = _safe_json(response)

@@ -70,7 +70,7 @@ def _env_context(db, env_id, project_id):
         return {}
     env = env_repo.db_get(db, env_id, project_id)
     if env is None:
-        return {}
+        raise ValueError(f"环境 id={env_id} 不存在或不属于当前项目")
     return {**(env.variables or {}), "base_url": env.base_url}
 
 
@@ -101,6 +101,27 @@ def run_case(db, case_id, env_id, project_id):
     return result
 
 
+
+def run_interface(db, interface_id, env_id, project_id):
+    """直接执行接口定义，不创建测试用例或测试报告。"""
+    interface = interface_repo.db_get(db, interface_id, project_id)
+    if interface is None:
+        return None
+    context = _env_context(db, env_id, project_id)
+    request_detail = None
+    response_detail = None
+    started = perf_counter()
+    try:
+        rendered_url = _full_url(interface.url, context)
+        rendered_headers = render_deep(interface.headers, context)
+        rendered_params = render_deep(interface.params, context)
+        rendered_body = render_deep(interface.body, context)
+        request_detail = {"method": interface.method, "url": rendered_url, "headers": _mask_sensitive(rendered_headers), "params": _mask_sensitive(rendered_params), "body": _mask_sensitive(rendered_body)}
+        response = _request(interface, url=rendered_url, headers=rendered_headers, params=rendered_params, json=rendered_body)
+        response_detail = _response_detail(response)
+        return {"interface_id": interface.id, "interface_name": interface.name, "passed": response.ok, "request": request_detail, "response": response_detail, "duration_ms": round((perf_counter() - started) * 1000)}
+    except Exception as exc:
+        return {"interface_id": interface.id, "interface_name": interface.name, "passed": False, "request": request_detail, "response": response_detail, "error": str(exc), "duration_ms": round((perf_counter() - started) * 1000)}
 def run_chain(
     db,
     case_ids,
@@ -257,6 +278,7 @@ def _request(interface, **kwargs):
     if not breaker.allow_request():
         raise CircuitBreakerOpen(f"接口 {interface.id} 熔断打开，快速失败")
     try:
+        kwargs.setdefault("timeout", settings.REQUEST_TIMEOUT_SECONDS)
         response = requests.request(method=interface.method, **kwargs)
     except Exception:
         breaker.record_failure()      # 连不上/超时 = 下游不可用
