@@ -87,10 +87,11 @@ def run_case(
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return success_response(
-        execution_service.run_case(db, case_id, env_id, current_project.id),
-        message="用例执行完成",
-    )
+    try:
+        result = execution_service.run_case(db, case_id, env_id, current_project.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return success_response(result, message="用例执行完成")
 
 
 @router.post("/chain", response_model=ApiResponse[list])
@@ -100,7 +101,9 @@ def run_chain(
     db: Session = Depends(get_db),
     current_project: Project = Depends(get_current_project),
 ):
-    return success_response(
-        execution_service.run_chain(db, case_ids, env_id, current_project.id),
-        message="链路执行完成",
-    )
+    try:
+        result = execution_service.run_chain(db, case_ids, env_id, current_project.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return success_response(result, message="链路执行完成")
+

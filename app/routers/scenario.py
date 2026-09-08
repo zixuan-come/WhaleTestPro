@@ -83,7 +83,10 @@ def run_scenario(
     current_user: User = Depends(get_current_user),
     current_project: Project = Depends(get_current_project),
 ):
-    result = scenario_service.s_run(db, scenario_id, env_id, current_project.id)
+    try:
+        result = scenario_service.s_run(db, scenario_id, env_id, current_project.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail=f"场景 id={scenario_id} 不存在")
     return success_response(result, message="场景执行完成")

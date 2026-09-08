@@ -48,16 +48,29 @@ def db_delete(db: Session, mock_id: int, project_id: int):
 
 
 def db_match(db: Session, project_id: int, path: str, method: str):
-    """
-    挡板命中匹配:project_id 从 URL 前缀取(/mock/{pid}/xxx),不是从 header。
-    因为调用方是被测系统/测试脚本,URL 里带 pid 是业界标准做法(Apifox/Postman Mock 同)。
-    """
+    """先精确匹配，再按每段 {参数} 做单段路径通配。"""
     normalized_path = "/" + path.lstrip("/")
     normalized_method = method.strip().upper()
-    return db.query(Mock).filter(
+    exact = db.query(Mock).filter(
         Mock.project_id == project_id,
         Mock.path == normalized_path,
         Mock.method == normalized_method,
     ).first()
+    if exact is not None:
+        return exact
 
-
+    candidates = db.query(Mock).filter(
+        Mock.project_id == project_id,
+        Mock.method == normalized_method,
+    ).all()
+    actual_parts = normalized_path.strip("/").split("/")
+    for candidate in candidates:
+        pattern_parts = candidate.path.strip("/").split("/")
+        if len(pattern_parts) != len(actual_parts):
+            continue
+        if all(
+            part == actual or (part.startswith("{") and part.endswith("}") and len(part) > 2)
+            for part, actual in zip(pattern_parts, actual_parts)
+        ):
+            return candidate
+    return None

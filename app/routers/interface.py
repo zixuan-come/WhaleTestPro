@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.schemas.interface import InterfaceCreate, InterfaceOut, CategoryRename, InterfaceMigrate
 from app.schemas.response import ApiResponse, success_response
 from app.services import interface as api_service
+from app.services import execution
 from app.core.deps import get_current_user, get_current_project
 from app.models.user import User
 from app.models.project import Project
@@ -64,6 +65,15 @@ def migrate_interface_cases(interface_id: int, body: InterfaceMigrate, db: Sessi
     count = api_service.s_migrate_cases(db, interface_id, body.target_interface_id, current_project.id)
     if count is None: raise HTTPException(status_code=404, detail="源接口或目标接口不存在")
     return success_response({"migrated_count": count}, message="用例迁移成功")
+@router.post("/{interface_id}/run", response_model=ApiResponse[dict])
+def run_interface(interface_id: int, env_id: int | None = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user), current_project: Project = Depends(get_current_project)):
+    try:
+        result = execution.run_interface(db, interface_id, env_id, current_project.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"接口 id={interface_id} 不存在")
+    return success_response(result, message="接口执行完成")
 @router.get("/{interface_id}", response_model=ApiResponse[InterfaceOut])
 def get_interface(
     interface_id: int,
