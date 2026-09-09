@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.core.authorization import ProjectContext, authorize
+from app.core.permissions import Action, Resource
 from app.database import get_db
-from app.schemas.traffic_record import TrafficRecordOut
 from app.schemas.response import ApiResponse, success_response
+from app.schemas.traffic_record import TrafficRecordOut
 from app.services import traffic_record as traffic_record_service
-from app.core.deps import get_current_project
-from app.models.project import Project
+
 
 router = APIRouter(prefix="/traffic/records", tags=["traffic"])
 
@@ -14,10 +16,10 @@ router = APIRouter(prefix="/traffic/records", tags=["traffic"])
 def list_records(
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.TRAFFIC, Action.READ)),
 ):
     return success_response(
-        traffic_record_service.s_list(db, current_project.id, limit),
+        traffic_record_service.s_list(db, context.project_id, limit),
         message="查询成功",
     )
 
@@ -26,9 +28,9 @@ def list_records(
 def get_record(
     record_id: int,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.TRAFFIC, Action.READ)),
 ):
-    r = traffic_record_service.s_get(db, record_id, current_project.id)
-    if r is None:
+    result = traffic_record_service.s_get(db, record_id, context.project_id)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"流量记录 id={record_id} 不存在")
-    return success_response(r, message="查询成功")
+    return success_response(result, message="查询成功")

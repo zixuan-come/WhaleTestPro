@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
+from app.core.authorization import ProjectContext, authorize
+from app.core.permissions import Action, Resource
 from app.database import get_db
-from app.services import execution as execution_service
-from app.core.deps import get_current_project
-from app.models.project import Project
 from app.schemas.response import ApiResponse, success_response
+from app.services import execution as execution_service
+
 
 router = APIRouter(prefix="/regression", tags=["regression"])
+
 
 @router.post("", response_model=ApiResponse[dict])
 def run_regression(
@@ -15,7 +18,7 @@ def run_regression(
     tag: str | None = None,
     notify: bool = False,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.REGRESSION, Action.EXECUTE)),
 ):
     return success_response(
         execution_service.run_regression(
@@ -24,7 +27,7 @@ def run_regression(
             env_id,
             tag,
             notify,
-            current_project.id,
+            context.project_id,
         ),
         message="回归执行完成",
     )

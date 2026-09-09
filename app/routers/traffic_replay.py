@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.core.authorization import ProjectContext, authorize
+from app.core.permissions import Action, Resource
 from app.database import get_db
-from app.schemas.traffic_replay import ReplayRequest
 from app.schemas.response import ApiResponse, success_response
+from app.schemas.traffic_replay import ReplayRequest
 from app.services import traffic_replay as traffic_replay_service
-from app.core.deps import get_current_project
-from app.models.project import Project
+
 
 router = APIRouter(prefix="/traffic/replay", tags=["traffic"])
 
@@ -15,12 +17,12 @@ def replay(
     record_id: int,
     req: ReplayRequest | None = None,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.TRAFFIC, Action.EXECUTE)),
 ):
     req = req or ReplayRequest()
     try:
         result = traffic_replay_service.s_replay(
-            db, record_id, current_project.id, req.env_id, req.field_rules
+            db, record_id, context.project_id, req.env_id, req.field_rules
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

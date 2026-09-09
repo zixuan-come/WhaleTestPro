@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_project
+from app.core.authorization import ProjectContext, authorize
+from app.core.permissions import Action, Resource
 from app.database import get_db
-from app.models.project import Project
 from app.schemas.environment import EnvironmentCreate, EnvironmentOut
 from app.schemas.response import ApiResponse, success_response
 from app.services import environment as env_service
@@ -16,10 +16,10 @@ router = APIRouter(prefix="/environments", tags=["environments"])
 def create_environment(
     env: EnvironmentCreate,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.ENVIRONMENT, Action.WRITE)),
 ):
     return success_response(
-        env_service.s_create(db, env, current_project.id),
+        env_service.s_create(db, env, context.project_id),
         message="环境创建成功",
         status_code=201,
     )
@@ -29,9 +29,9 @@ def create_environment(
 def get_environment(
     env_id: int,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.ENVIRONMENT, Action.READ)),
 ):
-    result = env_service.s_get(db, env_id, current_project.id)
+    result = env_service.s_get(db, env_id, context.project_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"环境 id={env_id} 不存在")
     return success_response(result, message="查询成功")
@@ -40,9 +40,9 @@ def get_environment(
 @router.get("", response_model=ApiResponse[list[EnvironmentOut]])
 def list_environment(
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.ENVIRONMENT, Action.READ)),
 ):
-    return success_response(env_service.s_list(db, current_project.id), message="查询成功")
+    return success_response(env_service.s_list(db, context.project_id), message="查询成功")
 
 
 @router.put("/{env_id}", response_model=ApiResponse[EnvironmentOut])
@@ -50,9 +50,9 @@ def update_environment(
     env_id: int,
     env: EnvironmentCreate,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.ENVIRONMENT, Action.WRITE)),
 ):
-    result = env_service.s_update(db, env_id, env, current_project.id)
+    result = env_service.s_update(db, env_id, env, context.project_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"环境 id={env_id} 不存在")
     return success_response(result, message="环境更新成功")
@@ -62,9 +62,9 @@ def update_environment(
 def delete_environment(
     env_id: int,
     db: Session = Depends(get_db),
-    current_project: Project = Depends(get_current_project),
+    context: ProjectContext = Depends(authorize(Resource.ENVIRONMENT, Action.WRITE)),
 ):
-    result = env_service.s_delete(db, env_id, current_project.id)
+    result = env_service.s_delete(db, env_id, context.project_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"环境 id={env_id} 不存在")
     return success_response(result, message="环境删除成功")

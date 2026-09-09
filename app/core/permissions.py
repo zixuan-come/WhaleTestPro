@@ -1,6 +1,31 @@
-"""Canonical team permission keys and project route mapping."""
+"""Project authorization vocabulary and configurable team permissions."""
 
+from enum import Enum
 from typing import Literal
+
+
+class Resource(str, Enum):
+    PROJECT = "project"
+    PROJECT_MEMBER = "project_member"
+    INTERFACE = "interface"
+    CASE = "case"
+    ENVIRONMENT = "environment"
+    MOCK = "mock"
+    SCHEDULE = "schedule"
+    PERF = "perf"
+    SCENARIO = "scenario"
+    SUITE = "suite"
+    REPORT = "report"
+    TRAFFIC = "traffic"
+    REGRESSION = "regression"
+
+
+class Action(str, Enum):
+    READ = "read"
+    WRITE = "write"
+    EXECUTE = "execute"
+    MANAGE = "manage"
+    OWNER = "owner"
 
 
 PermissionKey = Literal[
@@ -11,6 +36,7 @@ PermissionKey = Literal[
     "schedule.write",
     "perf.write",
     "scenario.write",
+    "suite.write",
 ]
 
 TEAM_PERMISSION_KEYS: tuple[PermissionKey, ...] = (
@@ -21,29 +47,16 @@ TEAM_PERMISSION_KEYS: tuple[PermissionKey, ...] = (
     "schedule.write",
     "perf.write",
     "scenario.write",
+    "suite.write",
 )
 
-PROJECT_WRITE_PERMISSION_PREFIXES: tuple[tuple[str, PermissionKey], ...] = (
-    ("/interfaces", "interface.write"),
-    ("/cases", "case.write"),
-    ("/environments", "environment.write"),
-    ("/mocks", "mock.write"),
-    ("/schedules", "schedule.write"),
-    ("/perf/tasks", "perf.write"),
-    ("/scenarios", "scenario.write"),
-)
-
-
-def is_execution_path(path: str) -> bool:
-    return (
-        path.startswith("/traffic/replay/")
-        or path.startswith("/regression")
-        or path.endswith(("/run", "/chain"))
-    )
-
-
-def permission_for_project_path(path: str) -> PermissionKey | None:
-    for prefix, permission in PROJECT_WRITE_PERMISSION_PREFIXES:
-        if path.startswith(prefix):
-            return permission
-    return None
+WRITE_PERMISSION_BY_RESOURCE: dict[Resource, PermissionKey] = {
+    Resource.INTERFACE: "interface.write",
+    Resource.CASE: "case.write",
+    Resource.ENVIRONMENT: "environment.write",
+    Resource.MOCK: "mock.write",
+    Resource.SCHEDULE: "schedule.write",
+    Resource.PERF: "perf.write",
+    Resource.SCENARIO: "scenario.write",
+    Resource.SUITE: "suite.write",
+}

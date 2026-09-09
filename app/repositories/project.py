@@ -37,23 +37,45 @@ def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
     db.refresh(db_project)
     return db_project
 
+
 def db_get(db: Session, project_id: int) -> Project | None:
     return db.query(Project).filter(Project.id == project_id).first()
 
 
 def db_get_for_user(db: Session, project_id: int, user_id: int) -> Project | None:
-    return (db.query(Project)
+    return (
+        db.query(Project)
         .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
-        .outerjoin(TeamMember, and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id))
-        .filter(Project.id == project_id, or_(ProjectMember.user_id == user_id, TeamMember.user_id == user_id))
-        .first())
+        .outerjoin(
+            TeamMember,
+            and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id),
+        )
+        .filter(
+            Project.id == project_id,
+            or_(
+                and_(Project.team_id.is_not(None), TeamMember.user_id == user_id),
+                and_(Project.team_id.is_(None), ProjectMember.user_id == user_id),
+            ),
+        )
+        .first()
+    )
 
 
 def db_list_for_user(db: Session, user_id: int, team_id: int | None = None) -> list[Project]:
-    query = (db.query(Project)
+    query = (
+        db.query(Project)
         .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
-        .outerjoin(TeamMember, and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id))
-        .filter(or_(ProjectMember.user_id == user_id, TeamMember.user_id == user_id)))
+        .outerjoin(
+            TeamMember,
+            and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id),
+        )
+        .filter(
+            or_(
+                and_(Project.team_id.is_not(None), TeamMember.user_id == user_id),
+                and_(Project.team_id.is_(None), ProjectMember.user_id == user_id),
+            )
+        )
+    )
     if team_id is not None:
         query = query.filter(Project.team_id == team_id)
     return query.order_by(Project.created_at.desc()).all()
@@ -61,20 +83,27 @@ def db_list_for_user(db: Session, user_id: int, team_id: int | None = None) -> l
 
 def db_update(db: Session, project_id: int, project) -> Project | None:
     db_project = db.query(Project).filter(Project.id == project_id).first()
-    if db_project is None: return None
-    for key, value in project.model_dump(exclude={"team_id"}, exclude_unset=True).items(): setattr(db_project, key, value)
-    db.commit(); db.refresh(db_project); return db_project
+    if db_project is None:
+        return None
+    for key, value in project.model_dump(exclude={"team_id"}, exclude_unset=True).items():
+        setattr(db_project, key, value)
+    db.commit()
+    db.refresh(db_project)
+    return db_project
 
 
 def db_delete(db: Session, project_id: int) -> Project | None:
     db_project = db.query(Project).filter(Project.id == project_id).first()
-    if db_project is None: return None
+    if db_project is None:
+        return None
     try:
         report_ids = db.query(ScenarioReport.id).filter(ScenarioReport.project_id == project_id)
         db.query(ScenarioReportStep).filter(ScenarioReportStep.report_id.in_(report_ids)).delete(synchronize_session=False)
         for model in (Case, Interface, Environment, Mock, PerfTask, TestReport, ScenarioReport, Scenario, Schedule, TrafficRecord, ProjectMember):
             db.query(model).filter(model.project_id == project_id).delete(synchronize_session=False)
-        db.delete(db_project); db.commit()
+        db.delete(db_project)
+        db.commit()
     except Exception:
-        db.rollback(); raise
+        db.rollback()
+        raise
     return db_project

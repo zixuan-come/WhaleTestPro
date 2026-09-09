@@ -1,7 +1,10 @@
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
-from app.schemas.base import NamedSchema
+
 from app.core.permissions import PermissionKey
+from app.schemas.base import NamedSchema
 
 
 class TeamCreate(NamedSchema):
@@ -23,10 +26,12 @@ class TeamOut(TeamCreate):
     role: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
+
 class TeamPermissionUpdate(BaseModel):
-    role: str = 'member'
+    role: Literal["member"] = "member"
     permission: PermissionKey
     enabled: bool
+
 
 class TeamPermissionOut(TeamPermissionUpdate):
     id: int
