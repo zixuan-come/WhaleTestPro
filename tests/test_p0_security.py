@@ -100,9 +100,40 @@ def test_setup_sql_rejects_non_dml_or_multi_statement_sql(sql):
 def test_setup_sql_allows_single_dml_statement():
     db = _db_with_items()
 
-    run_sql(db, ["UPDATE items SET value = 2"])
+    run_sql(db, ["UPDATE items SET value = 2 WHERE value = 1"])
 
     assert db.execute(sql_text("SELECT value FROM items")).scalar() == 2
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE items SET value = 2",
+    "DELETE FROM items",
+])
+def test_setup_sql_rejects_update_delete_without_where(sql):
+    db = _db_with_items()
+
+    with pytest.raises(ValueError, match="WHERE"):
+        run_sql(db, [sql])
+
+    assert db.execute(sql_text("SELECT count(*) FROM items")).scalar() == 1
+    assert db.execute(sql_text("SELECT value FROM items")).scalar() == 1
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE us/**/ers SET value = 2 WHERE value = 1",
+    "DELETE FROM items WHERE value = 1 -- drop everything",
+    "INSERT INTO items VALUES (2) # comment",
+    "DELETE FROM items WHERE value = 1;#",
+])
+def test_setup_sql_rejects_comments(sql):
+    db = _db_with_items()
+
+    with pytest.raises(ValueError, match="注释"):
+        run_sql(db, [sql])
+
+    assert db.execute(sql_text("SELECT count(*) FROM items")).scalar() == 1
+
+
 @pytest.mark.parametrize("sql", [
     "DELETE FROM users WHERE id = 1",
     "UPDATE project SET name = 'x' WHERE id = 1",
