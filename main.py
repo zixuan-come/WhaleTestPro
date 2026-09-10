@@ -19,6 +19,7 @@ from app.routers import traffic_replay as traffic_replay_router
 from app.routers import project as project_router
 from app.routers import team as team_router
 from app.routers import scenario as scenario_router
+from app.routers import suite as suite_router
 
 from app.database import Base, engine, engine_shadow, SessionLocal
 from app.core.bootstrap import backfill_legacy_project_owners
@@ -161,6 +162,7 @@ app.include_router(traffic_replay_router.router)
 app.include_router(project_router.router)
 app.include_router(team_router.router)
 app.include_router(scenario_router.router)
+app.include_router(suite_router.router)
 
 # Prometheus 埋点：自动统计每个路由的请求数/耗时/进行中数，并暴露 /metrics 供抓取
 Instrumentator().instrument(app).expose(app)

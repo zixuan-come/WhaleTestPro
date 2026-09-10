@@ -4,10 +4,12 @@ const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from '../api/schedule'
 import { listCases } from '../api/case'
+import { listSuites } from '../api/suite'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
 const cases = ref([])
+const suites = ref([])
 const loading = ref(true)
 const error = ref('')
 
@@ -97,7 +99,7 @@ const showModal = ref(false)
 const saving = ref(false)
 const formErr = ref('')
 const editingId = ref(null)
-const form = reactive({ name: '', cron: '', tag: '', enabled: true })
+const form = reactive({ name: '', cron: '', tag: '', suite_id: null, enabled: true })
 
 const total = computed(() => items.value.length)
 const enabledCount = computed(() => items.value.filter(s => s.enabled).length)
@@ -109,6 +111,9 @@ async function load() {
     const [ss, cs] = await Promise.all([listSchedules(), listCases()])
     items.value = ss
     cases.value = cs
+    // 加载测试套件列表(供定时任务绑定);统一走 http 实例,别再手搓 axios+localStorage
+    const suitesData = await listSuites()
+    suites.value = Array.isArray(suitesData) ? suitesData : []
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -120,6 +125,7 @@ function openCreate() {
   editingId.value = null
   form.name = ''
   form.tag = ''
+  form.suite_id = null
   form.enabled = true
   Object.assign(cronUi, { freq: 'daily', minute: 0, hour: 2, dow: '1', dom: 1 })
   form.cron = builtCron.value
@@ -132,6 +138,7 @@ function openEdit(s) {
   form.name = s.name
   form.cron = s.cron
   form.tag = s.tag || ''
+  form.suite_id = s.suite_id || null
   form.enabled = s.enabled
   loadCronToUi(s.cron)
   formErr.value = ''
@@ -153,6 +160,7 @@ async function save() {
     name: form.name.trim(),
     cron: form.cron.trim(),
     tag: form.tag.trim() || null,
+    suite_id: form.suite_id || null,
     enabled: form.enabled,
   }
 
@@ -302,6 +310,14 @@ onMounted(load)
         <option v-for="t in allTags" :key="t" :value="t">{{ t }}</option>
       </select>
       <div class="tip">按用例标签圈一批做定时回归;标签来自「用例管理」里给用例打的 tag。</div>
+    </div>
+    <div class="field">
+      <label>测试套件 <span class="opt">(可选，优先级高于标签)</span></label>
+      <select v-model="form.suite_id">
+        <option :value="null">不使用套件</option>
+        <option v-for="s in suites" :key="s.id" :value="s.id">{{ s.name }}</option>
+      </select>
+      <div class="tip">选择测试套件后，将运行套件内的场景和用例，忽略标签筛选。</div>
     </div>
     <label class="chk">
       <input type="checkbox" v-model="form.enabled" />

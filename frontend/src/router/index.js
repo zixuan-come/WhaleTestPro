@@ -15,6 +15,7 @@ const routes = [
       { path: 'interfaces', name: 'interfaces', component: () => import('../views/Interfaces.vue'), meta: { title: '接口管理', crumb: '接口测试 / 接口定义' } },
       { path: 'cases', name: 'cases', component: () => import('../views/Cases.vue'), meta: { title: '测试用例', crumb: '接口测试 / 用例管理' } },
       { path: 'orchestration', name: 'orchestration', component: () => import('../views/Orchestration.vue'), meta: { title: '场景编排', crumb: '接口测试 / 可视化编排' } },
+      { path: 'suites', name: 'suites', component: () => import('../views/TestSuites.vue'), meta: { title: '测试套件', crumb: '接口测试 / 测试套件' } },
       { path: 'reports', name: 'reports', component: () => import('../views/Reports.vue'), meta: { title: '测试报告', crumb: '接口测试 / 报告' } },
       { path: 'traffic', name: 'traffic', component: () => import('../views/Traffic.vue'), meta: { title: '流量回放', crumb: '接口测试 / 流量回放' } },
       { path: 'perf', name: 'perf', component: () => import('../views/Perf.vue'), meta: { title: '压测监控', crumb: '运维 / 压测' } },

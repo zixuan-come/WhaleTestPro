@@ -9,6 +9,7 @@ class Schedule(Base):
     name = Column(String(100), nullable=False)
     cron = Column(String(100), nullable=False)
     tag = Column(String(50), nullable=True)
+    suite_id = Column(Integer, ForeignKey("test_suite.id"), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 

@@ -145,6 +145,7 @@ def test_setup_sql_rejects_platform_table(sql):
     with pytest.raises(ValueError, match="平台业务表"):
         run_sql(db, [sql])
 
+
 def test_case_retries_rejects_negative():
     from pydantic import ValidationError
     from app.schemas.case import CaseCreate
@@ -200,6 +201,7 @@ def test_interface_references_batch_indexes_reports_and_scenarios():
     import app.models.report
     import app.models.scenario_report
     import app.models.schedule
+    import app.models.suite
     import app.models.traffic_record
     import app.models.user
     import app.models.team_member
