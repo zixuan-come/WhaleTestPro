@@ -13,8 +13,10 @@ const isDark = computed(() => themeStore.theme === 'dark')
 
 const USERNAME_MIN_LENGTH = 4
 const USERNAME_MAX_LENGTH = 20
-const PASSWORD_MIN_LENGTH = 4
+const PASSWORD_MIN_LENGTH = 8
 const PASSWORD_MAX_LENGTH = 20
+// 账号字符集：字母/数字/下划线/连字符，且以字母或数字开头（与后端 BUG-021 一致）
+const USERNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 
 const mode = ref('login') // 'login' | 'register'
 const username = ref('')
@@ -40,7 +42,8 @@ function switchMode(next) {
 
 async function onSubmit() {
   error.value = ''
-  const normalizedUsername = username.value.trim()
+  // 账号统一小写规范化（与后端 BUG-021 规则一致），登录/注册都做
+  const normalizedUsername = username.value.trim().toLowerCase()
   const normalizedPassword = password.value
   if (!normalizedUsername || !normalizedPassword) {
     error.value = '请输入账号和密码'
@@ -54,8 +57,16 @@ async function onSubmit() {
     error.value = '账号需 4–20 位'
     return
   }
+  if (isRegister.value && !USERNAME_PATTERN.test(normalizedUsername)) {
+    error.value = '账号只能含字母、数字、下划线和连字符，且以字母或数字开头'
+    return
+  }
+  if (isRegister.value && /^\d+$/.test(normalizedUsername)) {
+    error.value = '账号不能为纯数字'
+    return
+  }
   if (isRegister.value && (normalizedPassword.length < PASSWORD_MIN_LENGTH || normalizedPassword.length > PASSWORD_MAX_LENGTH)) {
-    error.value = '密码需 4–20 位'
+    error.value = '密码需 8–20 位'
     return
   }
   if (isRegister.value && normalizedPassword !== confirmPassword.value) {

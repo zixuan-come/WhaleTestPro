@@ -1,3 +1,5 @@
+from sqlalchemy import func
+
 from app.models.user import User
 from app.core.security import hash_password
 
@@ -12,7 +14,15 @@ def db_create(db, user):
 
 
 def db_get_by_username(db, username):
-    return db.query(User).filter(User.username == username).first()
+    # 大小写不敏感查找（BUG-021）：
+    # schema 层已把新账号规范为小写，但历史数据可能存在大写用户名。
+    # 用 lower(...) 比较可让大写老用户用小写登录，也能在注册时挡住
+    # 仅大小写不同的重复账号（Alice / alice）。
+    return (
+        db.query(User)
+        .filter(func.lower(User.username) == username.strip().lower())
+        .first()
+    )
 
 
 def db_get_by_id(db, user_id):
