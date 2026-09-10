@@ -1,0 +1,70 @@
+# MySQL —— 有状态服务
+#
+# compose 用 named volume mysql-data 持久化 → K8s 用 StatefulSet + volumeClaimTemplates
+# (StatefulSet 天然给每个副本一份稳定存储与稳定网络标识,适合数据库)。
+# compose 的 healthcheck(mysqladmin ping)→ readinessProbe/livenessProbe。
+# 对外靠 headless Service(clusterIP: None)提供稳定 DNS: mysql.whaletestpro.svc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: whaletestpro
+  labels: { app: mysql }
+spec:
+  clusterIP: None            # headless:StatefulSet 稳定 DNS
+  selector: { app: mysql }
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: whaletestpro
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels: { app: mysql }
+  template:
+    metadata:
+      labels: { app: mysql }
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          args: ["--default-authentication-plugin=mysql_native_password"]
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: whaletestpro-secret, key: MYSQL_ROOT_PASSWORD }
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef: { name: whaletestpro-config, key: MYSQL_DATABASE }
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

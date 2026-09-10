@@ -1,0 +1,81 @@
+# Prometheus & Grafana —— 可观测性
+#
+# Prometheus:抓取配置来自 ConfigMap(01-config.yaml 的 prometheus.yml),挂载进容器。
+#            compose 里不发布端口(仅内网),这里同样用 ClusterIP。
+# Grafana:compose 禁用匿名访问、挂了 provisioning + dashboards 卷。K8s 里 provisioning
+#         应改用 ConfigMap 挂载(此处从简,只跑起来 + NodePort 供浏览器登录访问)。
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: whaletestpro
+  labels: { app: prometheus }
+spec:
+  selector: { app: prometheus }
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: whaletestpro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: whaletestpro
+  labels: { app: grafana }
+spec:
+  type: NodePort            # 浏览器访问:minikube service grafana -n whaletestpro
+  selector: { app: grafana }
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30300
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: whaletestpro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED     # 与 compose 一致:禁用匿名访问
+              value: "false"
+          ports:
+            - containerPort: 3000

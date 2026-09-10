@@ -1,0 +1,30 @@
+# WhaleTestPro —— Kubernetes 部署清单
+#
+# 把 docker-compose.yml 的 9 服务(mysql/redis/rabbitmq/app/worker/
+# prometheus/grafana/frontend/locust-master/locust-worker)转成 K8s manifest。
+#
+# 学习目标(架构线 E #22 的 K8s 半块):理解 compose → K8s 的映射心智:
+#   service(有状态,要存储)      → StatefulSet + PVC + headless Service
+#   service(无状态,可水平扩)    → Deployment + Service
+#   depends_on(启动依赖)        → K8s 无原生等价,用 initContainer 探测 or 应用层重试
+#   environment                 → ConfigMap(明文) + Secret(敏感)
+#   ports 发布到宿主机          → Service type=NodePort / LoadBalancer / Ingress
+#   named volume                → PersistentVolumeClaim
+#   同一 compose network        → 同 namespace 内靠 Service DNS(<svc>.<ns>.svc)互通
+#
+# 应用顺序(或 kubectl apply -f k8s/ 一次性,K8s 会自行 reconcile):
+#   kubectl apply -f k8s/00-namespace.yaml
+#   kubectl apply -f k8s/                     # 其余全部
+#
+# 校验(不连真集群):
+#   kubectl apply --dry-run=client -f k8s/
+#
+# 前置:镜像需先构建并推到集群可拉取的 registry,把各 Deployment 里
+#      image: whaletestpro-app:latest 换成你的 registry 地址(或用 minikube image load)。
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: whaletestpro
+  labels:
+    app.kubernetes.io/part-of: whaletestpro

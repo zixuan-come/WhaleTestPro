@@ -1,0 +1,88 @@
+# app —— FastAPI 后端(无状态,可水平扩)
+#
+# compose 里 app depends_on mysql/redis/rabbitmq(等健康)。K8s 无原生 depends_on,
+# 这里用 initContainer 阻塞等 MySQL 端口通再启动主容器(演示 depends_on 的 K8s 表达法;
+# 生产更推荐应用层重试 + readinessProbe,让 K8s 自行 reconcile 到就绪)。
+#
+# EXPOSE 8000(见 Dockerfile),Service 暴露 8000;对外访问由 Ingress/frontend 反代承担。
+# image 用占位 whaletestpro-app:latest —— minikube 用 `minikube image load` 灌入,
+# 或改成你 registry 的地址。imagePullPolicy: IfNotPresent 便于本地已 load 的镜像。
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  namespace: whaletestpro
+  labels: { app: app }
+spec:
+  selector: { app: app }
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: whaletestpro
+spec:
+  replicas: 1               # 无状态,可按需 kubectl scale de:app --replicas=N
+  selector:
+    matchLabels: { app: app }
+  template:
+    metadata:
+      labels: { app: app }
+    spec:
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done"]
+      containers:
+        - name: app
+          image: whaletestpro-app:latest
+          imagePullPolicy: IfNotPresent
+          # compose 用默认 CMD(uvicorn main:app --host 0.0.0.0 --port 8000),此处沿用
+          envFrom:
+            - configMapRef: { name: whaletestpro-config }
+            - secretRef: { name: whaletestpro-secret }
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+# worker —— Celery worker(无状态后台进程,无对外端口,故无 Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: whaletestpro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      initContainers:
+        - name: wait-for-rabbitmq
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z rabbitmq 5672; do echo waiting for rabbitmq; sleep 2; done"]
+      containers:
+        - name: worker
+          image: whaletestpro-app:latest      # 与 app 同镜像,不同启动命令
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "app.core.celery_app", "worker", "-l", "info"]
+          envFrom:
+            - configMapRef: { name: whaletestpro-config }
+            - secretRef: { name: whaletestpro-secret }

@@ -1,0 +1,104 @@
+# frontend & Locust —— 前端 + 压测集群
+#
+# frontend:Nginx 反代(见 frontend/nginx.conf,把 /api 转 app:8000)。compose 发布 8080:80,
+#          K8s 用 NodePort 让浏览器可达(minikube service frontend -n whaletestpro)。
+# locust-master:web UI + 主从协调,发布 8089 供 s_run 调 /swarm 和人看面板。
+# locust-worker:连 master 做压测。compose 靠 --scale 扩容 → K8s 直接 replicas: N,
+#              这正是 K8s 相对 compose 的优势:声明式副本数,kubectl scale 秒扩缩。
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: whaletestpro
+  labels: { app: frontend }
+spec:
+  type: NodePort
+  selector: { app: frontend }
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: whaletestpro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      containers:
+        - name: frontend
+          image: whaletestpro-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: locust-master
+  namespace: whaletestpro
+  labels: { app: locust-master }
+spec:
+  type: NodePort
+  selector: { app: locust-master }
+  ports:
+    - name: web
+      port: 8089
+      targetPort: 8089
+      nodePort: 30089
+    - name: master-bind      # 主从通信端口,worker 连这个
+      port: 5557
+      targetPort: 5557
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locust-master
+  namespace: whaletestpro
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: locust-master }
+  template:
+    metadata:
+      labels: { app: locust-master }
+    spec:
+      containers:
+        - name: locust-master
+          image: whaletestpro-app:latest
+          imagePullPolicy: IfNotPresent
+          command: ["locust", "-f", "locustfile.py", "--master"]
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef: { name: whaletestpro-config, key: REDIS_URL }
+          ports:
+            - containerPort: 8089
+            - containerPort: 5557
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locust-worker
+  namespace: whaletestpro
+spec:
+  replicas: 2                # compose 的 --scale locust-worker=N 在 K8s 就是声明式 replicas
+  selector:
+    matchLabels: { app: locust-worker }
+  template:
+    metadata:
+      labels: { app: locust-worker }
+    spec:
+      containers:
+        - name: locust-worker
+          image: whaletestpro-app:latest
+          imagePullPolicy: IfNotPresent
+          command: ["locust", "-f", "locustfile.py", "--worker", "--master-host", "locust-master"]
