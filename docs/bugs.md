@@ -1,10 +1,24 @@
 # WhaleTestPro 缺陷记录（Bug Tracker）
-## 当前状态总览（2026-09-07）
+## 当前状态总览（2026-09-08）
 
-> 本节是当前开发依据。下方的历史缺陷表保留用于追溯，其中部分“待修复”记录已在后续开发中完成，不应直接当作当前待办。
+> 本节是当前开发依据。下方的历史缺陷表保留用于追溯，其中部分”待修复”记录已在后续开发中完成，不应直接当作当前待办。
 
 ### 已完成（代码已实现并通过验证）
 
+**2026-09-08 P0/P1/P2 修复批次：**
+- ✅ **P0 安全修复（6个）**：SQL 注入防护、并发竞态、流量回放项目隔离、压测任务隔离、Docker 端口暴露、Grafana 匿名访问
+- ✅ **SQL 信任边界收紧**：`db_eq` 断言限制为单条只读 SELECT；setup/teardown SQL 允许 INSERT/UPDATE/DELETE、禁止 DDL(DROP/TRUNCATE/ALTER)、禁止多语句、禁止注释绕过、UPDATE/DELETE 强制带 WHERE、禁止修改平台业务表；40 个 P0 安全测试全部通过
+- ✅ **P1 功能修复（全部）**：字段校验、Mock 通配、压测停止、环境校验、调度回滚、报告分页等
+- ✅ **P2 体验优化（可修复项）**：接口直接执行、登录校验、回归明细优化、文档路由等
+- ✅ **测试覆盖**：40 个 P0 安全测试全部通过，108 个后端测试全部通过（含测试套件 26 个：14 schema + 12 service）
+- ✅ **服务验证**：Docker Compose 所有服务正常运行，前端构建成功
+
+**2026-09-08 产品演进 + 架构线补齐：**
+- ✅ **回归/场景统一测试套件模型（BUG-045）**：新增 `TestSuite` 资源（模型/schema/repo/service/router 六件套），把「散装回归用例」与「场景链」统一为一个可运行单元；套件可含 scenario_ids + case_ids + tags，支持手动运行与定时调度（schedule 表加 `suite_id`，优先级高于 tag）；报告表加 `suite_id/suite_name/execution_type` 记录套件维度；前端 `TestSuites.vue` 卡片网格布局，一屏对比多套件；DB 迁移 `migrations/001_add_test_suite.sql` 已在容器库执行验证。详见 `docs/test_suite_implementation.md`
+- ✅ **架构线 D（#21）Shell 脚本落地**：`scripts/analyze_log.sh`（Nginx 访问日志分析：QPS/状态码分布/Top URL·IP/错误摘要/慢请求 rt 筛选 + P50·P95·P99 分位，沉淀 study 7.2 文本三剑客技能）、`scripts/healthcheck.sh`（全栈健康巡检：容器状态/后端 HTTP/中间件 ping/磁盘水位，退出码=异常项数，cron 友好）；配套给 `frontend/nginx.conf` 加 `timed` 日志格式（带 rt=请求耗时）。两脚本均已实测通过
+- ✅ **架构线 E（#22）K8s manifest 落地**：`k8s/` 下 9 服务全量转译（namespace/secret/configmap/PVC + StatefulSet(mysql) + Deployment×8 + Service），compose→K8s 映射心智齐全（有状态用 StatefulSet+PVC、depends_on 用 initContainer、named volume 用 PVC、--scale 用 replicas）；`kubectl apply --dry-run=client -f k8s/` 全 22 资源校验通过
+
+**历史完成项：**
 - 接口管理搜索（BUG-017）：支持按名称、URL、请求方法和分类过滤；
 - 接口管理页直接执行接口（BUG-018）：支持选择环境、执行按钮和结果弹窗；
 - 接口字段严格校验（BUG-025）：method、URL、分类已做规范化、长度和格式校验；
@@ -23,14 +37,12 @@
 
 | 任务 | 当前说明 |
 |---|---|
-| SQL 信任边界进一步收紧 | `db_eq` 已限制为单条只读 SELECT；setup/teardown SQL 是否继续允许有限 DML，待产品决定。 |
-| 账号 trim、字符集和特殊字符规则（BUG-021） | 需要先明确产品规则，再决定前后端校验策略。 |
-| 回归/场景统一测试套件模型（BUG-045） | 属于产品演进，不在当前修复批次中插队。 |
+| （暂无） | 原「回归/场景统一测试套件模型（BUG-045）」已于 2026-09-08 实现并通过验证，移至上方已完成区。 |
 
 ### 当前工作区与文档状态说明
 
 - 本文档历史表保留原始现象和根因，用于追溯；表格最后一列“状态”才是当前判断依据。
-- 已修复条目不应重新列入待办；`BUG-021`、`BUG-045` 属于产品待定；BUG-009、BUG-047 已完成并通过回归验证。
+- 已修复条目不应重新列入待办；`BUG-045` 已于 2026-09-08 实现并通过验证（不再是产品待定）；BUG-009、BUG-047、BUG-021 已完成并通过回归验证。
 - 当前工作区存在多批历史未提交代码、测试和文档修改，不能将其全部归因于本轮文档整理，也不能在本轮自动提交。
 - 具体提交范围以 `git status --short` 和 staged diff 为准；`app/routers/interface.py.bak` 为未跟踪备份文件，禁止误删或提交。
 > 版本：v1.0（2026-07-05）
@@ -75,7 +87,7 @@
 | BUG-018 | P2 | 前端·接口 | 接口管理页不能直接执行接口 | 只能建/改/删，无法在页内发起调用 | 功能未实现 | task#7 | 已修复 |
 | BUG-019 | P2 | 后端·注册 | `/auth/register` 创建成功返回 200，偏离 201 约定 | 其余 8 个创建接口（case/environment/perf/interface/mock/project/scenario/schedule）均显式 `status_code=201`，唯 register 未设 → 默认 200 | router 该行缺 `status_code=201` 参数 | 用例设计新发现 | 已修复 |
 | BUG-020 | P2 | 前端·注册 | 注册表单无长度约束、纯空格账号可提交 | 账号/密码输入框无 `minlength/maxlength`；`onSubmit` 只判 `!username`（空串拦截），纯空格串判定为「非空」→ 放行提交 | Login.vue 前置校验只做 falsy 判断，未 trim、未限长 | 用例设计新发现 | 已修复 |
-| BUG-021 | P2 | 需求·账号规则 | 账号 trim 规则 / 字符集规则未定义 | 账号含首尾空格是否 trim、是否限字母数字下划线、是否允许 emoji/特殊字符，均无明确规则；现状前后端原样接受 | spec 未定义账号字符集与 trim 策略 | 用例设计新发现 | 待定（需产品定） |
+| BUG-021 | P2 | 需求·账号规则 | 账号 trim 规则 / 字符集规则未定义 | 账号含首尾空格是否 trim、是否限字母数字下划线、是否允许 emoji/特殊字符，均无明确规则；现状前后端原样接受 | spec 未定义账号字符集与 trim 策略 | 用例设计新发现 | 已修复（方案1 严格规则：trim+小写、4-20 位、仅字母数字下划线连字符且以字母数字开头、拒纯数字；repo 大小写不敏感查找兼容老用户；前后端一致，2026-09-08） |
 | BUG-022 | P0 | 后端·注册并发 | 并发同名注册 → 500 | 高并发下两请求同时过 `s_register` 的「预查不存在」判断，随后双双 INSERT，第二条命中 `username` 唯一约束 → `IntegrityError` 未被捕获 → 500（应 400「用户名已存在」）| `s_register` 是 check-then-insert 非原子；`users.username unique=True`（model 确认）；service 未 try 捕获 `IntegrityError` 转 400 | 用例设计新发现 | 已修复 |
 | BUG-023 | P1 | 后端·项目 | 项目 name/description 无长度校验、空名可建 | schema 
 ame: str` / `description: str\|None` 无 `min/max_length`；空名经 API → 201 建成空名项目；name >100 → DB `Data too long` → **500**；description >500 → **500**（应 422）| model 
@@ -114,7 +126,7 @@ ame(100)/host(255)/path(255)`；`s_run` 未防边界 | 用例设计新发现 | �
 | BUG-042 | P0 | 后端·回放 | 任何回放都 500（record 查询少传 project_id）；且回放无认证/无项目隔离（IDOR）| `traffic_replay.s_replay:25` 调 `traffic_record_repo.db_get(db, record_id)` **少传 project_id**（repo 签名 `(db, record_id, project_id)` 3 参）→ `TypeError` → **500**，且发生在 `_base_url` 之前，故**不指定 env 的回放也必崩**（比 BUG-008 更早、更普遍，BUG-008 的 env 崩点被此掩盖）。另 `traffic_replay` 路由**无 `get_current_project`、无认证依赖** → 回放接口无项目隔离、无鉴权：修好 db_get 后仍可越权回放任意项目的 record（IDOR）| s_replay record 查询漏传 project_id；replay 路由缺认证与项目上下文 | 用例设计新发现（关联 BUG-008、spec A-5）| 已修复 |
 | BUG-043 | P2 | 后端·录制 | 数组响应体因 schema 限 `dict` 被静默丢弃、录不进库 | `recording_middleware` 抄响应体后构造 `TrafficRecordCreate(response_body=_safe_json(resp_body), ...)`，但 schema `response_body: dict\|None`；所有 GET 列表接口（`/cases`、`/interfaces` 等）返回 **JSON 数组** → `_safe_json` 得 `list` → Pydantic 校验失败抛错 → 被中间件 `except Exception: pass` **静默吞掉** → 该条流量永远录不进；`request_body` 为数组同理丢弃 | schema `request_body/response_body` 只接受 `dict`，未含 `list`；中间件吞异常掩盖了丢数据 | 用例设计新发现 | 已修复 |
 | BUG-044 | P2 | 文档·被测样例 | spec 模块16 路由写 `/demo-order`，实际代码为 `/demo/orders`；POST 返 200 非 201 | spec 模块16 写 `/demo-order`（POST/GET）；实际 `demo_order.py` router `prefix="/demo/orders"`，POST 无 `status_code=201`（默认 200）。demo_order 为被测样例（无认证/无项目/无前端页），路由偏差属文档笔误（同 BUG-038/041 家族）| spec 文档笔误；被测样例接口未设 201（可接受，非平台约定）| 用例设计新发现 | 已修复 |
-| BUG-045 | P2 | 产品设计·回归/场景 | 回归与场景两条路割裂，不符合 Apifox「场景即运行单元」心智 | `run_regression` 只按 `case_ids`/`tag`/全部跑散用例（前端仅暴露 tag+全部），走 `run_case`（逐条独立、写报告、算通过率+覆盖率）；`scenario` 另起一条路，运行走 `run_chain`（链式提参；场景报告已支持，仍无 setup/teardown/retries）。二者不互通：**场景不能作为回归的运行范围**。对标 Apifox：测试场景既是编排单元也是自动化/回归的运行单元，tag 只是筛选辅助，无独立「回归」概念。演进方向：回归重定位为「接口自动化」，运行单元改为选场景（或场景集/套件），tag 降级为筛选，场景报告已支持；是否把直接链路调用也统一落普通报告，待产品决定。**定时调度同源**：`schedule` 表存 `cron+tag`，到点跑 `run_regression(project_id, tag)`（`scheduler.py:28`），即"定时回归"，运行单元同样是"一批用例"而非单接口——故不宜套压测的"选接口"，应随本条一起演进为"定时选场景"。前端已先行小改善：Schedules.vue 的 tag 由裸输入改为**从现有用例 tag 聚合下拉选**（不改后端） | 产品把「回归」与「场景」设计成两条不相干链路；缺「测试套件」概念 | 用例设计新发现（产品对标 Apifox）| 待定（产品演进，关联 BUG-009；测试轮次后统一规划，勿中途插队）|
+| BUG-045 | P2 | 产品设计·回归/场景 | 回归与场景两条路割裂，不符合 Apifox「场景即运行单元」心智 | `run_regression` 只按 `case_ids`/`tag`/全部跑散用例（前端仅暴露 tag+全部），走 `run_case`（逐条独立、写报告、算通过率+覆盖率）；`scenario` 另起一条路，运行走 `run_chain`（链式提参；场景报告已支持，仍无 setup/teardown/retries）。二者不互通：**场景不能作为回归的运行范围**。对标 Apifox：测试场景既是编排单元也是自动化/回归的运行单元，tag 只是筛选辅助，无独立「回归」概念。演进方向：回归重定位为「接口自动化」，运行单元改为选场景（或场景集/套件），tag 降级为筛选，场景报告已支持；是否把直接链路调用也统一落普通报告，待产品决定。**定时调度同源**：`schedule` 表存 `cron+tag`，到点跑 `run_regression(project_id, tag)`（`scheduler.py:28`），即"定时回归"，运行单元同样是"一批用例"而非单接口——故不宜套压测的"选接口"，应随本条一起演进为"定时选场景"。前端已先行小改善：Schedules.vue 的 tag 由裸输入改为**从现有用例 tag 聚合下拉选**（不改后端） | 产品把「回归」与「场景」设计成两条不相干链路；缺「测试套件」概念 | 用例设计新发现（产品对标 Apifox）| 已完成（2026-09-08：新增 TestSuite 六件套统一 scenario+case+tag 为运行单元，接入定时调度与报告维度，前端卡片网格；26 个套件测试全绿，详见 docs/test_suite_implementation.md）|
 | BUG-046 | P1 | 后端·压测 | 压测任务无「停止/取消」能力,启动后只能等 duration 到或删除 | 压测 `POST /perf/tasks/{id}/run` 标 running 后异步跑满 `duration` 才自动 `/stop` 标 done；**中途无法人工停止**：perf 路由只有 create/get/list/delete/run,**无 stop/cancel 端点**;service 无停止方法;前端 Perf.vue 只有「运行/删除」按钮,运行中时运行键 disabled。`s_run` 里那个 `requests.get(/stop)` 是 duration 到点自动调 Locust,非用户可触发。叠加 BUG-040(Locust master 不可达→requests 抛错→任务永久卡 running 无回滚),用户一旦误启动或环境未就绪,任务就永远停不下来,只能删除(而删除又不校验 running,见 BUG-040) | 未实现停止/取消接口;`s_run` 同步跑满 duration,无中断机制(无 celery revoke / 无标志位轮询) | 手测新发现(关联 BUG-040)| 已修复 |
 | BUG-047 | P1 | 压测·可观测性 | 压测结果不进报告、运行中前端零反馈、只存 3 标量无法定位瓶颈 | ①压测结果**不写 `/reports`**(测试报告页是用例执行的,压测无关),用户去 Reports 找压测报告找不到;②压测结果只在 Perf 列表三列(rps/avg/fail)且**仅 done 后有值**,running 全 —;③前端**无图表、无 Grafana 入口、无轮询**(grep 全前端零匹配):运行中零实时反馈,跑完 done 也不自动刷新,需手动刷新页面才看到结果;实时曲线按设计在 Grafana(Prometheus 指标)但前端未做入口;④结果只有 rps/平均耗时/失败率 **3 个汇总标量,无 P95/P99、无错误类型分布、无时间序列、无按接口拆分** → 无法定位瓶颈;指标覆盖式写回 perf_task,不留历史时序,无法回看 | 压测可观测性停留在「3 标量写回 + Prometheus 实时指标」,前端未做实时监控页/Grafana 嵌入/结果详情;无时序留存 | 手测新发现 | 已修复 |
 
