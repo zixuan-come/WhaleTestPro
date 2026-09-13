@@ -17,15 +17,15 @@ def test_register_reject_username_outside_4_to_20(username):
         UserCreate(username=username, password="p" * 8)
 
 
-# ---------- 密码长度边界（BUG-014：8-20）----------
-@pytest.mark.parametrize("password", ["p" * 8, "p" * 20])
+# ---------- 密码长度边界（现行规则：4-20）----------
+@pytest.mark.parametrize("password", ["p" * 4, "p" * 20])
 def test_register_accept_password_boundaries(password):
     user = UserCreate(username="abcd", password=password)
     assert user.password == password
 
 
-@pytest.mark.parametrize("password", ["p" * 7, "p" * 21])
-def test_register_reject_password_outside_8_to_20(password):
+@pytest.mark.parametrize("password", ["p" * 3, "p" * 21])
+def test_register_reject_password_outside_4_to_20(password):
     with pytest.raises(ValidationError):
         UserCreate(username="abcd", password=password)
 
