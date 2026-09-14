@@ -13,7 +13,7 @@ const isDark = computed(() => themeStore.theme === 'dark')
 
 const USERNAME_MIN_LENGTH = 4
 const USERNAME_MAX_LENGTH = 20
-const PASSWORD_MIN_LENGTH = 8
+const PASSWORD_MIN_LENGTH = 4
 const PASSWORD_MAX_LENGTH = 20
 // 账号字符集：字母/数字/下划线/连字符，且以字母或数字开头（与后端 BUG-021 一致）
 const USERNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
@@ -66,7 +66,7 @@ async function onSubmit() {
     return
   }
   if (isRegister.value && (normalizedPassword.length < PASSWORD_MIN_LENGTH || normalizedPassword.length > PASSWORD_MAX_LENGTH)) {
-    error.value = '密码需 8–20 位'
+    error.value = '密码需 4–20 位'
     return
   }
   if (isRegister.value && normalizedPassword !== confirmPassword.value) {
