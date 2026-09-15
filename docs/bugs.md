@@ -80,7 +80,7 @@
 | BUG-011 | P1 | 后端·Mock | Mock 仅精确匹配，无路径参数通配 | `/orders/{id}` 命不中 `/orders/123` | `db_match` 用 `Mock.path == path` 硬等 | spec A-6 | 已修复 |
 | BUG-012 | P0 | 安全·断言 | `db_eq` 可执行任意 SQL | 断言里可塞 `DELETE`/`DROP` 等，无只读限制 | `db.execute(text(sql))` 不校验 | spec A-7 | 已修复 |
 | BUG-013 | P0 | 注册·账号校验 | 账号长度未按需求 4–20 校验 | 需求账号 4–20 位，但 <4、(20,50] 均被接受注册（应 422）；>50 触发 DB `Data too long`→**500**；含空账号 | 前端 Login.vue 输入框无 `minlength/maxlength`；后端 schema `username: str` 无 `min/max_length`，落 DB `String(50)` 才报错 | 用例设计新发现 | 已修复 |
-| BUG-014 | P1 | 注册·密码校验 | 密码长度未按需求 8–20 校验 | 需求密码 8–20 位，但空、<8、>20 密码均可注册成功（应 422） | 前后端均无密码长度校验（前端只拦空、后端 schema `password: str` 无 `min/max_length`） | 用例设计新发现 | 已修复 |
+| BUG-014 | P1 | 注册·密码校验 | 密码长度缺少边界校验 | 原规则为 8–20 位；2026-09-18 产品口径调整为 4–20 位，空、<4、>20 均应返回 422 | 前后端曾缺少一致的密码长度校验 | 用例设计新发现 | 已修复（现行规则 4–20 位） |
 | BUG-015 | P1 | 后端·调度 | 非法 cron → 500，且留孤儿行/状态不一致 | `_parse_cron` 用 `cron.split()` 硬拆 5 段，非标准段数 → 解包 `ValueError` → 500（应 422）；段数够但值越界（如 `99 2 * * *`）→ celery `crontab()` 也 `ValueError` → 500。**更深**：`s_create` 先 `db_create`（commit 落库）再 `sync_schedule`，故非法 cron 时 **DB 行已建成、RedBeat 未注册** → 返 500 但库里留孤儿行，状态不一致；`enabled=False` 时 `sync_schedule` 早返回**不解析** → 非法 cron 可静默建成（埋雷），之后 PUT 翻 `enabled=True` 才 500（此时 enabled 已 commit 成 True，但实际未调度）| `_parse_cron` 未校验段数/取值；service 落库与同步非原子、无回滚 | spec A-3 边界 | 已修复 |
 | BUG-016 | P2 | 前端·接口 | URL 输入框 `{{base_url}}` 提示误导 | 提示让用户以为要写占位符，实际 `base_url` 执行时自动拼 | 提示文案错误 | spec A-1 | 已修复（工作区待提交）：提示改为「只填路径，环境前缀由 base_url 自动补」+ `save()` 强制 `/` 开头 |
 | BUG-017 | P2 | 前端·接口 | 接口管理搜索未做 | 接口多时无法检索 | 功能未实现 | task#6 | 已修复 |
