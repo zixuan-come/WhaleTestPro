@@ -22,7 +22,7 @@ from app.routers import scenario as scenario_router
 from app.routers import suite as suite_router
 
 from app.database import Base, engine, engine_shadow, SessionLocal
-from app.core.bootstrap import backfill_legacy_project_owners
+from app.core.bootstrap import backfill_legacy_project_owners, ensure_test_suite_schema
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
@@ -55,6 +55,8 @@ import app.models.scenario_report
 
 Base.metadata.create_all(bind=engine)
 Base.metadata.create_all(bind=engine_shadow)
+ensure_test_suite_schema(engine)
+ensure_test_suite_schema(engine_shadow)
 
 with SessionLocal() as db:
     backfill_legacy_project_owners(db)

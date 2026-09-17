@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.project import Project
 from app.models.project_member import ProjectMember, ProjectRole
+from app.models.suite import TestSuite
 from app.models.team import Team
 from app.models.team_member import TeamMember, TeamRole
 from app.models.user import User
@@ -15,6 +16,91 @@ PERF_SCHEMA_COLUMNS = {
     "error_summary": "JSON NULL",
     "history_samples": "JSON NULL",
 }
+
+TEST_SUITE_SCHEMA_COLUMNS = {
+    "schedule": {
+        "suite_id": "INTEGER NULL",
+    },
+    "test_report": {
+        "suite_id": "INTEGER NULL",
+        "suite_name": "VARCHAR(100) NULL",
+        "execution_type": "VARCHAR(20) NULL",
+    },
+}
+
+TEST_SUITE_SCHEMA_INDEXES = {
+    "schedule": ("idx_schedule_suite", "suite_id"),
+    "test_report": ("idx_report_suite", "suite_id"),
+}
+
+TEST_SUITE_SCHEMA_FOREIGN_KEYS = {
+    "schedule": ("fk_schedule_suite", "suite_id"),
+    "test_report": ("fk_report_suite", "suite_id"),
+}
+
+
+def _has_single_column_index(inspector, table_name: str, column_name: str) -> bool:
+    return any(index.get("column_names") == [column_name] for index in inspector.get_indexes(table_name))
+
+
+def _has_test_suite_foreign_key(inspector, table_name: str, column_name: str) -> bool:
+    return any(
+        foreign_key.get("constrained_columns") == [column_name]
+        and foreign_key.get("referred_table") == "test_suite"
+        and foreign_key.get("referred_columns") == ["id"]
+        for foreign_key in inspector.get_foreign_keys(table_name)
+    )
+
+
+def ensure_test_suite_schema(bind) -> None:
+    """Idempotently upgrade legacy databases for test suites."""
+    TestSuite.__table__.create(bind=bind, checkfirst=True)
+    preparer = bind.dialect.identifier_preparer
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        for table_name, columns in TEST_SUITE_SCHEMA_COLUMNS.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            quoted_table = preparer.quote(table_name)
+            for column_name, column_type in columns.items():
+                if column_name not in existing:
+                    quoted_column = preparer.quote(column_name)
+                    connection.execute(
+                        text(f"ALTER TABLE {quoted_table} ADD COLUMN {quoted_column} {column_type}")
+                    )
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        for table_name, (index_name, column_name) in TEST_SUITE_SCHEMA_INDEXES.items():
+            if not inspector.has_table(table_name):
+                continue
+            if not _has_single_column_index(inspector, table_name, column_name):
+                connection.execute(
+                    text(
+                        f"CREATE INDEX {preparer.quote(index_name)} "
+                        f"ON {preparer.quote(table_name)} ({preparer.quote(column_name)})"
+                    )
+                )
+
+    if bind.dialect.name != "mysql":
+        return
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        for table_name, (constraint_name, column_name) in TEST_SUITE_SCHEMA_FOREIGN_KEYS.items():
+            if not inspector.has_table(table_name):
+                continue
+            if not _has_test_suite_foreign_key(inspector, table_name, column_name):
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {preparer.quote(table_name)} "
+                        f"ADD CONSTRAINT {preparer.quote(constraint_name)} "
+                        f"FOREIGN KEY ({preparer.quote(column_name)}) "
+                        "REFERENCES test_suite (id)"
+                    )
+                )
 
 
 def ensure_perf_schema(db: Session) -> None:
