@@ -182,7 +182,7 @@ Body:
 - P0 安全测试：40/40 通过
 - 全量后端测试：108/108 通过
 - 应用启动：成功，加载 6 条 suite 路由
-- DB 迁移：`migrations/001_add_test_suite.sql` 已在 Docker 容器库（whale_test_pro）执行，`test_suite` 表 + `schedule.suite_id` + `test_report.suite_id/suite_name/execution_type` 全部就位
+- DB 迁移：`migrations/001_add_test_suite.sql` 已改为可重复执行；2026-09-18 在一次性 MySQL 8 主库和影子库中各连续执行两次，`test_suite` 表、扩展字段、索引和外键均一致
 - 服务验证：`docker compose up -d --build app worker` 重建后，容器内 `/suites` 路由生效（`curl /suites` 返回 401 鉴权而非 404）
 
 ## 文件清单
@@ -199,8 +199,10 @@ Body:
 - `app/schemas/schedule.py` (修改：加 suite_id)
 - `app/tasks/schedule.py` (修改：支持 suite_id 参数)
 - `app/core/scheduler.py` (修改：传递 suite_id)
-- `main.py` (修改：注册 suite_router)
-- `migrations/001_add_test_suite.sql` (新增)
+- `main.py` (修改：注册 suite_router，并在主库、影子库执行幂等结构补齐)
+- `app/core/bootstrap.py` (修改：新增测试套件结构升级逻辑)
+- `migrations/001_add_test_suite.sql` (新增，已改为幂等)
+- `tests/test_bootstrap_schema.py` (修改：覆盖双库升级与重复执行)
 - `tests/test_suite_schema.py` (新增)
 - `tests/test_suite_service.py` (新增)
 - `tests/test_p0_security.py` (修改：导入 suite 模型)
@@ -238,9 +240,10 @@ Body:
 
 ## 部署说明
 
-1. 运行数据库迁移：
+1. 正常启动应用时会自动检查并补齐主库、影子库结构。需要手工执行 SQL 时，应分别连接两套库：
    ```bash
-   python migrations/001_add_test_suite.sql
+   mysql -h 127.0.0.1 -u root -p whale_test_pro < migrations/001_add_test_suite.sql
+   mysql -h 127.0.0.1 -u root -p whale_test_pro_shadow < migrations/001_add_test_suite.sql
    ```
 
 2. 重启后端服务：
