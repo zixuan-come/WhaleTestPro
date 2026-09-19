@@ -4,6 +4,13 @@ from locust import HttpUser, task, between, events
 from locust.runners import MasterRunner, WorkerRunner
 
 TARGET_PATH = os.environ.get("TARGET_PATH", "/health")   # 兜底默认，运行时会被 set_path 覆盖
+ACTIVE_RUN_KEY = "locust:active_run"
+
+
+def _decode(value):
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else str(value)
 
 
 def _on_set_path(environment, msg, **kwargs):
@@ -21,9 +28,11 @@ def _on_init(environment, **kwargs):
 def _on_test_start(environment, **kwargs):
     if isinstance(environment.runner, MasterRunner):
         r = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-        path = r.get("locust:target_path")
-        if path:
-            environment.runner.send_message("set_path", path.decode())
+        run_id = _decode(r.get(ACTIVE_RUN_KEY))
+        if run_id:
+            path = _decode(r.get(f"locust:target_path:{run_id}"))
+            if path:
+                environment.runner.send_message("set_path", path)
 
 
 class WebsiteUser(HttpUser):

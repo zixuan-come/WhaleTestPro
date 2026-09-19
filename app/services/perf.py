@@ -7,6 +7,69 @@ from app.core import metrics
 from app.repositories import perf as perf_repo
 
 
+RUN_LOCK_KEY = "locust:run_lock"
+ACTIVE_RUN_KEY = "locust:active_run"
+RUN_LOCK_GRACE_SECONDS = 300
+
+
+class PerfRunBusyError(RuntimeError):
+    """Raised when the singleton Locust master is already serving another run."""
+
+
+def _run_id(project_id: int, task_id: int) -> str:
+    return f"{project_id}:{task_id}"
+
+
+def _target_path_key(run_id: str) -> str:
+    return f"locust:target_path:{run_id}"
+
+
+def _run_ttl(duration: int) -> int:
+    return max(int(duration) + RUN_LOCK_GRACE_SECONDS, RUN_LOCK_GRACE_SECONDS)
+
+
+def _decode_redis_value(value) -> str | None:
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def _acquire_run_lock(redis_client, run_id: str, duration: int) -> bool:
+    owner = _decode_redis_value(redis_client.get(RUN_LOCK_KEY))
+    ttl = _run_ttl(duration)
+    if owner == run_id:
+        redis_client.expire(RUN_LOCK_KEY, ttl)
+        return True
+    return bool(redis_client.set(RUN_LOCK_KEY, run_id, nx=True, ex=ttl))
+
+
+def _refresh_run_keys(redis_client, run_id: str, duration: int) -> None:
+    ttl = _run_ttl(duration)
+    for key in (RUN_LOCK_KEY, ACTIVE_RUN_KEY, _target_path_key(run_id)):
+        redis_client.expire(key, ttl)
+
+
+def _release_run_lock(redis_client, run_id: str) -> int:
+    script = """
+    if redis.call('get', KEYS[1]) ~= ARGV[1] then
+        return 0
+    end
+    if redis.call('get', KEYS[2]) == ARGV[1] then
+        redis.call('del', KEYS[2])
+    end
+    redis.call('del', KEYS[3])
+    return redis.call('del', KEYS[1])
+    """
+    return redis_client.eval(
+        script,
+        3,
+        RUN_LOCK_KEY,
+        ACTIVE_RUN_KEY,
+        _target_path_key(run_id),
+        run_id,
+    )
+
+
 def s_create(db: Session, perf, project_id: int):
     return perf_repo.db_create(db, perf, project_id)
 
@@ -30,26 +93,41 @@ def s_run(db: Session, task_id: int, project_id: int):
     task = perf_repo.db_get(db, task_id, project_id)
     if task is None:
         return None
+    run_id = _run_id(project_id, task_id)
+    redis_client = redis.from_url(settings.REDIS_URL)
 
     # 取消状态是终态，延迟启动的 worker 不能把它重新改回 running。
     if getattr(task, "status", None) == "cancelled":
+        try:
+            _release_run_lock(redis_client, run_id)
+        except Exception:
+            pass
         return task
 
-    # /run 路由通常已经置为 running；直接调用 worker 时才补齐状态。
-    if getattr(task, "status", None) != "running":
-        task = perf_repo.db_update(db, task_id, project_id, status="running") or task
-    redis_client = redis.from_url(settings.REDIS_URL)
+    if not _acquire_run_lock(redis_client, run_id, task.duration):
+        perf_repo.db_update_if_status(
+            db,
+            task_id,
+            project_id,
+            "running",
+            status="failed",
+        )
+        raise PerfRunBusyError("Locust master 已被其他压测任务占用")
+
     cancel_key = f"locust:cancel:{project_id}:{task_id}"
-    delete_cancel = getattr(redis_client, "delete", None)
-    if delete_cancel:
-        delete_cancel(cancel_key)
     base = settings.LOCUST_MASTER_URL
     stats = {}
     history_samples = []
     started = False
     stopped = False
     try:
-        redis_client.set("locust:target_path", task.target_path)
+        # /run 路由通常已经置为 running；直接调用 worker 时才补齐状态。
+        if getattr(task, "status", None) != "running":
+            task = perf_repo.db_update(db, task_id, project_id, status="running") or task
+        redis_client.delete(cancel_key)
+        ttl = _run_ttl(task.duration)
+        redis_client.set(_target_path_key(run_id), task.target_path, ex=ttl)
+        redis_client.set(ACTIVE_RUN_KEY, run_id, ex=ttl)
         response = requests.post(f"{base}/swarm", data={
             "user_count": task.users,
             "spawn_rate": task.spawn_rate,
@@ -66,6 +144,7 @@ def s_run(db: Session, task_id: int, project_id: int):
                 return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="cancelled")
             time.sleep(2)
             elapsed += 2
+            _refresh_run_keys(redis_client, run_id, task.duration)
             stats = requests.get(f"{base}/stats/requests", timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
             history_samples.append({"elapsed_s": elapsed, "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
@@ -109,13 +188,28 @@ def s_run(db: Session, task_id: int, project_id: int):
         metrics.perf_fail_ratio.set(0)
         metrics.perf_user_count.set(0)
         metrics.perf_avg_response_ms.set(0)
+        try:
+            _release_run_lock(redis_client, run_id)
+        except Exception:
+            pass
 
 
 def s_mark_running(db: Session, task_id: int, project_id: int):
     task = perf_repo.db_get(db, task_id, project_id)
     if task is None or task.status != "pending":
         return None
-    return perf_repo.db_update(db, task_id, project_id, status="running")
+    redis_client = redis.from_url(settings.REDIS_URL)
+    run_id = _run_id(project_id, task_id)
+    if not _acquire_run_lock(redis_client, run_id, task.duration):
+        raise PerfRunBusyError("已有压测任务正在运行")
+    try:
+        updated = perf_repo.db_update(db, task_id, project_id, status="running")
+        if updated is None:
+            _release_run_lock(redis_client, run_id)
+        return updated
+    except Exception:
+        _release_run_lock(redis_client, run_id)
+        raise
 
 
 def s_cancel(db: Session, task_id: int, project_id: int):
@@ -126,10 +220,21 @@ def s_cancel(db: Session, task_id: int, project_id: int):
         return task
     redis_client = redis.from_url(settings.REDIS_URL)
     redis_client.set(f"locust:cancel:{project_id}:{task_id}", "1", ex=86400)
-    return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="cancelled")
+    result = perf_repo.db_update_if_status(db, task_id, project_id, "running", status="cancelled")
+    run_id = _run_id(project_id, task_id)
+    active_run = _decode_redis_value(redis_client.get(ACTIVE_RUN_KEY))
+    if active_run != run_id:
+        _release_run_lock(redis_client, run_id)
+    return result
 
 
 
 
 def s_mark_failed(db: Session, task_id: int, project_id: int):
-    return perf_repo.db_update_if_status(db, task_id, project_id, 'running', status='failed')
+    result = perf_repo.db_update_if_status(db, task_id, project_id, 'running', status='failed')
+    try:
+        redis_client = redis.from_url(settings.REDIS_URL)
+        _release_run_lock(redis_client, _run_id(project_id, task_id))
+    except Exception:
+        pass
+    return result

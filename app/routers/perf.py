@@ -76,7 +76,10 @@ def run_task(
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.PERF, Action.EXECUTE)),
 ):
-    task = perf_service.s_mark_running(db, task_id, context.project_id)
+    try:
+        task = perf_service.s_mark_running(db, task_id, context.project_id)
+    except perf_service.PerfRunBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if task is None:
         raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在")
     try:

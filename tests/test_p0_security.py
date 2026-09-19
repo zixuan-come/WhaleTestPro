@@ -15,6 +15,40 @@ class _Response:
     elapsed = SimpleNamespace(total_seconds=lambda: 0)
 
 
+class _FakeRedis:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+    def delete(self, *keys):
+        deleted = 0
+        for key in keys:
+            if key in self.values:
+                deleted += 1
+                del self.values[key]
+        return deleted
+
+    def expire(self, key, seconds):
+        return key in self.values
+
+    def eval(self, script, numkeys, lock_key, active_key, target_key, owner):
+        if self.values.get(lock_key) != owner:
+            return 0
+        if self.values.get(active_key) == owner:
+            self.values.pop(active_key, None)
+        self.values.pop(target_key, None)
+        self.values.pop(lock_key, None)
+        return 1
+
+
 def _db_with_items():
     engine = create_engine("sqlite:///:memory:")
     db = sessionmaker(bind=engine)()
@@ -169,7 +203,7 @@ def test_perf_run_marks_failed_on_worker_error(monkeypatch):
 
     monkeypatch.setattr(perf_service.perf_repo, "db_get", lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, "db_update", lambda db, task_id, project_id, **fields: updates.append(fields) or task)
-    monkeypatch.setattr(perf_service.redis, "from_url", lambda url: SimpleNamespace(set=lambda *args: None))
+    monkeypatch.setattr(perf_service.redis, "from_url", lambda url: _FakeRedis())
     monkeypatch.setattr(perf_service.requests, "post", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("locust unavailable")))
     for name in ("perf_rps", "perf_fail_ratio", "perf_user_count", "perf_avg_response_ms"):
         monkeypatch.setattr(getattr(perf_service.metrics, name), "set", lambda value: None)
@@ -302,18 +336,173 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
 
     task = SimpleNamespace(id=8, status='running')
     updates = []
-    redis_values = {}
+    fake_redis = _FakeRedis()
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda db, task_id, project_id, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
     monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
-    monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: SimpleNamespace(set=lambda key, value, **kwargs: redis_values.update({key: value})))
+    monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: fake_redis)
     monkeypatch.setattr(perf_service.requests, 'get', lambda *args, **kwargs: SimpleNamespace())
 
     result = perf_service.s_cancel(object(), 8, 11)
 
     assert result.status == 'cancelled'
     assert updates[-1] == {'status': 'cancelled'}
-    assert redis_values['locust:cancel:11:8'] == '1'
+    assert fake_redis.values['locust:cancel:11:8'] == '1'
+
+
+def test_perf_mark_running_rejects_second_run(monkeypatch):
+    from app.services import perf as perf_service
+
+    tasks = {
+        1: SimpleNamespace(id=1, status="pending", duration=60),
+        2: SimpleNamespace(id=2, status="pending", duration=60),
+    }
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(perf_service.redis, "from_url", lambda url: fake_redis)
+    monkeypatch.setattr(
+        perf_service.perf_repo,
+        "db_get",
+        lambda db, task_id, project_id: tasks[task_id],
+    )
+
+    def update(db, task_id, project_id, **fields):
+        tasks[task_id].status = fields["status"]
+        return tasks[task_id]
+
+    monkeypatch.setattr(perf_service.perf_repo, "db_update", update)
+
+    assert perf_service.s_mark_running(object(), 1, 10).status == "running"
+    with pytest.raises(perf_service.PerfRunBusyError):
+        perf_service.s_mark_running(object(), 2, 20)
+
+    assert tasks[2].status == "pending"
+    assert fake_redis.values[perf_service.RUN_LOCK_KEY] == "10:1"
+
+
+def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
+    from app.services import perf as perf_service
+
+    task = SimpleNamespace(
+        id=12,
+        status="running",
+        target_host="http://app",
+        target_path="/health",
+        users=1,
+        spawn_rate=1,
+        duration=0,
+    )
+    run_id = "3:12"
+    fake_redis = _FakeRedis({perf_service.RUN_LOCK_KEY: run_id})
+    swarm_state = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"stats": [], "errors": []}
+
+    def post(url, data, timeout):
+        swarm_state.update(fake_redis.values)
+        return Response()
+
+    monkeypatch.setattr(perf_service.redis, "from_url", lambda url: fake_redis)
+    monkeypatch.setattr(perf_service.perf_repo, "db_get", lambda db, task_id, project_id: task)
+    monkeypatch.setattr(
+        perf_service.perf_repo,
+        "db_update_if_status",
+        lambda db, task_id, project_id, expected_status, **fields: task,
+    )
+    monkeypatch.setattr(perf_service.requests, "post", post)
+    monkeypatch.setattr(perf_service.requests, "get", lambda *args, **kwargs: Response())
+
+    assert perf_service.s_run(object(), 12, 3) is task
+
+    assert "locust:target_path" not in swarm_state
+    assert swarm_state[perf_service.ACTIVE_RUN_KEY] == run_id
+    assert swarm_state[f"locust:target_path:{run_id}"] == "/health"
+    assert perf_service.RUN_LOCK_KEY not in fake_redis.values
+    assert perf_service.ACTIVE_RUN_KEY not in fake_redis.values
+    assert f"locust:target_path:{run_id}" not in fake_redis.values
+
+
+def test_perf_lock_cleanup_does_not_delete_another_run():
+    from app.services import perf as perf_service
+
+    fake_redis = _FakeRedis(
+        {
+            perf_service.RUN_LOCK_KEY: "20:2",
+            perf_service.ACTIVE_RUN_KEY: "20:2",
+            "locust:target_path:20:2": "/orders",
+        }
+    )
+
+    assert perf_service._release_run_lock(fake_redis, "10:1") == 0
+    assert fake_redis.values[perf_service.RUN_LOCK_KEY] == "20:2"
+    assert fake_redis.values[perf_service.ACTIVE_RUN_KEY] == "20:2"
+    assert fake_redis.values["locust:target_path:20:2"] == "/orders"
+
+
+def test_locust_master_reads_task_scoped_target_path(monkeypatch):
+    import importlib
+    import sys
+    from types import ModuleType
+
+    class EventHook:
+        def add_listener(self, function):
+            return function
+
+    fake_locust = ModuleType("locust")
+    fake_locust.HttpUser = type("HttpUser", (), {})
+    fake_locust.task = lambda function: function
+    fake_locust.between = lambda start, end: (start, end)
+    fake_locust.events = SimpleNamespace(init=EventHook(), test_start=EventHook())
+    fake_runners = ModuleType("locust.runners")
+    fake_runners.MasterRunner = type("MasterRunner", (), {})
+    fake_runners.WorkerRunner = type("WorkerRunner", (), {})
+    monkeypatch.setitem(sys.modules, "locust", fake_locust)
+    monkeypatch.setitem(sys.modules, "locust.runners", fake_runners)
+    sys.modules.pop("locustfile", None)
+    locustfile = importlib.import_module("locustfile")
+
+    run_id = "3:12"
+    fake_redis = _FakeRedis(
+        {
+            locustfile.ACTIVE_RUN_KEY: run_id,
+            f"locust:target_path:{run_id}": "/orders",
+        }
+    )
+
+    class FakeMasterRunner:
+        def __init__(self):
+            self.messages = []
+
+        def send_message(self, name, data):
+            self.messages.append((name, data))
+
+    runner = FakeMasterRunner()
+    monkeypatch.setattr(locustfile, "MasterRunner", FakeMasterRunner)
+    monkeypatch.setattr(locustfile.redis, "from_url", lambda url: fake_redis)
+
+    locustfile._on_test_start(SimpleNamespace(runner=runner))
+
+    assert runner.messages == [("set_path", "/orders")]
+
+
+def test_perf_run_route_returns_conflict_when_master_is_busy(monkeypatch):
+    from app.routers import perf as perf_router
+    from app.services import perf as perf_service
+
+    def busy(*args, **kwargs):
+        raise perf_service.PerfRunBusyError("已有压测任务正在运行")
+
+    monkeypatch.setattr(perf_router.perf_service, "s_mark_running", busy)
+
+    with pytest.raises(HTTPException) as exc:
+        perf_router.run_task(2, object(), SimpleNamespace(project_id=20))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "已有压测任务正在运行"
 
 
 def test_perf_run_does_not_restart_cancelled_task(monkeypatch):
@@ -323,6 +512,7 @@ def test_perf_run_does_not_restart_cancelled_task(monkeypatch):
     updates = []
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda *args, **kwargs: updates.append(kwargs))
+    monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: _FakeRedis())
 
     result = perf_service.s_run(object(), 9, 11)
 
