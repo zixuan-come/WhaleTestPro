@@ -38,6 +38,8 @@ TEST_SUITE_SCHEMA_FOREIGN_KEYS = {
     "test_report": ("fk_report_suite", "suite_id"),
 }
 
+USERNAME_MAX_LENGTH = 20
+
 
 def _has_single_column_index(inspector, table_name: str, column_name: str) -> bool:
     return any(index.get("column_names") == [column_name] for index in inspector.get_indexes(table_name))
@@ -101,6 +103,48 @@ def ensure_test_suite_schema(bind) -> None:
                         "REFERENCES test_suite (id)"
                     )
                 )
+
+
+def ensure_user_schema(bind) -> None:
+    """Idempotently align the MySQL username column with the 4-20 domain rule."""
+    if bind.dialect.name != "mysql":
+        return
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("users"):
+            return
+
+        username_column = next(
+            (column for column in inspector.get_columns("users") if column["name"] == "username"),
+            None,
+        )
+        if username_column is None:
+            raise RuntimeError("users.username 字段不存在，无法执行用户名长度迁移")
+
+        current_length = getattr(username_column["type"], "length", None)
+        if current_length == USERNAME_MAX_LENGTH and not username_column.get("nullable", True):
+            return
+
+        over_limit = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM `users` "
+                "WHERE CHAR_LENGTH(`username`) > :max_length"
+            ),
+            {"max_length": USERNAME_MAX_LENGTH},
+        ).scalar_one()
+        if over_limit:
+            raise RuntimeError(
+                f"users 表存在 {over_limit} 个超过 {USERNAME_MAX_LENGTH} 字符的用户名，"
+                "请先清理历史数据再迁移"
+            )
+
+        connection.execute(
+            text(
+                "ALTER TABLE `users` "
+                f"MODIFY COLUMN `username` VARCHAR({USERNAME_MAX_LENGTH}) NOT NULL"
+            )
+        )
 
 
 def ensure_perf_schema(db: Session) -> None:

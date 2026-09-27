@@ -60,7 +60,7 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 ### 模块 1 · 认证与用户（`/auth`）
 
-**数据模型 `users`**：`id`、`username`(唯一, ≤50)、`hashed_password`(≤200)。
+**数据模型 `users`**：`id`、`username`(唯一, 4–20；数据库列宽20)、`hashed_password`(≤200)。
 
 **接口清单**
 | 方法 | 路径 | 认证 | 说明 |
