@@ -32,7 +32,7 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 ### 2.1 认证
 - 采用 JWT Bearer Token。除下列公开接口外，均需请求头 `Authorization: Bearer <token>`：
-  - 公开：`POST /auth/register`、`POST /auth/login`、Mock 命中 `/mock/{project_id}/...`、`demo_order` 接口、`GET /health`、`/metrics`、`/docs`。
+  - 公开：`POST /auth/register`、`POST /auth/login`、Mock 命中 `/mock/{project_id}/...`、`demo_order` 接口、`GET /health/live`、`GET /health/ready`、`/metrics`、`/docs`。
 - 鉴权失败（token 无效/过期/已登出/用户不存在）→ **401**，响应头带 `WWW-Authenticate: Bearer`。
 
 ### 2.2 项目上下文
@@ -391,7 +391,8 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 - **监控**：`/metrics` 暴露 Prometheus 指标（回归通过率/覆盖率、压测 rps/耗时/失败率、各路由请求数/耗时）；Grafana 看板。
 - **CI**：GitHub Actions，push 自动 checkout → 装 Python3.10 → 装依赖 → 装 pytest → 跑回归单测（当前含熔断 5 个单测）。
 - **文档**：`/docs` 为本地化 Swagger UI（JS/CSS/图标走本地 `/static`，不依赖 CDN）。
-- **健康检查**：`GET /health` → `{"status": "ok"}`。
+- **存活检查**：`GET /health/live` 仅检查应用进程是否可以响应。
+- **就绪检查**：`GET /health/ready` 检查主库与影子库，依赖异常时返回 HTTP `503`。
 - **中文编码**：MySQL 连接串带 `charset=utf8mb4`，防中文乱码。
 - **安全展示**：前端所有资源列表**不展示数据库 id**，改用行序号（防枚举/IDOR）。
 

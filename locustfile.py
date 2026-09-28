@@ -3,7 +3,7 @@ import redis
 from locust import HttpUser, task, between, events
 from locust.runners import MasterRunner, WorkerRunner
 
-TARGET_PATH = os.environ.get("TARGET_PATH", "/health")   # 兜底默认，运行时会被 set_path 覆盖
+TARGET_PATH = os.environ.get("TARGET_PATH", "/health/live")   # 兜底默认，运行时会被 set_path 覆盖
 ACTIVE_RUN_KEY = "locust:active_run"
 
 

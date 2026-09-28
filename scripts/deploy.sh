@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly BRANCH="${DEPLOY_BRANCH:-main}"
-readonly HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/api/health}"
+readonly HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/api/health/ready}"
 readonly MAX_ATTEMPTS="${HEALTH_MAX_ATTEMPTS:-30}"
 readonly WAIT_SECONDS="${HEALTH_WAIT_SECONDS:-2}"
 

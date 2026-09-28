@@ -2,6 +2,7 @@ import json
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html
 from app.routers import interface as api_router
@@ -30,12 +31,14 @@ from app.core.bootstrap import (
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
+from app.core.health_checks import database_is_ready
 from app.core.exception_handlers import (
     http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
 )
 from app.schemas.traffic_record import TrafficRecordCreate
+from app.schemas.response import success_response
 from app.tasks.traffic import record_traffic
 import app.models.interface
 import app.models.case
@@ -187,10 +190,30 @@ def custom_swagger_ui_html():
         swagger_favicon_url="/static/favicon.png",
     )
 
-@app.get("/health")
-def health():
-    from app.schemas.response import success_response
-    return success_response({"status": "ok"}, message="\u670d\u52a1\u6b63\u5e38")
+@app.get("/health/live")
+def health_live():
+    return success_response({"status": "alive"}, message="\u670d\u52a1\u5b58\u6d3b")
+
+
+@app.get("/health/ready")
+def health_ready():
+    databases = {
+        "main_database": "ok" if database_is_ready(engine) else "unavailable",
+        "shadow_database": "ok" if database_is_ready(engine_shadow) else "unavailable",
+    }
+    if "unavailable" in databases.values():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": 503,
+                "message": "\u670d\u52a1\u6682\u672a\u5c31\u7eea",
+                "data": databases,
+            },
+        )
+    return success_response(
+        {"status": "ready", **databases},
+        message="\u670d\u52a1\u5df2\u5c31\u7eea",
+    )
 
 
 if __name__ == "__main__":

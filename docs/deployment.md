@@ -100,15 +100,17 @@ sudo docker compose up -d --build --remove-orphans
 
 ```bash
 sudo docker compose ps -a
-curl -fsS http://127.0.0.1:8001/health
-curl -fsS http://127.0.0.1:8080/api/health
+curl -fsS http://127.0.0.1:8001/health/live
+curl -fsS http://127.0.0.1:8001/health/ready
+curl -fsS http://127.0.0.1:8080/api/health/live
+curl -fsS http://127.0.0.1:8080/api/health/ready
 sudo docker stats --no-stream
 ```
 
 验收时重点确认:
 
 - `app`、`frontend`、`mysql`、`redis`、`rabbitmq`、`worker` 均处于运行状态;
-- `8001/health` 和 `8080/api/health` 均返回 HTTP `200`;
+- 存活检查 `/health/live` 与就绪检查 `/health/ready` 均返回 HTTP `200`;
 - 业务接口成功响应包含 `code`、`message`、`data`,删除接口返回 `data: null`;
 - `/docs` 可以打开 Swagger,`/metrics` 仍保持 Prometheus 文本格式。
 
@@ -136,7 +138,7 @@ bash scripts/deploy.sh
 
 ```bash
 DEPLOY_BRANCH=main \
-HEALTH_URL=http://127.0.0.1:8080/api/health \
+HEALTH_URL=http://127.0.0.1:8080/api/health/ready \
 HEALTH_MAX_ATTEMPTS=30 \
 HEALTH_WAIT_SECONDS=2 \
 bash scripts/deploy.sh
@@ -171,7 +173,7 @@ git ls-remote origin HEAD
 ```bash
 sudo docker compose ps -a
 sudo docker compose logs --tail=150 app mysql rabbitmq
-curl -i http://127.0.0.1:8001/health
+curl -i http://127.0.0.1:8001/health/ready
 ```
 
 重点检查 MySQL、RabbitMQ 是否 healthy,以及 `.env` 是否包含 `MYSQL_ROOT_PASSWORD` 和 `SECRET_KEY`。
@@ -190,19 +192,19 @@ sudo docker compose exec mysql sh -c \
 先分别验证后端和 Nginx 代理:
 
 ```bash
-curl -i http://127.0.0.1:8001/health
-curl -i http://127.0.0.1:8080/api/health
+curl -i http://127.0.0.1:8001/health/ready
+curl -i http://127.0.0.1:8080/api/health/ready
 sudo docker compose logs --tail=100 app frontend
 ```
 
-后端直连正常而 `/api/health` 失败时,优先检查 frontend 容器和 Nginx 反向代理;两者都失败时先处理 app 容器。
+后端直连正常而 `/api/health/ready` 失败时,优先检查 frontend 容器和 Nginx 反向代理;两者都失败时先处理 app 容器。
 
 ### 统一响应验收失败
 
 先确认实际返回和容器日志:
 
 ```bash
-curl -i http://127.0.0.1:8001/health
+curl -i http://127.0.0.1:8001/health/ready
 sudo docker compose logs --tail=150 app frontend
 ```
 

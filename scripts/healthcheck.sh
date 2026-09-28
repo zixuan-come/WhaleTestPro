@@ -8,7 +8,7 @@
 # 用法:
 #   ./scripts/healthcheck.sh              # 巡检所有项
 #   ./scripts/healthcheck.sh --quiet      # 只在有异常时输出(适合 cron)
-#   HEALTH_URL=http://127.0.0.1:8001/health ./scripts/healthcheck.sh
+#   HEALTH_URL=http://127.0.0.1:8001/health/ready ./scripts/healthcheck.sh
 #
 # 退出码:0=全部健康;非 0=有 N 项异常(N 即退出码,便于外层判断/告警)
 
@@ -16,7 +16,7 @@ set -Eeuo pipefail
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-readonly HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8001/health}"
+readonly HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8001/health/ready}"
 readonly DISK_THRESHOLD="${DISK_THRESHOLD:-85}"   # 磁盘使用率告警阈值(%)
 QUIET=0
 [[ "${1:-}" == "--quiet" ]] && QUIET=1
@@ -67,7 +67,7 @@ else
     done
 fi
 
-# ── 2. 后端 HTTP /health ───────────────────────────────────────────
+# ── 2. 后端 HTTP /health/ready ─────────────────────────────────────
 section "后端 HTTP"
 if command -v curl >/dev/null 2>&1; then
     code="$(curl -o /dev/null -s -w '%{http_code}' --max-time 5 "$HEALTH_URL" 2>/dev/null || echo 000)"

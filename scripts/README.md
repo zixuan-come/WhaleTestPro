@@ -22,12 +22,12 @@ TOP_N=20 ./scripts/analyze_log.sh access.log              # 排行榜取前 20
 
 ## healthcheck.sh —— 全栈健康巡检
 
-一键体检 compose 起的全部服务：容器状态（含 healthcheck 健康态）、后端 `/health` HTTP、MySQL/Redis/RabbitMQ 存活 ping、磁盘水位。**退出码 = 异常项数**（0=全健康），适合 cron 定时巡检 + 告警。
+一键体检 compose 起的全部服务：容器状态（含 healthcheck 健康态）、后端 `/health/ready` HTTP、MySQL/Redis/RabbitMQ 存活 ping、磁盘水位。**退出码 = 异常项数**（0=全健康），适合 cron 定时巡检 + 告警。
 
 ```bash
 ./scripts/healthcheck.sh                    # 完整报告
 ./scripts/healthcheck.sh --quiet            # 只在有异常时输出(cron 友好)
-HEALTH_URL=http://127.0.0.1:8001/health DISK_THRESHOLD=90 ./scripts/healthcheck.sh
+HEALTH_URL=http://127.0.0.1:8001/health/ready DISK_THRESHOLD=90 ./scripts/healthcheck.sh
 
 # cron 示例：每 5 分钟巡检，异常才发邮件
 # */5 * * * * /path/to/scripts/healthcheck.sh --quiet || mail -s 'WhaleTestPro 异常' you@x.com
