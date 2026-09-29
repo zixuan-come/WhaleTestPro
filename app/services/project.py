@@ -1,7 +1,6 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.project_member import ProjectMember, ProjectRole
 from app.models.team_member import TeamMember, TeamRole
 from app.repositories import project as project_repo
 from app.schemas.project import ProjectCreate, ProjectUpdate
@@ -58,44 +57,6 @@ def s_move_team(db: Session, project_id: int, target_team_id: int, user_id: int)
         raise HTTPException(403, "只有目标团队所有者可以迁移项目")
 
     project.team_id = target_team_id
-    target_members = (
-        db.query(TeamMember).filter(TeamMember.team_id == target_team_id).all()
-    )
-    target_user_ids = {item.user_id for item in target_members}
-    (
-        db.query(ProjectMember)
-        .filter(
-            ProjectMember.project_id == project_id,
-            ProjectMember.user_id.notin_(target_user_ids),
-        )
-        .delete(synchronize_session=False)
-    )
-    for team_member in target_members:
-        projection = (
-            db.query(ProjectMember)
-            .filter(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == team_member.user_id,
-            )
-            .first()
-        )
-        role = (
-            ProjectRole.OWNER.value
-            if team_member.role == TeamRole.OWNER.value
-            else ProjectRole.ADMIN.value
-            if team_member.role == TeamRole.ADMIN.value
-            else ProjectRole.MEMBER.value
-        )
-        if projection is None:
-            db.add(
-                ProjectMember(
-                    project_id=project_id,
-                    user_id=team_member.user_id,
-                    role=role,
-                )
-            )
-        else:
-            projection.role = role
     db.commit()
     db.refresh(project)
     return project

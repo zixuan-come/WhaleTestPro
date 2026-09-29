@@ -8,11 +8,8 @@ from app.core.permissions import Action, Resource
 from app.database import get_db
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamMove, ProjectUpdate
-from app.schemas.project_member import ProjectMemberCreate, ProjectMemberOut, ProjectMemberRoleUpdate
 from app.schemas.response import ApiResponse, success_response
-from app.schemas.user import UserOut
 from app.services import project as project_service
-from app.services import project_member as project_member_service
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -64,75 +61,6 @@ def update_project(
         db.rollback()
         raise HTTPException(status_code=409, detail=f"项目名 '{project.name}' 已存在")
     return success_response(result, message="项目更新成功")
-
-
-@router.get("/{project_id}/members", response_model=ApiResponse[list[ProjectMemberOut]])
-def list_project_members(
-    db: Session = Depends(get_db),
-    context: ProjectContext = Depends(
-        authorize(Resource.PROJECT_MEMBER, Action.READ, from_path=True)
-    ),
-):
-    result = project_member_service.s_list_by_project(db, context.project_id)
-    return success_response(result, message="查询成功")
-
-
-@router.get("/{project_id}/member-candidates", response_model=ApiResponse[list[UserOut]])
-def list_project_member_candidates(
-    keyword: str = Query(..., min_length=2, max_length=50),
-    limit: int = Query(20, ge=1, le=50),
-    db: Session = Depends(get_db),
-    context: ProjectContext = Depends(
-        authorize(Resource.PROJECT_MEMBER, Action.MANAGE, from_path=True)
-    ),
-):
-    result = project_member_service.s_list_candidates(
-        db, context.project_id, keyword, limit
-    )
-    return success_response(result, message="查询成功")
-
-
-@router.post("/{project_id}/members", response_model=ApiResponse[ProjectMemberOut], status_code=201)
-def add_project_member(
-    member: ProjectMemberCreate,
-    db: Session = Depends(get_db),
-    context: ProjectContext = Depends(
-        authorize(Resource.PROJECT_MEMBER, Action.MANAGE, from_path=True)
-    ),
-):
-    try:
-        result = project_member_service.s_add(db, context.project_id, member)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="用户已经是项目成员")
-    return success_response(result, message="成员添加成功", status_code=201)
-
-
-@router.patch("/{project_id}/members/{member_id}", response_model=ApiResponse[ProjectMemberOut])
-def update_project_member_role(
-    member_id: int,
-    update: ProjectMemberRoleUpdate,
-    db: Session = Depends(get_db),
-    context: ProjectContext = Depends(
-        authorize(Resource.PROJECT_MEMBER, Action.MANAGE, from_path=True)
-    ),
-):
-    result = project_member_service.s_update_role(
-        db, context.project_id, member_id, update
-    )
-    return success_response(result, message="成员角色更新成功")
-
-
-@router.delete("/{project_id}/members/{member_id}", response_model=ApiResponse[None])
-def remove_project_member(
-    member_id: int,
-    db: Session = Depends(get_db),
-    context: ProjectContext = Depends(
-        authorize(Resource.PROJECT_MEMBER, Action.MANAGE, from_path=True)
-    ),
-):
-    project_member_service.s_remove(db, context.project_id, member_id)
-    return success_response(data=None, message="成员移除成功")
 
 
 @router.delete("/{project_id}", response_model=ApiResponse[ProjectOut])

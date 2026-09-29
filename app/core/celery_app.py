@@ -11,7 +11,6 @@ import app.models.interface
 import app.models.mock
 import app.models.perf
 import app.models.project
-import app.models.project_member
 import app.models.report
 import app.models.scenario
 import app.models.scenario_report

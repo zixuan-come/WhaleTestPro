@@ -1,4 +1,4 @@
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.environment import Environment
@@ -6,7 +6,6 @@ from app.models.interface import Interface
 from app.models.mock import Mock
 from app.models.perf import PerfTask
 from app.models.project import Project
-from app.models.project_member import ProjectMember, ProjectRole
 from app.models.team_member import TeamMember, TeamRole
 from app.models.team import Team
 from app.models.report import TestReport
@@ -20,19 +19,18 @@ from app.schemas.project import ProjectCreate
 def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
     values = project.model_dump(exclude_none=True)
     team_id = values.pop("team_id", None)
-    db_project = Project(**values, team_id=team_id)
-    db.add(db_project)
-    db.flush()
     if team_id is None:
-        team = Team(name=f"{db_project.name}团队", description=f"{db_project.name}的协作团队", owner_id=owner_id)
+        team = Team(
+            name=f"{values['name']}团队",
+            description=f"{values['name']}的协作团队",
+            owner_id=owner_id,
+        )
         db.add(team)
         db.flush()
-        db_project.team_id = team.id
         team_id = team.id
-    membership = db.query(TeamMember).filter(TeamMember.team_id == team_id, TeamMember.user_id == owner_id).first()
-    if membership is None:
         db.add(TeamMember(team_id=team_id, user_id=owner_id, role=TeamRole.OWNER.value))
-    db.add(ProjectMember(project_id=db_project.id, user_id=owner_id, role=ProjectRole.OWNER.value))
+    db_project = Project(**values, team_id=team_id)
+    db.add(db_project)
     db.commit()
     db.refresh(db_project)
     return db_project
@@ -45,18 +43,11 @@ def db_get(db: Session, project_id: int) -> Project | None:
 def db_get_for_user(db: Session, project_id: int, user_id: int) -> Project | None:
     return (
         db.query(Project)
-        .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
-        .outerjoin(
+        .join(
             TeamMember,
             and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id),
         )
-        .filter(
-            Project.id == project_id,
-            or_(
-                and_(Project.team_id.is_not(None), TeamMember.user_id == user_id),
-                and_(Project.team_id.is_(None), ProjectMember.user_id == user_id),
-            ),
-        )
+        .filter(Project.id == project_id)
         .first()
     )
 
@@ -64,16 +55,9 @@ def db_get_for_user(db: Session, project_id: int, user_id: int) -> Project | Non
 def db_list_for_user(db: Session, user_id: int, team_id: int | None = None) -> list[Project]:
     query = (
         db.query(Project)
-        .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
-        .outerjoin(
+        .join(
             TeamMember,
             and_(TeamMember.team_id == Project.team_id, TeamMember.user_id == user_id),
-        )
-        .filter(
-            or_(
-                and_(Project.team_id.is_not(None), TeamMember.user_id == user_id),
-                and_(Project.team_id.is_(None), ProjectMember.user_id == user_id),
-            )
         )
     )
     if team_id is not None:
@@ -99,7 +83,7 @@ def db_delete(db: Session, project_id: int) -> Project | None:
     try:
         report_ids = db.query(ScenarioReport.id).filter(ScenarioReport.project_id == project_id)
         db.query(ScenarioReportStep).filter(ScenarioReportStep.report_id.in_(report_ids)).delete(synchronize_session=False)
-        for model in (Case, Interface, Environment, Mock, PerfTask, TestReport, ScenarioReport, Scenario, Schedule, TrafficRecord, ProjectMember):
+        for model in (Case, Interface, Environment, Mock, PerfTask, TestReport, ScenarioReport, Scenario, Schedule, TrafficRecord):
             db.query(model).filter(model.project_id == project_id).delete(synchronize_session=False)
         db.delete(db_project)
         db.commit()

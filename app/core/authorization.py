@@ -10,7 +10,6 @@ from app.core.authentication import get_current_user
 from app.core.permissions import Action, Resource, WRITE_PERMISSION_BY_RESOURCE
 from app.database import get_db
 from app.models.project import Project
-from app.models.project_member import ProjectMember, ProjectRole
 from app.models.team_member import TeamMember, TeamRole
 from app.models.team_permission import TeamPermission
 from app.models.user import User
@@ -21,8 +20,7 @@ class ProjectContext:
     project: Project
     user: User
     role: str
-    team_membership: TeamMember | None
-    legacy_membership: ProjectMember | None
+    team_membership: TeamMember
     enabled_permissions: frozenset[str]
 
     @property
@@ -39,65 +37,49 @@ def resolve_project_context(
     project_id: int,
     user: User,
 ) -> ProjectContext | None:
-    """Resolve membership without allowing legacy rows to elevate team access."""
+    """Resolve project access from the owning team's membership only."""
     project = db.query(Project).filter(Project.id == project_id).first()
-    if project is None:
+    if project is None or project.team_id is None:
         return None
 
-    legacy = (
-        db.query(ProjectMember)
+    team_membership = (
+        db.query(TeamMember)
         .filter(
-            ProjectMember.project_id == project.id,
-            ProjectMember.user_id == user.id,
+            TeamMember.team_id == project.team_id,
+            TeamMember.user_id == user.id,
         )
         .first()
     )
+    if team_membership is None:
+        return None
 
-    if project.team_id is not None:
-        team_membership = (
-            db.query(TeamMember)
-            .filter(
-                TeamMember.team_id == project.team_id,
-                TeamMember.user_id == user.id,
-            )
-            .first()
+    role = team_membership.role
+    permission_rows = (
+        db.query(TeamPermission.permission)
+        .filter(
+            TeamPermission.team_id == project.team_id,
+            TeamPermission.role == role,
+            TeamPermission.enabled.is_(True),
         )
-        if team_membership is None:
-            return None
-        role = team_membership.role
-        permission_rows = (
-            db.query(TeamPermission.permission)
-            .filter(
-                TeamPermission.team_id == project.team_id,
-                TeamPermission.role == role,
-                TeamPermission.enabled.is_(True),
-            )
-            .all()
-        )
-        enabled_permissions = frozenset(row[0] for row in permission_rows)
-    else:
-        if legacy is None:
-            return None
-        team_membership = None
-        role = legacy.role
-        enabled_permissions = frozenset()
+        .all()
+    )
+    enabled_permissions = frozenset(row[0] for row in permission_rows)
 
     return ProjectContext(
         project=project,
         user=user,
         role=role,
         team_membership=team_membership,
-        legacy_membership=legacy,
         enabled_permissions=enabled_permissions,
     )
 
 
 def is_allowed(context: ProjectContext, resource: Resource, action: Action) -> bool:
-    if context.role in (TeamRole.OWNER.value, ProjectRole.OWNER.value):
+    if context.role == TeamRole.OWNER.value:
         return True
-    if context.role in (TeamRole.ADMIN.value, ProjectRole.ADMIN.value):
+    if context.role == TeamRole.ADMIN.value:
         return action is not Action.OWNER
-    if context.role not in (TeamRole.MEMBER.value, ProjectRole.MEMBER.value):
+    if context.role != TeamRole.MEMBER.value:
         return False
     if action in (Action.READ, Action.EXECUTE):
         return True

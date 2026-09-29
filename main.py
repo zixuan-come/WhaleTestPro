@@ -24,7 +24,7 @@ from app.routers import suite as suite_router
 
 from app.database import Base, engine, engine_shadow, SessionLocal
 from app.core.bootstrap import (
-    backfill_legacy_project_owners,
+    ensure_perf_schema,
     ensure_test_suite_schema,
     ensure_user_schema,
 )
@@ -52,7 +52,6 @@ import app.models.demo_order
 import app.models.traffic_record
 import app.models.project
 import app.models.scenario
-import app.models.project_member
 import app.models.team
 import app.models.team_member
 import app.models.team_invitation
@@ -68,7 +67,7 @@ ensure_user_schema(engine)
 ensure_user_schema(engine_shadow)
 
 with SessionLocal() as db:
-    backfill_legacy_project_owners(db)
+    ensure_perf_schema(db)
 
 # 录制采样最简形式：不录这些"自身"接口（否则录制接口自己也被录、还会污染统计）
 # 多项目改造:公共接口(auth/projects)没有 pid 上下文,不录制反而更干净

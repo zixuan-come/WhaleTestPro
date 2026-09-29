@@ -6,7 +6,6 @@ from typing import Literal
 
 class Resource(str, Enum):
     PROJECT = "project"
-    PROJECT_MEMBER = "project_member"
     INTERFACE = "interface"
     CASE = "case"
     ENVIRONMENT = "environment"

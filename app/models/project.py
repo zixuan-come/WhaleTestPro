@@ -8,9 +8,6 @@ class Project(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(String(500), nullable=True)
-    team_id = Column(Integer, ForeignKey("team.id", ondelete="RESTRICT"), nullable=True, index=True)
+    team_id = Column(Integer, ForeignKey("team.id", ondelete="RESTRICT"), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    members = relationship(
-        "ProjectMember", back_populates="project", cascade="all, delete-orphan", passive_deletes=True,
-    )
     team = relationship("Team", back_populates="projects")

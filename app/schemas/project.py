@@ -13,7 +13,7 @@ class ProjectUpdate(ProjectCreate):
 
 class ProjectOut(ProjectCreate):
     id: int
-    team_id: int | None = None
+    team_id: int
     team_name: str | None = None
     team_role: str | None = None
     created_at: datetime
