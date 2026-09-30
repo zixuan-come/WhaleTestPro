@@ -10,12 +10,13 @@ from app.models.interface import Interface
 from app.models.mock import Mock
 from app.models.perf import PerfTask
 from app.models.project import Project
-from app.models.project_member import ProjectMember, ProjectRole
 from app.models.report import TestReport as ReportModel
 from app.models.scenario import Scenario
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
 from app.models.schedule import Schedule
 from app.models.traffic_record import TrafficRecord
+from app.models.team import Team
+from app.models.team_member import TeamMember, TeamRole
 from app.models.user import User
 from app.repositories.project import db_delete
 
@@ -35,15 +36,19 @@ def test_delete_project_removes_all_project_resources():
     db = _new_session()
     try:
         user = User(username="owner", hashed_password="hashed")
-        project = Project(name="project-to-delete")
-        db.add_all([user, project])
+        db.add(user)
         db.flush()
-
-        member = ProjectMember(
-            project_id=project.id,
+        team = Team(name="delete-team", owner_id=user.id)
+        db.add(team)
+        db.flush()
+        member = TeamMember(
+            team_id=team.id,
             user_id=user.id,
-            role=ProjectRole.OWNER.value,
+            role=TeamRole.OWNER.value,
         )
+        project = Project(name="project-to-delete", team_id=team.id)
+        db.add_all([member, project])
+        db.flush()
         interface = Interface(
             name="health",
             method="GET",
@@ -123,9 +128,10 @@ def test_delete_project_removes_all_project_resources():
             Scenario,
             Schedule,
             TrafficRecord,
-            ProjectMember,
         ):
             assert db.query(model).count() == 0
         assert db.query(User).count() == 1
+        assert db.query(Team).count() == 1
+        assert db.query(TeamMember).count() == 1
     finally:
         db.close()

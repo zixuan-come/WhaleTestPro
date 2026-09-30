@@ -231,7 +231,6 @@ def test_interface_references_batch_indexes_reports_and_scenarios():
     import app.models.interface
     import app.models.mock
     import app.models.perf
-    import app.models.project_member
     import app.models.report
     import app.models.scenario_report
     import app.models.schedule
@@ -243,7 +242,17 @@ def test_interface_references_batch_indexes_reports_and_scenarios():
     import app.models.team_permission
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
-    project = Project(name="reference-project")
+    from app.models.team import Team
+    from app.models.team_member import TeamMember, TeamRole
+    from app.models.user import User
+    user = User(username="reference-owner", hashed_password="x")
+    db.add(user)
+    db.flush()
+    team = Team(name="reference-team", owner_id=user.id)
+    db.add(team)
+    db.flush()
+    db.add(TeamMember(team_id=team.id, user_id=user.id, role=TeamRole.OWNER.value))
+    project = Project(name="reference-project", team_id=team.id)
     db.add(project)
     db.flush()
     interface = Interface(name="health", method="GET", url="/health", project_id=project.id)

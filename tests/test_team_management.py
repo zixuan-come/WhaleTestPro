@@ -7,12 +7,13 @@ from sqlalchemy.orm import sessionmaker
 from app.core.permissions import TEAM_PERMISSION_KEYS, WRITE_PERMISSION_BY_RESOURCE, Resource
 from app.database import Base
 from app.models.project import Project
-from app.models.project_member import ProjectMember
 from app.models.team import Team
 from app.models.team_member import TeamMember, TeamRole
 from app.models.team_permission import TeamPermission
 from app.models.user import User
 from app.routers.team import create_team
+from app.repositories import project as project_repo
+from app.schemas.project import ProjectCreate
 from app.schemas.team import TeamCreate, TeamPermissionUpdate
 from app.services import project as project_service
 from app.services import team as team_service
@@ -25,7 +26,7 @@ def _db():
     return sessionmaker(bind=engine)()
 
 
-def test_invitation_accept_adds_team_and_project_membership():
+def test_invitation_accept_adds_team_membership():
     db = _db()
     owner = User(username="owner", hashed_password="x")
     invitee = User(username="invitee", hashed_password="x")
@@ -37,8 +38,6 @@ def test_invitation_accept_adds_team_and_project_membership():
     db.add(TeamMember(team_id=team.id, user_id=owner.id, role=TeamRole.OWNER.value))
     project = Project(name="project", team_id=team.id)
     db.add(project)
-    db.flush()
-    db.add(ProjectMember(project_id=project.id, user_id=owner.id, role="owner"))
     db.commit()
 
     invite = team_service.s_invite(db, team.id, owner.id, invitee.id, "member")
@@ -46,10 +45,10 @@ def test_invitation_accept_adds_team_and_project_membership():
 
     assert result.status == "accepted"
     assert db.query(TeamMember).filter_by(team_id=team.id, user_id=invitee.id).one().role == "member"
-    assert db.query(ProjectMember).filter_by(project_id=project.id, user_id=invitee.id).one().role == "member"
+    assert project_repo.db_get_for_user(db, project.id, invitee.id).id == project.id
 
 
-def test_move_project_to_target_owner_team_syncs_members():
+def test_move_project_to_target_team_uses_team_membership():
     db = _db()
     owner = User(username="owner2", hashed_password="x")
     target_owner = User(username="target", hashed_password="x")
@@ -65,15 +64,35 @@ def test_move_project_to_target_owner_team_syncs_members():
     ])
     project = Project(name="movable", team_id=source.id)
     db.add(project)
-    db.flush()
-    db.add(ProjectMember(project_id=project.id, user_id=owner.id, role="owner"))
     db.commit()
 
     moved = project_service.s_move_team(db, project.id, target.id, target_owner.id)
 
     assert moved.team_id == target.id
-    assert db.query(ProjectMember).filter_by(project_id=project.id, user_id=target_owner.id).one().role == "owner"
-    assert db.query(ProjectMember).filter_by(project_id=project.id, user_id=owner.id).first() is None
+    assert project_repo.db_get_for_user(db, project.id, target_owner.id).id == project.id
+    assert project_repo.db_get_for_user(db, project.id, owner.id) is None
+
+
+def test_create_project_without_team_creates_owned_team():
+    db = _db()
+    owner = User(username="auto-team-owner", hashed_password="x")
+    db.add(owner)
+    db.commit()
+
+    project = project_service.s_create(
+        db,
+        ProjectCreate(name="auto-team-project"),
+        owner.id,
+    )
+
+    assert project.team_id is not None
+    team = db.query(Team).filter(Team.id == project.team_id).one()
+    assert team.owner_id == owner.id
+    assert db.query(TeamMember).filter_by(
+        team_id=team.id,
+        user_id=owner.id,
+        role=TeamRole.OWNER.value,
+    ).one()
 
 
 def test_member_content_write_permission_can_be_enabled():

@@ -1,13 +1,13 @@
 from fastapi import HTTPException
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.authorization import authorize, is_allowed, resolve_project_context
 from app.core.permissions import Action, Resource
 from app.database import Base
 from app.models.project import Project
-from app.models.project_member import ProjectMember
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.team_permission import TeamPermission
@@ -52,13 +52,13 @@ def test_role_matrix_uses_explicit_actions():
     member_context = resolve_project_context(db, project.id, member)
 
     assert all(is_allowed(owner_context, Resource.PROJECT, action) for action in Action)
-    assert is_allowed(admin_context, Resource.PROJECT_MEMBER, Action.MANAGE)
+    assert is_allowed(admin_context, Resource.PROJECT, Action.MANAGE)
     assert is_allowed(admin_context, Resource.SUITE, Action.WRITE)
     assert not is_allowed(admin_context, Resource.PROJECT, Action.OWNER)
     assert is_allowed(member_context, Resource.SUITE, Action.READ)
     assert is_allowed(member_context, Resource.SUITE, Action.EXECUTE)
     assert not is_allowed(member_context, Resource.SUITE, Action.WRITE)
-    assert not is_allowed(member_context, Resource.PROJECT_MEMBER, Action.MANAGE)
+    assert not is_allowed(member_context, Resource.PROJECT, Action.MANAGE)
 
 
 def test_member_write_permission_is_scoped_to_resource():
@@ -73,59 +73,34 @@ def test_member_write_permission_is_scoped_to_resource():
     assert not is_allowed(context, Resource.CASE, Action.WRITE)
 
 
-def test_legacy_owner_cannot_elevate_team_member_role():
-    db = _db()
-    project, _, _, _, member, _ = _team_project(db)
-    db.add(ProjectMember(project_id=project.id, user_id=member.id, role="owner"))
-    db.commit()
-
-    context = resolve_project_context(db, project.id, member)
-
-    assert context.role == "member"
-    assert context.legacy_membership.role == "owner"
-    assert not is_allowed(context, Resource.PROJECT, Action.OWNER)
-    assert not is_allowed(context, Resource.PROJECT_MEMBER, Action.MANAGE)
-
-
-def test_legacy_membership_alone_cannot_access_team_project():
+def test_outsider_without_team_membership_cannot_access_project():
     db = _db()
     project, _, _, _, _, outsider = _team_project(db)
-    db.add(ProjectMember(project_id=project.id, user_id=outsider.id, role="owner"))
-    db.commit()
 
     assert resolve_project_context(db, project.id, outsider) is None
     assert project_repo.db_get_for_user(db, project.id, outsider.id) is None
     assert project_repo.db_list_for_user(db, outsider.id) == []
 
 
-def test_team_membership_works_without_legacy_projection():
+def test_team_membership_grants_project_access():
     db = _db()
     project, _, _, _, member, _ = _team_project(db)
 
     context = resolve_project_context(db, project.id, member)
 
     assert context is not None
-    assert context.legacy_membership is None
+    assert context.team_membership.user_id == member.id
     assert project_repo.db_get_for_user(db, project.id, member.id).id == project.id
 
 
-def test_teamless_legacy_project_remains_compatible():
+def test_project_requires_team_id():
     db = _db()
-    user = User(username="legacy-admin", hashed_password="x")
-    db.add(user)
-    db.flush()
-    project = Project(name="legacy-project", team_id=None)
+    project = Project(name="teamless-project", team_id=None)
     db.add(project)
-    db.flush()
-    db.add(ProjectMember(project_id=project.id, user_id=user.id, role="admin"))
-    db.commit()
 
-    context = resolve_project_context(db, project.id, user)
-
-    assert context.team_membership is None
-    assert context.role == "admin"
-    assert is_allowed(context, Resource.CASE, Action.WRITE)
-    assert not is_allowed(context, Resource.PROJECT, Action.OWNER)
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
 
 
 def test_authorize_dependency_rejects_denied_action():

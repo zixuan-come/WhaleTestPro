@@ -20,13 +20,15 @@ def db():
     """
     from app.database import Base
     from app.models.project import Project
+    from app.models.team import Team
+    from app.models.team_member import TeamMember, TeamRole
+    from app.models.user import User
     # 导入整条 FK 依赖链，让 metadata 认识全部被引用表
     import app.models.team          # noqa: F401  project.team_id -> team.id
     import app.models.user          # noqa: F401  team.owner_id -> users.id
     import app.models.team_member   # noqa: F401
     import app.models.team_invitation   # noqa: F401
     import app.models.team_permission   # noqa: F401
-    import app.models.project_member     # noqa: F401
     import app.models.suite         # noqa: F401  test_suite
 
     engine = create_engine("sqlite:///:memory:")
@@ -34,7 +36,14 @@ def db():
     Session = sessionmaker(bind=engine)
     session = Session()
 
-    session.add(Project(id=1, name="test project"))
+    user = User(username="suite-owner", hashed_password="x")
+    session.add(user)
+    session.flush()
+    team = Team(name="suite-team", owner_id=user.id)
+    session.add(team)
+    session.flush()
+    session.add(TeamMember(team_id=team.id, user_id=user.id, role=TeamRole.OWNER.value))
+    session.add(Project(id=1, name="test project", team_id=team.id))
     session.commit()
 
     yield session
