@@ -28,7 +28,7 @@
 - 普通业务成功响应使用 code/message/data，code=0。
 - 失败响应 Body code 与 HTTP 状态一致。
 - 除公开端点外需要 Authorization: Bearer Token。
-- 项目内资源需要 X-Project-Id 并校验项目上下文；团队项目以 TeamMember 为主权限来源，ProjectMember 仅作兼容投影且不得抬高权限。
+- 项目内资源需要 X-Project-Id 并校验项目上下文；项目必须归属团队，TeamMember 是唯一成员与权限来源。
 - Mock、Prometheus、Swagger、静态文件等特殊协议不强制业务信封。
 
 ## 4. 状态定义
