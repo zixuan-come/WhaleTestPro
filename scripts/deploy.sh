@@ -72,8 +72,21 @@ log "目标版本：${new_commit}"
 log "校验 Compose"
 sudo docker compose config --quiet
 
-log "构建并更新容器"
-sudo docker compose up -d --build --remove-orphans
+log "构建镜像"
+sudo docker compose build
+
+log "启动数据库和消息依赖"
+sudo docker compose up -d mysql redis rabbitmq
+
+# 005/007 会迁移并最终删除旧成员表，008 会替换邀请唯一索引；迁移期间旧版本不能继续写入。
+log "停止会访问数据库的旧应用进程"
+sudo docker compose stop app worker beat
+
+log "迁移主库和影子库"
+sudo docker compose run --rm app python -m scripts.run_migrations
+
+log "更新全部容器"
+sudo docker compose up -d --remove-orphans
 
 log "等待健康检查：${HEALTH_URL}"
 attempt=1
@@ -91,7 +104,7 @@ while (( attempt <= MAX_ATTEMPTS )); do
 done
 
 if (( healthy == 0 )); then
-    sudo docker compose logs --tail=80 app frontend || true
+    sudo docker compose logs --tail=80 app frontend mysql redis rabbitmq worker beat || true
     fail "健康检查超时"
 fi
 

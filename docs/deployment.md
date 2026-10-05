@@ -94,7 +94,7 @@ sudo docker compose pull
 sudo docker compose up -d --build --remove-orphans
 ```
 
-首次创建 MySQL 数据卷时,`docker/mysql/init/01-create-shadow-db.sql` 会自动创建 `whale_test_pro_shadow`;FastAPI 启动后在主库和影子库自动建表。
+首次创建 MySQL 数据卷时,`docker/mysql/init/01-create-shadow-db.sql` 会自动创建 `whale_test_pro_shadow`;FastAPI 启动后在主库和影子库自动建表并按顺序幂等执行 005～008 迁移，其中 007 会永久删除已校验并迁移完成的旧项目成员归档表，008 会升级团队邀请的 pending 唯一约束。
 
 检查容器、健康接口和前端代理:
 
@@ -109,8 +109,8 @@ sudo docker stats --no-stream
 
 验收时重点确认:
 
-- `app`、`frontend`、`mysql`、`redis`、`rabbitmq`、`worker` 均处于运行状态;
-- 存活检查 `/health/live` 与就绪检查 `/health/ready` 均返回 HTTP `200`;
+- `app`、`frontend`、`mysql`、`redis`、`rabbitmq`、`worker`、`beat` 均处于运行状态;
+- 存活检查 `/health/live` 与就绪检查 `/health/ready` 均返回 HTTP `200`;就绪响应中的主库、影子库、Redis、RabbitMQ 均为 `ok`;
 - 业务接口成功响应包含 `code`、`message`、`data`,删除接口返回 `data: null`;
 - `/docs` 可以打开 Swagger,`/metrics` 仍保持 Prometheus 文本格式。
 
@@ -132,7 +132,7 @@ cd /srv/whaletestpro
 bash scripts/deploy.sh
 ```
 
-脚本会依次执行 GitHub 同步、Compose 配置校验、镜像重建、健康检查和异常容器检查。`flock` 会阻止两个部署任务同时运行。
+脚本会依次执行 GitHub 同步、Compose 配置校验、镜像重建、停止旧应用/Worker/Beat 写入、对主库和影子库执行迁移、启动新容器、健康检查和异常容器检查。迁移发现空 `team_id`、孤儿团队、缺失/重复 owner、未迁移成员关系或重复 pending 邀请时会在破坏性变更前终止部署；校验全部通过后 007 才永久删除旧归档表，008 才替换邀请唯一索引；`flock` 会阻止两个部署任务同时运行。
 
 可覆盖的部署参数:
 

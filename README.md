@@ -10,7 +10,7 @@
 - **场景编排** — 五层结构可视化编排,链式提参串联多接口。
 - **回归测试** — 按标签 / 全量跑用例,统计通过率与接口覆盖率,可选飞书通知。
 - **Mock 挡板** — 按 path / method 匹配返回挡板响应,支持延时、自定义状态码。
-- **定时调度** — Celery Beat / RedBeat,按 cron 周期触发定时回归。
+- **定时调度** — Celery Beat / RedBeat 按 cron 周期触发定时回归，MySQL Outbox 保证失败后可自动重试。
 - **测试报告** — 单用例报告分页统计;场景执行生成一份场景报告与多条步骤明细。
 - **压测** — Locust master / worker 驱动,实时指标进 Prometheus / Grafana。
 - **流量录制 / 回放** — 中间件录制真实流量,可按环境回放。
@@ -118,7 +118,7 @@ flowchart TB
 
 3. 打开浏览器访问 **http://localhost:8080** —— 即完整平台。前端由 Nginx 托管打包产物,`/api` 反代到后端容器,无需单独起前端。
 
-> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表。初始化脚本只在空数据卷首次启动时执行。
+> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表，并按顺序幂等执行 005～008 迁移。007 会在 005 完成数据校验和团队成员迁移后永久删除旧项目成员归档表；008 将团队邀请约束升级为“仅 pending 唯一”，允许保留多次 accepted/rejected 历史。正式更新请使用 `bash scripts/deploy.sh`，脚本会在启动新应用前先运行 `python -m scripts.run_migrations`；初始化脚本只在空数据卷首次启动时执行。
 
 > 前端热开发(可选):改前端代码想热更新时,可另起 vite dev server —— `cd frontend && npm install && npm run dev`(http://localhost:5173,`/api` 经 vite 代理到后端 8001)。日常部署/演示走 8080 的 Nginx 容器即可。
 
