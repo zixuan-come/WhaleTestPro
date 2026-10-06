@@ -204,6 +204,56 @@ def s_delete(db: Session, task_id: int, project_id: int):
     return result
 
 
+def _control_get_json(base: str, path: str):
+    """Keep control timeout, status validation and JSON decoding in one place."""
+    response = requests.get(f"{base}{path}", headers=_control_headers(), timeout=_control_timeout())
+    response.raise_for_status()
+    return response.json()
+
+
+def _validate_iterations(iteration_stats, lease_id: str):
+    if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
+        raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
+
+
+def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples):
+    """Pure final-stat mapping; stopped counters must not replace live RPS."""
+    rps = live_rps if live_rps is not None else stats.get("total_rps")
+    fail_ratio = stats.get("fail_ratio")
+    aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
+    request_count = max(aggregate.get("num_requests", 0) or 0,
+                        sum(row.get("num_requests", 0) or 0 for row in stats.get("stats", [])
+                            if row.get("name") != "Aggregated"))
+    if request_count <= 0:
+        raise PerfControlUnavailableError("Locust 未产生任何请求，压测未有效执行；请检查 Worker 和目标配置")
+    avg = aggregate.get("avg_response_time")
+    p95 = aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile"))
+    p99 = aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))
+    request_stats = [
+        {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": live_endpoint_rps.get((row.get("method"), row.get("name")), row.get("current_rps", row.get("rps"))), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
+        for row in stats.get("stats", []) if row.get("name") != "Aggregated"
+    ]
+    requests_by_endpoint = {(row["method"], row["name"]): row["num_requests"] for row in request_stats}
+    error_summary = []
+    for row in stats.get("errors", []):
+        occurrences = row.get("occurrences", 0)
+        # Locust escapes errors.name for its Web UI, but not stats.name.
+        name = unescape(row["name"]) if row.get("name") is not None else None
+        count = requests_by_endpoint.get((row.get("method"), name), 0)
+        error_summary.append({
+            "name": name, "method": row.get("method"),
+            "error_count": occurrences,
+            "error_rate": occurrences / count if count else None,
+            "message": row.get("error") or row.get("last_error"),
+        })
+    return {
+        "rps": rps, "avg_response_ms": avg, "p95_response_ms": p95,
+        "p99_response_ms": p99, "fail_ratio": fail_ratio,
+        "request_stats": request_stats or None, "error_summary": error_summary or None,
+        "history_samples": history_samples or None,
+    }
+
+
 def s_run(
     db: Session,
     task_id: int,
@@ -337,17 +387,11 @@ def s_run(
             time.sleep(pause)
             elapsed += pause
             heartbeat()
-            stats_response = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=_control_timeout())
-            stats_response.raise_for_status()
-            stats = stats_response.json()
+            stats = _control_get_json(base, "/stats/requests")
             heartbeat()  # Do not stack two blocking control calls under one heartbeat.
-            iteration_response = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
-                                              timeout=_control_timeout())
-            iteration_response.raise_for_status()
-            iteration_stats = iteration_response.json()
+            iteration_stats = _control_get_json(base, "/whale/iterations")
             heartbeat()
-            if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
-                raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
+            _validate_iterations(iteration_stats, lease_id)
             if load_config:
                 perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
@@ -371,49 +415,16 @@ def s_run(
         # Legacy tasks must also prove the master started THIS lease; old stats
         # from a previous run are not evidence that a no-worker swarm started.
         time.sleep(min(0.25, _control_timeout()))
-        iteration_response = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
-                                          timeout=_control_timeout())
-        iteration_response.raise_for_status()
-        iteration_stats = iteration_response.json()
+        iteration_stats = _control_get_json(base, "/whale/iterations")
         heartbeat()
-        if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
-            raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
+        _validate_iterations(iteration_stats, lease_id)
         if load_config:
             perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
-        final_stats = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=_control_timeout())
-        final_stats.raise_for_status()
-        stats = final_stats.json()
+        stats = _control_get_json(base, "/stats/requests")
         heartbeat()
-        rps = live_rps if live_rps is not None else stats.get("total_rps")
-        fail_ratio = stats.get("fail_ratio")
-        aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
-        request_count = max(aggregate.get("num_requests", 0) or 0,
-                            sum(row.get("num_requests", 0) or 0 for row in stats.get("stats", [])
-                                if row.get("name") != "Aggregated"))
-        if request_count <= 0:
-            raise PerfControlUnavailableError("Locust 未产生任何请求，压测未有效执行；请检查 Worker 和目标配置")
-        avg = aggregate.get("avg_response_time")
-        p95 = aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile"))
-        p99 = aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))
-        request_stats = [
-            {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": live_endpoint_rps.get((row.get("method"), row.get("name")), row.get("current_rps", row.get("rps"))), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
-            for row in stats.get("stats", []) if row.get("name") != "Aggregated"
-        ]
-        requests_by_endpoint = {(row["method"], row["name"]): row["num_requests"] for row in request_stats}
-        error_summary = []
-        for row in stats.get("errors", []):
-            occurrences = row.get("occurrences", 0)
-            # Locust escapes errors.name for its Web UI, but not stats.name.
-            name = unescape(row["name"]) if row.get("name") is not None else None
-            count = requests_by_endpoint.get((row.get("method"), name), 0)
-            error_summary.append({
-                "name": name, "method": row.get("method"),
-                "error_count": occurrences,
-                "error_rate": occurrences / count if count else None,
-                "message": row.get("error") or row.get("last_error"),
-            })
+        result_stats = _result_statistics(stats, live_rps, live_endpoint_rps, history_samples)
         finished_at = _utcnow()
-        return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="done", heartbeat_at=finished_at, finished_at=finished_at, failure_reason=None, rps=rps, avg_response_ms=avg, p95_response_ms=p95, p99_response_ms=p99, fail_ratio=fail_ratio, request_stats=request_stats or None, error_summary=error_summary or None, history_samples=history_samples or None)
+        return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="done", heartbeat_at=finished_at, finished_at=finished_at, failure_reason=None, **result_stats)
     except Exception as exc:
         current = perf_repo.db_get(db, task_id, project_id)
         if current is not None and getattr(current, "status", None) == "cancelled":
