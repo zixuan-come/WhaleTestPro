@@ -84,6 +84,18 @@ def _full_url(interface_url, context):
     return base.rstrip("/") + "/" + path.lstrip("/")
 
 
+def _render_request_fields(interface, context, report_secrets):
+    """Render shared HTTP fields; collect secrets without masking live requests."""
+    fields = {
+        "headers": render_deep(interface.headers, context),
+        "params": render_deep(interface.params, context),
+        "json": render_deep(interface.body, context),
+    }
+    for payload in fields.values():
+        report_secrets.update(sensitive_strings(payload))
+    return fields
+
+
 def run_case(db, case_id, env_id, project_id):
     case = case_repo.db_get(db, case_id, project_id)
     if case is None:
@@ -124,13 +136,10 @@ def run_interface(db, interface_id, env_id, project_id):
     started = perf_counter()
     try:
         rendered_url = _full_url(interface.url, context)
-        rendered_headers = render_deep(interface.headers, context)
-        rendered_params = render_deep(interface.params, context)
-        rendered_body = render_deep(interface.body, context)
-        for payload in (rendered_headers, rendered_params, rendered_body):
-            report_secrets.update(sensitive_strings(payload))
-        request_detail = {"method": interface.method, "url": rendered_url, "headers": rendered_headers, "params": rendered_params, "body": rendered_body}
-        response = _request(interface, url=rendered_url, headers=rendered_headers, params=rendered_params, json=rendered_body)
+        fields = _render_request_fields(interface, context, report_secrets)
+        request_detail = {"method": interface.method, "url": rendered_url,
+                          "headers": fields["headers"], "params": fields["params"], "body": fields["json"]}
+        response = _request(interface, url=rendered_url, **fields)
         _add_response_secrets(response, report_secrets)
         response_detail = _response_detail(response, secrets=report_secrets)
         passed = response.ok
@@ -206,24 +215,18 @@ def run_chain(
         actual_status = None
         try:
             rendered_url = _full_url(interface.url, context)
-            rendered_headers = render_deep(interface.headers, context)
-            rendered_params = render_deep(interface.params, context)
-            rendered_body = render_deep(interface.body, context)
-            for payload in (rendered_headers, rendered_params, rendered_body):
-                report_secrets.update(sensitive_strings(payload))
+            fields = _render_request_fields(interface, context, report_secrets)
             request_detail = {
                 "method": interface.method,
                 "url": rendered_url,
-                "headers": _mask_sensitive(rendered_headers),
-                "params": _mask_sensitive(rendered_params),
-                "body": _mask_sensitive(rendered_body),
+                "headers": _mask_sensitive(fields["headers"]),
+                "params": _mask_sensitive(fields["params"]),
+                "body": _mask_sensitive(fields["json"]),
             }
             response = _request(
                 interface,
                 url=rendered_url,
-                headers=rendered_headers,
-                params=rendered_params,
-                json=rendered_body,
+                **fields,
             )
             actual_status = response.status_code
             _add_response_secrets(response, report_secrets)
@@ -359,17 +362,11 @@ def _run_once(db, case, interface, context):
     report_secrets = set(sensitive_strings(context))
     try:
         run_sql(db, render_deep(case.setup_sql, context))
-        rendered_headers = render_deep(interface.headers, context)
-        rendered_params = render_deep(interface.params, context)
-        rendered_body = render_deep(interface.body, context)
-        for payload in (rendered_headers, rendered_params, rendered_body):
-            report_secrets.update(sensitive_strings(payload))
+        fields = _render_request_fields(interface, context, report_secrets)
         response = _request(
             interface,
             url=_full_url(interface.url, context),
-            headers=rendered_headers,
-            params=rendered_params,
-            json=rendered_body,
+            **fields,
         )
         _add_response_secrets(response, report_secrets)
         status_passed = response.status_code == case.expected_status
