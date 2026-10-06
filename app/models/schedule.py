@@ -11,6 +11,13 @@ class Schedule(Base):
     tag = Column(String(50), nullable=True)
     suite_id = Column(Integer, ForeignKey("test_suite.id"), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
+    sync_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    sync_error = Column(String(500), nullable=True)
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 
 

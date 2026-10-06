@@ -32,4 +32,6 @@ class ScheduleCreate(NamedSchema):
 class ScheduleOut(ScheduleCreate):
     id: int
     project_id: int
+    sync_status: str
+    sync_error: str | None = None
     model_config = ConfigDict(from_attributes=True)

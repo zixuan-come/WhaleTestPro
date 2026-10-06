@@ -2,6 +2,16 @@ from app.core.celery_app import celery_app
 from app.database import SessionLocal
 from app.services import execution as execution_service
 from app.services import suite as suite_service
+from app.services import schedule as schedule_service
+
+
+@celery_app.task
+def reconcile_schedule_outbox():
+    db = SessionLocal()
+    try:
+        return schedule_service.reconcile_pending(db)
+    finally:
+        db.close()
 
 
 @celery_app.task

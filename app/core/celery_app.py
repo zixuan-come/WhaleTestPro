@@ -15,6 +15,7 @@ import app.models.report
 import app.models.scenario
 import app.models.scenario_report
 import app.models.schedule
+import app.models.schedule_sync_outbox
 import app.models.team
 import app.models.team_invitation
 import app.models.team_member
@@ -31,6 +32,12 @@ celery_app = Celery(
 
 celery_app.conf.redbeat_redis_url = settings.REDIS_URL
 celery_app.conf.beat_scheduler = "redbeat.RedBeatScheduler"
+celery_app.conf.beat_schedule = {
+    "reconcile-schedule-outbox": {
+        "task": "app.tasks.schedule.reconcile_schedule_outbox",
+        "schedule": 30.0,
+    },
+}
 
 
 @worker_ready.connect
