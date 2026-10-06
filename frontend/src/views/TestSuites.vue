@@ -138,140 +138,112 @@
     </div>
 
     <!-- 创建/编辑对话框 -->
-    <div v-if="showCreateDialog || showEditDialog" class="modal-overlay" @click.self="closeDialog">
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <h3>{{ showEditDialog ? '编辑套件' : '新建套件' }}</h3>
-          <button @click="closeDialog" class="close-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+    <Modal v-if="showCreateDialog || showEditDialog" :title="showEditDialog ? '编辑套件' : '新建套件'" :max-width="560" @close="closeDialog">
+      <form @submit.prevent="submitForm">
+        <div class="form-row">
+          <label class="required">套件名称</label>
+          <input v-model="form.name" required maxlength="100" placeholder="如: 每日冒烟测试" />
         </div>
-        <form @submit.prevent="submitForm" class="modal-body">
-          <div class="form-row">
-            <label class="required">套件名称</label>
-            <input v-model="form.name" required maxlength="100" placeholder="如: 每日冒烟测试" />
+        <div class="form-row">
+          <label>描述</label>
+          <textarea v-model="form.description" maxlength="500" rows="3" placeholder="描述这个套件的用途"></textarea>
+        </div>
+        <div class="form-row">
+          <label class="required">套件类型</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" v-model="form.type" value="scenario" />
+              <span>场景套件</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" v-model="form.type" value="case" />
+              <span>用例套件</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" v-model="form.type" value="mixed" />
+              <span>混合套件</span>
+            </label>
           </div>
-          <div class="form-row">
-            <label>描述</label>
-            <textarea v-model="form.description" maxlength="500" rows="3" placeholder="描述这个套件的用途"></textarea>
-          </div>
-          <div class="form-row">
-            <label class="required">套件类型</label>
-            <div class="radio-group">
-              <label class="radio-option">
-                <input type="radio" v-model="form.type" value="scenario" />
-                <span>场景套件</span>
-              </label>
-              <label class="radio-option">
-                <input type="radio" v-model="form.type" value="case" />
-                <span>用例套件</span>
-              </label>
-              <label class="radio-option">
-                <input type="radio" v-model="form.type" value="mixed" />
-                <span>混合套件</span>
-              </label>
-            </div>
-          </div>
-          <div class="form-row">
-            <label>场景 ID <span class="hint">逗号分隔，如: 1,2,3</span></label>
-            <input v-model="scenarioIdsText" placeholder="1,2,3" />
-          </div>
-          <div class="form-row">
-            <label>用例 ID <span class="hint">逗号分隔，如: 10,11,12</span></label>
-            <input v-model="caseIdsText" placeholder="10,11,12" />
-          </div>
-          <div class="form-row">
-            <label>标签 <span class="hint">逗号分隔，如: smoke,p0</span></label>
-            <input v-model="tagsText" placeholder="smoke,p0" />
-          </div>
-          <div class="form-actions">
-            <button type="button" @click="closeDialog" class="btn-cancel">取消</button>
-            <button type="submit" class="btn-submit">{{ showEditDialog ? '更新' : '创建' }}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+        <div class="form-row">
+          <label>场景 ID <span class="hint">逗号分隔，如: 1,2,3</span></label>
+          <input v-model="scenarioIdsText" placeholder="1,2,3" />
+        </div>
+        <div class="form-row">
+          <label>用例 ID <span class="hint">逗号分隔，如: 10,11,12</span></label>
+          <input v-model="caseIdsText" placeholder="10,11,12" />
+        </div>
+        <div class="form-row">
+          <label>标签 <span class="hint">逗号分隔，如: smoke,p0</span></label>
+          <input v-model="tagsText" placeholder="smoke,p0" />
+        </div>
+        <div class="form-actions">
+          <button type="button" @click="closeDialog" class="btn-cancel">取消</button>
+          <button type="submit" class="btn-submit">{{ showEditDialog ? '更新' : '创建' }}</button>
+        </div>
+      </form>
+    </Modal>
 
     <!-- 运行对话框 -->
-    <div v-if="showRunDialog" class="modal-overlay" @click.self="showRunDialog = false">
-      <div class="modal-dialog small">
-        <div class="modal-header">
-          <h3>运行套件</h3>
-          <button @click="showRunDialog = false" class="close-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+    <Modal v-if="showRunDialog" title="运行套件" :max-width="400" @close="showRunDialog = false">
+      <div>
+        <div class="form-row">
+          <label>选择环境</label>
+          <select v-model="selectedEnvId">
+            <option :value="null">默认环境</option>
+            <option v-for="env in environments" :key="env.id" :value="env.id">
+              {{ env.name }}
+            </option>
+          </select>
         </div>
-        <div class="modal-body">
-          <div class="form-row">
-            <label>选择环境</label>
-            <select v-model="selectedEnvId">
-              <option :value="null">默认环境</option>
-              <option v-for="env in environments" :key="env.id" :value="env.id">
-                {{ env.name }}
-              </option>
-            </select>
-          </div>
-          <div class="form-actions">
-            <button @click="showRunDialog = false" class="btn-cancel">取消</button>
-            <button @click="executeRun" class="btn-submit">开始执行</button>
-          </div>
+        <div class="form-actions">
+          <button @click="showRunDialog = false" class="btn-cancel">取消</button>
+          <button @click="executeRun" class="btn-submit">开始执行</button>
         </div>
       </div>
-    </div>
+    </Modal>
 
     <!-- 运行结果 -->
-    <div v-if="runResult" class="modal-overlay" @click.self="runResult = null">
-      <div class="result-dialog">
-        <div class="result-header">
-          <h3>运行结果</h3>
-          <button @click="runResult = null" class="close-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+    <Modal v-if="runResult" title="运行结果" :max-width="600" @close="runResult = null">
+      <div class="result-summary">
+        <div class="result-stat">
+          <div class="label">套件名称</div>
+          <div class="value">{{ runResult.suite_name }}</div>
         </div>
-        <div class="result-summary">
-          <div class="result-stat">
-            <div class="label">套件名称</div>
-            <div class="value">{{ runResult.suite_name }}</div>
-          </div>
-          <div class="result-stat">
-            <div class="label">执行时间</div>
-            <div class="value">{{ runResult.duration_ms }}ms</div>
-          </div>
-          <div class="result-stat">
-            <div class="label">总数</div>
-            <div class="value">{{ runResult.total }}</div>
-          </div>
-          <div class="result-stat pass">
-            <div class="label">通过</div>
-            <div class="value">{{ runResult.passed }}</div>
-          </div>
-          <div class="result-stat fail">
-            <div class="label">失败</div>
-            <div class="value">{{ runResult.failed }}</div>
-          </div>
-          <div class="result-stat rate">
-            <div class="label">通过率</div>
-            <div class="value">{{ runResult.pass_rate }}%</div>
-          </div>
+        <div class="result-stat">
+          <div class="label">执行时间</div>
+          <div class="value">{{ runResult.duration_ms }}ms</div>
         </div>
-        <button @click="runResult = null" class="btn-close-result">关闭</button>
+        <div class="result-stat">
+          <div class="label">总数</div>
+          <div class="value">{{ runResult.total }}</div>
+        </div>
+        <div class="result-stat pass">
+          <div class="label">通过</div>
+          <div class="value">{{ runResult.passed }}</div>
+        </div>
+        <div class="result-stat fail">
+          <div class="label">失败</div>
+          <div class="value">{{ runResult.failed }}</div>
+        </div>
+        <div class="result-stat rate">
+          <div class="label">通过率</div>
+          <div class="value">{{ runResult.pass_rate }}%</div>
+        </div>
       </div>
-    </div>
+      <button @click="runResult = null" class="btn-close-result">关闭</button>
+    </Modal>
   </div>
 </template>
 
 <script>
 import { listSuites, createSuite, updateSuite, deleteSuite as apiDeleteSuite, runSuite as apiRunSuite } from '../api/suite';
 import { listEnvironments } from '../api/environment';
+import Modal from '../components/Modal.vue';
 
 export default {
   name: 'TestSuites',
+  components: { Modal },
   data() {
     return {
       suites: [],
@@ -799,78 +771,6 @@ export default {
 }
 
 /* 对话框 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-
-.modal-dialog {
-  background: var(--surface);
-  border-radius: 16px;
-  width: 560px;
-  max-height: 80vh;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-.modal-dialog.small {
-  width: 400px;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 24px;
-  border-bottom: 1px solid var(--border);
-}
-
-.modal-header h3 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-.close-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  transition: all 0.2s;
-  color: var(--text-muted);
-}
-
-.close-btn:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-
-.close-btn svg {
-  width: 20px;
-  height: 20px;
-}
-
-.modal-body {
-  padding: 24px;
-  max-height: calc(80vh - 140px);
-  overflow-y: auto;
-}
-
 .form-row {
   margin-bottom: 20px;
 }
@@ -981,30 +881,7 @@ export default {
 }
 
 /* 运行结果对话框 */
-.result-dialog {
-  background: var(--surface);
-  border-radius: 16px;
-  width: 600px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 24px;
-  border-bottom: 1px solid var(--border);
-}
-
-.result-header h3 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
 .result-summary {
-  padding: 24px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
@@ -1042,8 +919,8 @@ export default {
 }
 
 .btn-close-result {
-  width: calc(100% - 48px);
-  margin: 0 24px 24px;
+  width: 100%;
+  margin: 24px 0 0;
   padding: 12px;
   background: var(--primary);
   color: white;
