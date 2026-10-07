@@ -19,3 +19,11 @@ class TeamInvitationOut(BaseModel):
     inviter: UserOut
     invitee: UserOut
     model_config = ConfigDict(from_attributes=True)
+
+
+class TeamInvitationPage(BaseModel):
+    items: list[TeamInvitationOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

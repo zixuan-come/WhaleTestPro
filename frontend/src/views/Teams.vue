@@ -9,6 +9,9 @@ const { showMessage, confirmAction } = useFeedback()
 const teams = ref([])
 const members = ref([])
 const invitations = ref([])
+const invitationPage = ref(1)
+const invitationTotal = ref(0)
+const invitationTotalPages = ref(0)
 const permissions = ref({})
 const loading = ref(false)
 const error = ref('')
@@ -45,13 +48,24 @@ function applyPermissionRows(rows = []) {
   permissions.value = next
 }
 
-async function loadInvitations() {
-  try { invitations.value = await listTeamInvitations() } catch { invitations.value = [] }
+async function loadInvitations(page = invitationPage.value) {
+  try {
+    const result = await listTeamInvitations({ page, page_size: 20, status: 'pending' })
+    invitations.value = result.items
+    invitationPage.value = result.page
+    invitationTotal.value = result.total
+    invitationTotalPages.value = result.total_pages
+  } catch {
+    invitations.value = []
+    invitationTotal.value = 0
+    invitationTotalPages.value = 0
+  }
 }
 
 async function respondInvitation(invite, accept) {
   try {
     await respondTeamInvitation(invite.id, accept)
+    if (invitations.value.length === 1 && invitationPage.value > 1) invitationPage.value -= 1
     await loadInvitations()
     if (accept) await load()
   } catch (e) { showMessage(e.message || '邀请处理失败', 'error') }
@@ -202,11 +216,16 @@ onMounted(() => { load(); loadInvitations() })
         <button v-if="auth.currentTeamRole === 'owner'" class="btn btn-ghost danger" @click="deleteCurrentTeam">删除团队</button>
       </div>
     </div>
-    <div v-if="invitations.some(invite => invite.status === 'pending')" class="invite-panel">
-      <div class="panel-head">待处理邀请</div>
-      <div v-for="invite in invitations.filter(item => item.status === 'pending')" :key="invite.id" class="invite-row">
+    <div v-if="invitationTotal" class="invite-panel">
+      <div class="panel-head">待处理邀请 <span class="count">共 {{ invitationTotal }} 条</span></div>
+      <div v-for="invite in invitations" :key="invite.id" class="invite-row">
         <span>{{ `团队 #${invite.team_id}` }} · {{ invite.role === 'admin' ? '管理员' : '成员' }}</span>
         <span><button class="btn btn-ghost" @click="respondInvitation(invite, false)">拒绝</button><button class="btn btn-primary" @click="respondInvitation(invite, true)">接受</button></span>
+      </div>
+      <div v-if="invitationTotalPages > 1" class="invite-pagination">
+        <button class="btn btn-ghost" :disabled="invitationPage <= 1" @click="loadInvitations(invitationPage - 1)">上一页</button>
+        <span>{{ invitationPage }} / {{ invitationTotalPages }}</span>
+        <button class="btn btn-ghost" :disabled="invitationPage >= invitationTotalPages" @click="loadInvitations(invitationPage + 1)">下一页</button>
       </div>
     </div>
     <div v-if="loading" class="state">加载中…</div>
@@ -273,6 +292,9 @@ onMounted(() => { load(); loadInvitations() })
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .panel-head { display:flex; justify-content:space-between; align-items:center; padding:15px 18px; border-bottom:1px solid var(--border); font-weight:700; font-size:13px; }
 .count { color:var(--text-muted); font-size:11px; font-weight:500; }
+.invite-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-bottom:1px solid var(--border); font-size:13px; }
+.invite-row > span:last-child { display:flex; gap:8px; }
+.invite-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:10px 18px; color:var(--text-muted); font-size:12px; }
 .team-item { width:100%; display:flex; justify-content:space-between; padding:13px 18px; border:0; border-bottom:1px solid var(--border); background:none; color:var(--text); text-align:left; cursor:pointer; font:inherit; }
 .team-item:hover, .team-item.active { background:var(--surface-2); color:var(--primary); }
 .team-item small { color:var(--text-muted); font-size:11px; }

@@ -11,7 +11,7 @@ export const transferTeamOwnership = (id, data) => http.post(`/teams/${id}/trans
 export const leaveTeam = (id) => http.post(`/teams/${id}/leave`)
 export const deleteTeam = (id) => http.delete(`/teams/${id}`)
 export const inviteTeamMember = (id, data) => http.post(`/teams/${id}/invitations`, data)
-export const listTeamInvitations = () => http.get('/teams/invitations')
+export const listTeamInvitations = (params = {}) => http.get('/teams/invitations', { params })
 export const respondTeamInvitation = (id, accept) => http.post(`/teams/invitations/${id}/respond`, null, { params: { accept } })
 export const listTeamPermissions = (id) => http.get(`/teams/${id}/permissions`)
 export const setTeamPermission = (id, data) => http.put(`/teams/${id}/permissions`, data)

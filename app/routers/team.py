@@ -8,7 +8,11 @@ from app.models.user import User
 from app.schemas.response import ApiResponse, success_response
 from app.schemas.team import TeamCreate, TeamOut, TeamUpdate, TeamTransfer, TeamPermissionUpdate, TeamPermissionOut
 from app.schemas.team_member import TeamMemberCreate, TeamMemberOut, TeamMemberRoleUpdate
-from app.schemas.team_invitation import TeamInvitationCreate, TeamInvitationOut
+from app.schemas.team_invitation import (
+    TeamInvitationCreate,
+    TeamInvitationOut,
+    TeamInvitationPage,
+)
 from app.schemas.user import UserOut
 from app.services import team as team_service
 
@@ -39,7 +43,15 @@ def update_team(team_id: int, data: TeamUpdate, db: Session = Depends(get_db), m
 @router.post("/{team_id}/transfer", response_model=ApiResponse[TeamOut])
 def transfer_team(team_id: int, data: TeamTransfer, db: Session = Depends(get_db), membership: TeamMember = Depends(get_current_team_admin_or_owner)):
     if membership.role != "owner": raise HTTPException(403, "只有团队所有者可以转让所有权")
-    return success_response(team_service.s_transfer_owner(db, membership.team_id, data.user_id), message="团队所有权转让成功")
+    return success_response(
+        team_service.s_transfer_owner(
+            db,
+            membership.team_id,
+            membership.user_id,
+            data.user_id,
+        ),
+        message="团队所有权转让成功",
+    )
 
 @router.post("/{team_id}/leave", response_model=ApiResponse[None])
 def leave_team(team_id: int, db: Session = Depends(get_db), membership: TeamMember = Depends(get_current_team_member)):
@@ -76,9 +88,24 @@ def remove_member(team_id: int, member_id: int, db: Session = Depends(get_db), m
 def invite_member(team_id: int, data: TeamInvitationCreate, db: Session = Depends(get_db), membership: TeamMember = Depends(get_current_team_admin_or_owner)):
     return success_response(team_service.s_invite(db, membership.team_id, membership.user_id, data.user_id, data.role), message="邀请已发送", status_code=201)
 
-@router.get("/invitations", response_model=ApiResponse[list[TeamInvitationOut]])
-def list_invitations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return success_response(team_service.s_list_invitations(db, current_user.id), message="查询成功")
+@router.get("/invitations", response_model=ApiResponse[TeamInvitationPage])
+def list_invitations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    invitation_status: str | None = Query(None, alias="status", pattern="^(pending|accepted|rejected)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return success_response(
+        team_service.s_list_invitations(
+            db,
+            current_user.id,
+            page=page,
+            page_size=page_size,
+            invitation_status=invitation_status,
+        ),
+        message="查询成功",
+    )
 
 @router.post("/invitations/{invitation_id}/respond", response_model=ApiResponse[TeamInvitationOut])
 def respond_invitation(invitation_id: int, accept: bool, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
