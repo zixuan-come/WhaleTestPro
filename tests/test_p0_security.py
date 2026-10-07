@@ -58,8 +58,10 @@ def _db_with_items():
     return db
 
 
-def test_db_eq_allows_single_select():
+def test_db_eq_allows_single_select(monkeypatch):
     db = _db_with_items()
+    from contextlib import nullcontext
+    monkeypatch.setattr("app.core.assertions.test_sql_session", lambda: nullcontext(db))
 
     result = run_assertions(
         _Response(),
@@ -131,8 +133,10 @@ def test_setup_sql_rejects_non_dml_or_multi_statement_sql(sql):
     assert db.execute(sql_text("SELECT count(*) FROM items")).scalar() == 1
 
 
-def test_setup_sql_allows_single_dml_statement():
+def test_setup_sql_allows_single_dml_statement(monkeypatch):
     db = _db_with_items()
+    from contextlib import nullcontext
+    monkeypatch.setattr("app.core.sql_runner.test_sql_session", lambda: nullcontext(db))
 
     run_sql(db, ["UPDATE items SET value = 2 WHERE value = 1"])
 

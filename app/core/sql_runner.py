@@ -1,6 +1,7 @@
 import re
 
 from sqlalchemy import text
+from app.core.sql_database import test_sql_session
 
 
 _SINGLE_DML = re.compile(r"^\s*(?:insert|update|delete)\b", re.IGNORECASE)
@@ -29,15 +30,21 @@ def validate_setup_sql(sql):
         raise ValueError("setup/teardown SQL 只允许单条 INSERT、UPDATE 或 DELETE 语句")
     if _UPDATE_OR_DELETE.match(normalized) and not _HAS_WHERE.search(normalized):
         raise ValueError("setup/teardown 的 UPDATE、DELETE 语句必须带 WHERE 条件")
-    referenced = re.findall(r"(?:from|into|update|join)\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\.)?[a-zA-Z_][a-zA-Z0-9_]*)", normalized, re.IGNORECASE)
-    if any(name.lower().split(".")[-1] in _PROTECTED_TABLES for name in referenced):
+    referenced = re.findall(r"(?:from|into|update|join)\s+((?:`?[a-zA-Z_][a-zA-Z0-9_]*`?\.)?`?[a-zA-Z_][a-zA-Z0-9_]*`?)", normalized, re.IGNORECASE)
+    if any(name.lower().split(".")[-1].strip('`') in _PROTECTED_TABLES for name in referenced):
         raise ValueError("setup/teardown SQL 不允许修改平台业务表")
     return normalized
 
 def run_sql(db, statements):
-    for sql in statements or []:
-        db.execute(text(validate_setup_sql(sql)))
-    db.commit()
+    # Validate the entire batch before writing; a later bad statement must not
+    # commit earlier statements. The platform db argument is intentionally unused.
+    validated = [validate_setup_sql(sql) for sql in statements or []]
+    if not validated:
+        return
+    with test_sql_session() as tested_db:
+        for sql in validated:
+            tested_db.execute(text(sql))
+        tested_db.commit()
 
 
 

@@ -1,6 +1,7 @@
 import re
 
 from sqlalchemy import text
+from app.core.sql_database import test_sql_session
 from app.core.variables import extract
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
@@ -19,7 +20,9 @@ def _execute_read_only(db, sql):
         raise ValueError("db_eq 只允许执行单条只读 SELECT 语句")
     if ";" in sql or _FORBIDDEN_SQL.search(sql):
         raise ValueError("db_eq 只允许执行单条只读 SELECT 语句")
-    return db.execute(text(sql)).scalar()
+    # A read-only query can still steal platform data; never execute on db.
+    with test_sql_session() as tested_db:
+        return tested_db.execute(text(sql)).scalar()
 
 
 def run_assertions(response, assertions, db):
