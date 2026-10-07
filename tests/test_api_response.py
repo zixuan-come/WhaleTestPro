@@ -14,6 +14,8 @@ from app.schemas.response import ApiResponse, success_response
 
 
 def _json_body(response):
+    if isinstance(response, dict):
+        return response
     return json.loads(response.body)
 
 
@@ -31,7 +33,7 @@ def test_success_response_uses_common_envelope():
     model = ApiResponse[int](code=0, message="ok", data=1)
     response = success_response(model.data, model.message)
 
-    assert response.status_code == 200
+    assert isinstance(response, dict)
     assert _json_body(response) == {"code": 0, "message": "ok", "data": 1}
 
 

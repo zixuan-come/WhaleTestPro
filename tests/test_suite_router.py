@@ -25,11 +25,13 @@ SUITE_DATA = {
 
 
 def _body(response):
+    if isinstance(response, dict):
+        return response
     return json.loads(response.body)
 
 
 def _assert_success(response, *, data, message, status_code=200):
-    assert response.status_code == status_code
+    assert isinstance(response, dict)  # HTTP status belongs to APIRoute.
     assert _body(response) == {"code": 0, "message": message, "data": data}
 
 
@@ -52,6 +54,8 @@ def test_suite_routes_declare_common_response_model(path, method, response_model
     )
 
     assert route.response_model == response_model
+    expected_status = 201 if path == "/suites" and method == "POST" else 200
+    assert (route.status_code or 200) == expected_status
 
 
 def test_create_suite_uses_common_response(monkeypatch):

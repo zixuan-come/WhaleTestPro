@@ -37,6 +37,10 @@ HTTP 状态码和响应体中的 `code` 同时保留：HTTP 状态码表示 HTTP
 
 ## 3. 成功响应
 
+`success_response()` 返回普通业务字典，由路由声明的 `ApiResponse[...]` 完成验证和字段过滤。
+不要用 `JSONResponse(jsonable_encoder(ORM对象))` 返回成功数据，否则会绕过 `response_model`，
+可能把 `hashed_password` 等内部字段返回给调用方。HTTP 状态码以路由声明为准，例如创建接口显式声明 `status_code=201`。
+
 ### 3.1 单条资源
 
 ```json

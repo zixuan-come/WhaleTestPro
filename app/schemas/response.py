@@ -1,7 +1,5 @@
 from typing import Generic, TypeVar
 
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 
@@ -17,7 +15,6 @@ class ApiResponse(BaseModel, Generic[T]):
 
 
 def success_response(data=None, message="\u64cd\u4f5c\u6210\u529f", status_code=200):
-    return JSONResponse(
-        status_code=status_code,
-        content={"code": 0, "message": message, "data": jsonable_encoder(data)},
-    )
+    # Keep ORM objects intact until FastAPI validates/filters response_model.
+    # HTTP status is declared on the route, not in the business envelope.
+    return {"code": 0, "message": message, "data": data}
