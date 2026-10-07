@@ -31,7 +31,13 @@ from app.core.bootstrap import (
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
-from app.core.health_checks import database_is_ready
+from app.core.health_checks import (
+    celery_broker_is_ready,
+    database_is_ready,
+    redis_is_ready,
+)
+from app.core.redis_client import redis_client
+from app.core.celery_app import celery_app
 from app.core.exception_handlers import (
     http_exception_handler,
     unhandled_exception_handler,
@@ -196,21 +202,23 @@ def health_live():
 
 @app.get("/health/ready")
 def health_ready():
-    databases = {
+    components = {
         "main_database": "ok" if database_is_ready(engine) else "unavailable",
         "shadow_database": "ok" if database_is_ready(engine_shadow) else "unavailable",
+        "redis": "ok" if redis_is_ready(redis_client) else "unavailable",
+        "rabbitmq": "ok" if celery_broker_is_ready(celery_app) else "unavailable",
     }
-    if "unavailable" in databases.values():
+    if "unavailable" in components.values():
         return JSONResponse(
             status_code=503,
             content={
                 "code": 503,
                 "message": "\u670d\u52a1\u6682\u672a\u5c31\u7eea",
-                "data": databases,
+                "data": components,
             },
         )
     return success_response(
-        {"status": "ready", **databases},
+        {"status": "ready", **components},
         message="\u670d\u52a1\u5df2\u5c31\u7eea",
     )
 
