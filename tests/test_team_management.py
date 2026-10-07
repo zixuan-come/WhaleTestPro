@@ -181,28 +181,35 @@ def test_move_project_to_target_team_uses_team_membership():
     assert moved.team_id == target.id
     assert project_repo.db_get_for_user(db, project.id, target_owner.id).id == project.id
     assert project_repo.db_get_for_user(db, project.id, owner.id) is None
+    assert db.get(Team, source.id) is not None
 
 
-def test_create_project_without_team_creates_owned_team():
+def test_create_project_requires_explicit_team():
+    with pytest.raises(ValidationError) as exc_info:
+        ProjectCreate(name="team-required-project")
+
+    assert "team_id" in str(exc_info.value)
+
+
+def test_team_owner_can_create_project_in_owned_team():
     db = _db()
-    owner = User(username="auto-team-owner", hashed_password="x")
+    owner = User(username="explicit-team-owner", hashed_password="x")
     db.add(owner)
+    db.flush()
+    team = Team(name="explicit-team", owner_id=owner.id)
+    db.add(team)
+    db.flush()
+    db.add(TeamMember(team_id=team.id, user_id=owner.id, role=TeamRole.OWNER.value))
     db.commit()
 
     project = project_service.s_create(
         db,
-        ProjectCreate(name="auto-team-project"),
+        ProjectCreate(name="explicit-team-project", team_id=team.id),
         owner.id,
     )
 
-    assert project.team_id is not None
-    team = db.query(Team).filter(Team.id == project.team_id).one()
-    assert team.owner_id == owner.id
-    assert db.query(TeamMember).filter_by(
-        team_id=team.id,
-        user_id=owner.id,
-        role=TeamRole.OWNER.value,
-    ).one()
+    assert project.team_id == team.id
+    assert db.query(Team).count() == 1
 
 
 def test_member_content_write_permission_can_be_enabled():

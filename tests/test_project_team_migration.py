@@ -108,6 +108,17 @@ def test_team_invitation_migration_replaces_history_blocking_constraint():
     )
 
 
+def test_explicit_project_team_migration_only_drops_obsolete_marker():
+    migration = (
+        ROOT / "migrations" / "009_require_explicit_project_team.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "information_schema.COLUMNS" in migration
+    assert "DROP COLUMN `is_auto_created`" in migration
+    assert "DROP TABLE" not in migration
+    assert "DELETE FROM" not in migration
+
+
 def test_runtime_migrations_run_in_order(monkeypatch):
     from app.core import migrations
 
@@ -132,6 +143,11 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         "ensure_team_invitation_consistency_schema",
         lambda bind: calls.append((bind, "008")),
     )
+    monkeypatch.setattr(
+        migrations,
+        "ensure_explicit_project_team_schema",
+        lambda bind: calls.append((bind, "009")),
+    )
 
     migrations.run_all_migrations("main", "shadow")
 
@@ -140,8 +156,10 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("main", "006"),
         ("main", "007"),
         ("main", "008"),
+        ("main", "009"),
         ("shadow", "005"),
         ("shadow", "006"),
         ("shadow", "007"),
         ("shadow", "008"),
+        ("shadow", "009"),
     ]

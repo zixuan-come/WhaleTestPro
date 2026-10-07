@@ -7,21 +7,20 @@ from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
 def s_create(db: Session, project: ProjectCreate, owner_id: int):
-    if project.team_id is not None:
-        membership = (
-            db.query(TeamMember)
-            .filter(
-                TeamMember.team_id == project.team_id,
-                TeamMember.user_id == owner_id,
-            )
-            .first()
+    membership = (
+        db.query(TeamMember)
+        .filter(
+            TeamMember.team_id == project.team_id,
+            TeamMember.user_id == owner_id,
         )
-        if membership is None or membership.role not in (
-            TeamRole.OWNER.value,
-            TeamRole.ADMIN.value,
-        ):
-            raise HTTPException(status_code=403, detail="只能在自己管理的团队中创建项目")
-    return project_repo.db_create(db, project, owner_id)
+        .first()
+    )
+    if membership is None or membership.role not in (
+        TeamRole.OWNER.value,
+        TeamRole.ADMIN.value,
+    ):
+        raise HTTPException(status_code=403, detail="只能在自己管理的团队中创建项目")
+    return project_repo.db_create(db, project)
 
 
 def s_get(db: Session, project_id: int, user_id: int):

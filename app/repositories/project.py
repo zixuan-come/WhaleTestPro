@@ -6,8 +6,7 @@ from app.models.interface import Interface
 from app.models.mock import Mock
 from app.models.perf import PerfTask
 from app.models.project import Project
-from app.models.team_member import TeamMember, TeamRole
-from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.models.report import TestReport
 from app.models.scenario import Scenario
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
@@ -16,19 +15,9 @@ from app.models.traffic_record import TrafficRecord
 from app.schemas.project import ProjectCreate
 
 
-def db_create(db: Session, project: ProjectCreate, owner_id: int) -> Project:
+def db_create(db: Session, project: ProjectCreate) -> Project:
     values = project.model_dump(exclude_none=True)
-    team_id = values.pop("team_id", None)
-    if team_id is None:
-        team = Team(
-            name=f"{values['name']}团队",
-            description=f"{values['name']}的协作团队",
-            owner_id=owner_id,
-        )
-        db.add(team)
-        db.flush()
-        team_id = team.id
-        db.add(TeamMember(team_id=team_id, user_id=owner_id, role=TeamRole.OWNER.value))
+    team_id = values.pop("team_id")
     db_project = Project(**values, team_id=team_id)
     db.add(db_project)
     db.commit()

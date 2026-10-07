@@ -5,10 +5,15 @@ from app.schemas.base import NamedSchema
 
 class ProjectCreate(NamedSchema):
     description: str | None = Field(default=None, max_length=500)
-    team_id: int | None = None
+    team_id: int = Field(
+        ...,
+        gt=0,
+        description="所属团队 ID；创建项目前必须先创建或加入团队",
+    )
 
-class ProjectUpdate(ProjectCreate):
-    pass
+
+class ProjectUpdate(NamedSchema):
+    description: str | None = Field(default=None, max_length=500)
 
 
 class ProjectOut(ProjectCreate):

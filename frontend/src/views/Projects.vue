@@ -6,7 +6,6 @@ import { listProjects, createProject, updateProject, deleteProject, moveProjectT
 import { listTeams } from '../api/team'
 import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
-import ProjectMembersModal from '../components/ProjectMembersModal.vue'
 
 const auth = useAuthStore()
 const items = ref([])
@@ -18,14 +17,13 @@ const editingId = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const form = reactive({ name: '', description: '' })
-const memberProject = ref(null)
 const moveProject = ref(null)
 const moveTeams = ref([])
 const moveTargetTeam = ref(null)
 const moving = ref(false)
 
 const total = computed(() => items.value.length)
-const canManageTeam = computed(() => !auth.currentTeamId || ['owner', 'admin'].includes(auth.currentTeamRole))
+const canManageTeam = computed(() => Boolean(auth.currentTeamId) && ['owner', 'admin'].includes(auth.currentTeamRole))
 
 async function load() {
   loading.value = true
@@ -40,6 +38,14 @@ async function load() {
 }
 
 function openCreate() {
+  if (!auth.currentTeamId) {
+    showMessage('请先创建或加入团队，并在顶部选择团队后再创建项目', 'warning')
+    return
+  }
+  if (!canManageTeam.value) {
+    showMessage('只有团队 Owner 或 Admin 可以创建项目', 'warning')
+    return
+  }
   editingId.value = null
   form.name = ''
   form.description = ''
@@ -71,7 +77,7 @@ async function save() {
     const payload = {
       name: form.name.trim(),
       description: form.description.trim() || null,
-      ...(editingId.value == null && auth.currentTeamId ? { team_id: auth.currentTeamId } : {}),
+      ...(editingId.value == null ? { team_id: Number(auth.currentTeamId) } : {}),
     }
 
     if (editingId.value == null) {
@@ -115,10 +121,6 @@ function switchTo(project) {
 async function openMove(project) { moveProject.value = project; moveTargetTeam.value = null; moveTeams.value = (await listTeams()).filter(t => t.id !== project.team_id) }
 async function submitMove() { if (!moveProject.value || !moveTargetTeam.value) return; moving.value = true; try { await moveProjectToTeam(moveProject.value.id, Number(moveTargetTeam.value)); showMessage("项目迁移成功", "success"); moveProject.value = null; await load() } catch (e) { showMessage(e.message || "迁移失败", "error") } finally { moving.value = false } }
 
-function openMembers(project) {
-  memberProject.value = project
-}
-
 function formatDate(iso) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('zh-CN', { hour12: false })
@@ -142,12 +144,15 @@ onMounted(load)
       </button>
     </div>
 
-    <div v-if="!canManageTeam" class="permission-tip">你是团队成员，只能使用项目功能，不能修改项目详情、删除项目或管理成员。</div>
+    <div v-if="auth.currentTeamId && !canManageTeam" class="permission-tip">你是团队成员，只能使用项目功能，不能修改项目详情、删除项目或管理成员。</div>
 
     <div v-if="loading" class="state">加载中…</div>
     <div v-else-if="error" class="state err">
       {{ error }}
       <button class="btn btn-ghost retry" @click="load">重试</button>
+    </div>
+    <div v-else-if="!auth.currentTeamId" class="state">
+      请先创建或加入团队，并在顶部选择团队后再创建项目。
     </div>
     <div v-else-if="!items.length" class="state">
       还没有任何项目,点右上角「新建项目」创建第一个 —— 所有接口/用例/流量都会归到你选中的项目下。
@@ -171,11 +176,6 @@ onMounted(load)
           <button v-if="p.id !== auth.currentProjectId" class="btn btn-ghost sm" @click="switchTo(p)">切到这个</button>
           <button v-if="canManageTeam" class="icon-btn edit-action" title="编辑" @click="openEdit(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-          </button>
-          <button v-if="canManageTeam" class="icon-btn member-action" title="成员管理" @click="openMembers(p)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
-            </svg>
           </button>
           <button v-if="canManageTeam" class="icon-btn" title="迁移团队" @click="openMove(p)">↗</button>
 <button v-if="canManageTeam" class="icon-btn" title="删除" @click="onDelete(p)">
@@ -205,7 +205,6 @@ onMounted(load)
     </template>
   </Modal>
 
-  <ProjectMembersModal v-if="memberProject" :project="memberProject" @close="memberProject = null" />
 </template>
 
 <style scoped>
@@ -241,7 +240,6 @@ onMounted(load)
 .icon-btn svg { width:16px; height:16px; }
 .icon-btn:hover { color:var(--fail-fg); background:var(--fail-bg); }
 .icon-btn.edit-action:hover { color:var(--primary); background:var(--surface-2); }
-.icon-btn.member-action:hover { color:var(--primary); background:var(--ring); }
 
 .state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; max-width:560px; margin:0 auto; }
 .state.err { color:var(--fail-fg); }

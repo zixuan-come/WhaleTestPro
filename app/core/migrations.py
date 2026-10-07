@@ -7,6 +7,7 @@ PROJECT_TEAM_MIGRATION = "005_remove_project_member"
 OPERATIONAL_CONSISTENCY_MIGRATION = "006_operational_consistency"
 LEGACY_PROJECT_MEMBER_CLEANUP_MIGRATION = "007_drop_legacy_project_member"
 TEAM_INVITATION_CONSISTENCY_MIGRATION = "008_team_invitation_consistency"
+EXPLICIT_PROJECT_TEAM_MIGRATION = "009_require_explicit_project_team"
 
 
 def _has_project_team_foreign_key(inspector) -> bool:
@@ -201,7 +202,7 @@ def _record_migration(connection, version: str) -> None:
 
 
 def ensure_operational_consistency_schema(bind) -> None:
-    """Add persistent schedule synchronization and auto-team provenance."""
+    """Add persistent schedule synchronization."""
     if bind.dialect.name != "mysql":
         return
 
@@ -231,19 +232,6 @@ def ensure_operational_consistency_schema(bind) -> None:
                     text(
                         "ALTER TABLE `schedule` ADD COLUMN `sync_error` "
                         "VARCHAR(500) NULL"
-                    )
-                )
-
-        if inspector.has_table("team"):
-            team_columns = {
-                column["name"]
-                for column in inspector.get_columns("team")
-            }
-            if "is_auto_created" not in team_columns:
-                connection.execute(
-                    text(
-                        "ALTER TABLE `team` ADD COLUMN `is_auto_created` "
-                        "BOOLEAN NOT NULL DEFAULT 0"
                     )
                 )
 
@@ -371,9 +359,29 @@ def ensure_team_invitation_consistency_schema(bind) -> None:
         _record_migration(connection, TEAM_INVITATION_CONSISTENCY_MIGRATION)
 
 
+def ensure_explicit_project_team_schema(bind) -> None:
+    """Remove the obsolete auto-team marker after project team becomes required."""
+    if bind.dialect.name != "mysql":
+        return
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if inspector.has_table("team"):
+            team_columns = {
+                column["name"]
+                for column in inspector.get_columns("team")
+            }
+            if "is_auto_created" in team_columns:
+                connection.execute(
+                    text("ALTER TABLE `team` DROP COLUMN `is_auto_created`")
+                )
+        _record_migration(connection, EXPLICIT_PROJECT_TEAM_MIGRATION)
+
+
 def run_all_migrations(*binds) -> None:
     for bind in binds:
         ensure_project_team_schema(bind)
         ensure_operational_consistency_schema(bind)
         ensure_legacy_project_member_removed(bind)
         ensure_team_invitation_consistency_schema(bind)
+        ensure_explicit_project_team_schema(bind)
