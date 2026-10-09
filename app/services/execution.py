@@ -292,6 +292,7 @@ def _request(interface, **kwargs):
 
 
 def _run_once(db, case, interface, context):
+    result = None
     try:
         run_sql(db, render_deep(case.setup_sql, context))
         response = _request(
@@ -304,16 +305,24 @@ def _run_once(db, case, interface, context):
         status_passed = response.status_code == case.expected_status
         assertions_results = run_assertions(response, render_deep(case.assertions, context), db)
         passed = status_passed and all(r["passed"] for r in assertions_results)
-        return {
+        result = {
             "passed": passed,
             "expected_status": case.expected_status,
             "actual_status": response.status_code,
             "assertions": assertions_results,
         }
     except Exception as e:
-        return {"passed": False, "error": str(e)}
+        result = {"passed": False, "error": str(e)}
     finally:
-        run_sql(db, render_deep(case.teardown_sql, context))
+        try:
+            run_sql(db, render_deep(case.teardown_sql, context))
+        except Exception as exc:
+            # Cleanup failure must remain a failed test result, not escape and
+            # prevent report persistence or replace the original error.
+            result = result or {"passed": False}
+            result["passed"] = False
+            result["teardown_error"] = str(exc)
+    return result
 
 
 def _run_with_retry(db, case, interface, context):
@@ -363,7 +372,8 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, proje
     regression_pass_rate.set(pass_rate)
     regression_coverage.set(coverage)
     summary = {
-        "passed": passed_count == total,
+        "passed": total > 0 and passed_count == total,
+        "execution_status": "completed" if total else "no_tests",
         "total": total,
         "passed_count": passed_count,
         "failed_count": total - passed_count,

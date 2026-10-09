@@ -88,7 +88,7 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
             scenario_name=scenario.name,
         )
 
-        passed = all(r["passed"] for r in chain_results)
+        passed = bool(chain_results) and all(r["passed"] for r in chain_results)
         results.append({
             "type": "scenario",
             "id": scenario.id,
