@@ -12,6 +12,8 @@ from app.models.scenario import Scenario
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
 from app.models.schedule import Schedule
 from app.models.traffic_record import TrafficRecord
+from app.models.suite import TestSuite
+from app.repositories import schedule_sync as schedule_sync_repo
 from app.schemas.project import ProjectCreate
 
 
@@ -70,9 +72,33 @@ def db_delete(db: Session, project_id: int) -> Project | None:
     if db_project is None:
         return None
     try:
+        schedule_ids = [
+            schedule_id
+            for (schedule_id,) in (
+                db.query(Schedule.id)
+                .filter(Schedule.project_id == project_id)
+                .all()
+            )
+        ]
+        for schedule_id in schedule_ids:
+            schedule_sync_repo.db_enqueue_delete(db, schedule_id)
         report_ids = db.query(ScenarioReport.id).filter(ScenarioReport.project_id == project_id)
         db.query(ScenarioReportStep).filter(ScenarioReportStep.report_id.in_(report_ids)).delete(synchronize_session=False)
-        for model in (Case, Interface, Environment, Mock, PerfTask, TestReport, ScenarioReport, Scenario, Schedule, TrafficRecord):
+        # schedule/test_report 先于 test_suite 删除，因为二者都可能通过
+        # suite_id 外键引用测试套件。
+        for model in (
+            Schedule,
+            Case,
+            Interface,
+            Environment,
+            Mock,
+            PerfTask,
+            TestReport,
+            ScenarioReport,
+            Scenario,
+            TrafficRecord,
+            TestSuite,
+        ):
             db.query(model).filter(model.project_id == project_id).delete(synchronize_session=False)
         db.delete(db_project)
         db.commit()

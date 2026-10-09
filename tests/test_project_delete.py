@@ -15,6 +15,7 @@ from app.models.scenario import Scenario
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
 from app.models.schedule import Schedule
 from app.models.traffic_record import TrafficRecord
+from app.models.suite import TestSuite
 from app.models.team import Team
 from app.models.team_member import TeamMember, TeamRole
 from app.models.user import User
@@ -49,6 +50,13 @@ def test_delete_project_removes_all_project_resources():
         project = Project(name="project-to-delete", team_id=team.id)
         db.add_all([member, project])
         db.flush()
+        suite = TestSuite(
+            name="full regression",
+            project_id=project.id,
+            type="mixed",
+        )
+        db.add(suite)
+        db.flush()
         interface = Interface(
             name="health",
             method="GET",
@@ -56,6 +64,10 @@ def test_delete_project_removes_all_project_resources():
             project_id=project.id,
         )
         db.add_all([member, interface])
+        db.flush()
+
+        environment = Environment(name="local", base_url="http://app", project_id=project.id)
+        db.add(environment)
         db.flush()
 
         case = Case(
@@ -78,7 +90,6 @@ def test_delete_project_removes_all_project_resources():
         db.add_all(
             [
                 case,
-                Environment(name="local", base_url="http://app", project_id=project.id),
                 Mock(name="health mock", path="/health", method="GET", status=200, project_id=project.id),
                 PerfTask(
                     name="health perf",
@@ -90,10 +101,21 @@ def test_delete_project_removes_all_project_resources():
                     status="pending",
                     project_id=project.id,
                 ),
-                ReportModel(case_id=1, passed=True, project_id=project.id),
+                ReportModel(
+                    case_id=1,
+                    passed=True,
+                    suite_id=suite.id,
+                    project_id=project.id,
+                ),
                 Scenario(name="health scenario", case_ids=[], project_id=project.id),
                 scenario_report,
-                Schedule(name="daily", cron="0 0 * * *", enabled=True, project_id=project.id),
+                Schedule(
+                    name="daily",
+                    cron="0 0 * * *",
+                    suite_id=suite.id,
+                    enabled=True,
+                    project_id=project.id,
+                ),
                 TrafficRecord(method="GET", path="/health", project_id=project.id),
             ]
         )
@@ -128,6 +150,7 @@ def test_delete_project_removes_all_project_resources():
             Scenario,
             Schedule,
             TrafficRecord,
+            TestSuite,
         ):
             assert db.query(model).count() == 0
         assert db.query(User).count() == 1

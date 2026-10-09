@@ -2,7 +2,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.team_member import TeamMember, TeamRole
+from app.models.schedule import Schedule
 from app.repositories import project as project_repo
+from app.services import schedule as schedule_service
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
@@ -36,7 +38,18 @@ def s_update(db: Session, project_id: int, project: ProjectUpdate):
 
 
 def s_delete(db: Session, project_id: int):
-    return project_repo.db_delete(db, project_id)
+    schedule_ids = [
+        schedule_id
+        for (schedule_id,) in (
+            db.query(Schedule.id)
+            .filter(Schedule.project_id == project_id)
+            .all()
+        )
+    ]
+    deleted = project_repo.db_delete(db, project_id)
+    for schedule_id in schedule_ids:
+        schedule_service.process_sync_event(db, schedule_id)
+    return deleted
 
 
 def s_move_team(db: Session, project_id: int, target_team_id: int, user_id: int):
