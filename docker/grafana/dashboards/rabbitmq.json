@@ -1,0 +1,57 @@
+{
+  "uid": "rabbitmq-queues",
+  "title": "WhaleTestPro RabbitMQ 队列",
+  "tags": ["whaletestpro", "rabbitmq"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "待消费消息",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rabbitmq_queue_messages_ready) by (queue)", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "未确认消息",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rabbitmq_queue_messages_unacked) by (queue)", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "消费者数量",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rabbitmq_queue_consumers) by (queue)", "legendFormat": "{{queue}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "发布与投递速率",
+      "datasource": { "type": "prometheus", "uid": "prom1" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rabbitmq_channel_messages_published_total[1m]))", "legendFormat": "发布" },
+        { "refId": "B", "expr": "sum(rate(rabbitmq_channel_messages_delivered_total[1m]))", "legendFormat": "投递" }
+      ]
+    }
+  ]
+}

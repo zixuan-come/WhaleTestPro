@@ -23,6 +23,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
     restart: unless-stopped
     networks: [whale]
 
@@ -34,6 +37,8 @@ services:
     # ports:
     #   - "5672:5672"
     #   - "15672:15672"
+    volumes:
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s
@@ -66,10 +71,11 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    # Linux 容器里 prefork 正常，不用 Windows 的 --pool=solo
-    command: celery -A app.core.celery_app worker -l info
+    # 指标 HTTP 服务与任务共享同一进程；线程池也避免长压测完全阻塞录制/调度任务。
+    command: celery -A app.core.celery_app worker -l info --pool=threads --concurrency=4
     env_file: .env
     environment:
+      LOCUST_MASTER_URL: http://locust-master:8089
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro?charset=utf8mb4
       SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow?charset=utf8mb4
       REDIS_URL: redis://redis:6379/0
@@ -107,6 +113,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./docker/prometheus-rules.yml:/etc/prometheus/rules.yml:ro
     # P0 安全修复：Prometheus 仅限容器内访问，不暴露到宿主机
     # Grafana 通过内网访问 prometheus:9090，无需暴露端口
     # 如需本地调试，临时改为 "127.0.0.1:9090:9090"
@@ -114,6 +121,8 @@ services:
     #   - "9090:9090"
     depends_on:
       - app
+      - worker
+      - rabbitmq
     networks: [whale]
 
   grafana:
@@ -168,6 +177,7 @@ services:
 
 volumes:
   mysql-data:
+  redis-data:
 
 networks:
   whale:

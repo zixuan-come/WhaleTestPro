@@ -1,0 +1,29 @@
+groups:
+  - name: whaletestpro-rabbitmq
+    rules:
+      - alert: WhaleRabbitMQQueueBacklog
+        expr: sum(rabbitmq_queue_messages_ready) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ 待消费消息持续积压"
+          description: "待消费消息已连续 5 分钟超过 100，请检查 Celery Worker 和任务耗时。"
+
+      - alert: WhaleRabbitMQNoConsumers
+        expr: sum(rabbitmq_queue_messages_ready) > 0 and sum(rabbitmq_queue_consumers) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RabbitMQ 有积压但没有消费者"
+          description: "队列中存在待消费消息，但消费者数量为 0，Celery Worker 可能已经离线。"
+
+      - alert: WhaleRabbitMQUnackedMessages
+        expr: sum(rabbitmq_queue_messages_unacked) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ 未确认消息持续偏高"
+          description: "未确认消息已连续 5 分钟超过 50，请检查 Worker 是否卡死或任务执行过慢。"
