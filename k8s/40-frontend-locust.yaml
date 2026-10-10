@@ -2,7 +2,7 @@
 #
 # frontend:Nginx 反代(见 frontend/nginx.conf,把 /api 转 app:8000)。compose 发布 8080:80,
 #          K8s 用 NodePort 让浏览器可达(minikube service frontend -n whaletestpro)。
-# locust-master:web UI + 主从协调,发布 8089 供 s_run 调 /swarm 和人看面板。
+# locust-master:仅集群内控制 API + 主从协调，HTTP 需要独立控制凭证。
 # locust-worker:连 master 做压测。compose 靠 --scale 扩容 → K8s 直接 replicas: N,
 #              这正是 K8s 相对 compose 的优势:声明式副本数,kubectl scale 秒扩缩。
 ---
@@ -47,13 +47,12 @@ metadata:
   namespace: whaletestpro
   labels: { app: locust-master }
 spec:
-  type: NodePort
+  type: ClusterIP
   selector: { app: locust-master }
   ports:
     - name: web
       port: 8089
       targetPort: 8089
-      nodePort: 30089
     - name: master-bind      # 主从通信端口,worker 连这个
       port: 5557
       targetPort: 5557
@@ -77,6 +76,9 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["locust", "-f", "locustfile.py", "--master"]
           env:
+            - name: LOCUST_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: whaletestpro-secret, key: LOCUST_CONTROL_TOKEN }
             - name: REDIS_URL
               valueFrom:
                 configMapKeyRef: { name: whaletestpro-config, key: REDIS_URL }

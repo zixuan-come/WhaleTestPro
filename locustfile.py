@@ -18,6 +18,25 @@ def _on_set_path(environment, msg, **kwargs):
     TARGET_PATH = msg.data
 
 
+def _install_control_auth(environment):
+    web_ui = getattr(environment, "web_ui", None)
+    if web_ui is None or getattr(web_ui, "_whale_control_auth_installed", False):
+        return
+    import hmac
+    from flask import jsonify, request
+    token = os.environ.get("LOCUST_CONTROL_TOKEN", "")
+
+    @web_ui.app.before_request
+    def require_internal_control_token():
+        if not token:
+            return jsonify(success=False, message="Locust control token is not configured"), 503
+        provided = request.headers.get("X-Locust-Control-Token", "")
+        if not hmac.compare_digest(provided.encode("utf-8"), token.encode("utf-8")):
+            return jsonify(success=False, message="Forbidden"), 403
+
+    web_ui._whale_control_auth_installed = True
+
+
 def _install_owned_deadlines(environment):
     """Replace Locust's untracked /swarm timer with a cancellable generation."""
     web_ui = getattr(environment, "web_ui", None)
@@ -98,6 +117,7 @@ def _install_owned_deadlines(environment):
 
 @events.init.add_listener
 def _on_init(environment, **kwargs):
+    _install_control_auth(environment)
     _install_owned_deadlines(environment)
     if isinstance(environment.runner, WorkerRunner):
         environment.runner.register_message("set_path", _on_set_path)

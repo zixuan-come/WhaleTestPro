@@ -86,6 +86,11 @@ def _perf(db, status="pending", **extra):
     return task
 
 
+@pytest.fixture(autouse=True)
+def isolated_locust_control_token(monkeypatch):
+    monkeypatch.setattr(settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
+
+
 def test_recording_pool_rejects_overflow_without_unbounded_queue(monkeypatch):
     from app.core import recording_publisher as publisher
     monkeypatch.setattr(publisher, "_slots", asyncio.Semaphore(0))

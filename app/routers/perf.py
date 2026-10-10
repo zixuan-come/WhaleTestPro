@@ -88,6 +88,8 @@ def run_task(
         )
     except perf_service.PerfRunBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except perf_service.PerfControlUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if task is None:
         raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在")
     try:

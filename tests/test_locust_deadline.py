@@ -8,6 +8,8 @@ os.environ.setdefault("LOCUST_SKIP_MONKEY_PATCH", "1")
 import gevent
 from locust.env import Environment
 
+CONTROL_HEADERS = {"X-Locust-Control-Token": "deadline-test-control-token"}
+
 
 class Timer:
     def __init__(self, seconds, function, args):
@@ -23,6 +25,7 @@ class Timer:
 
 
 def test_early_stop_cancels_old_deadline_and_cannot_stop_new_run(monkeypatch):
+    monkeypatch.setenv("LOCUST_CONTROL_TOKEN", CONTROL_HEADERS["X-Locust-Control-Token"])
     monkeypatch.setattr(sys, "argv", ["locust"])
     spec = importlib.util.spec_from_file_location("isolated_locustfile", Path(__file__).resolve().parents[1] / "locustfile.py")
     module = importlib.util.module_from_spec(spec)
@@ -50,6 +53,7 @@ def test_early_stop_cancels_old_deadline_and_cannot_stop_new_run(monkeypatch):
     monkeypatch.setattr(gevent, "spawn", spawn)
     module._on_init(environment)
     client = web.app.test_client()
+    client.environ_base["HTTP_X_LOCUST_CONTROL_TOKEN"] = CONTROL_HEADERS["X-Locust-Control-Token"]
     try:
         payload = {"user_count": "1", "spawn_rate": "1", "host": "http://isolated.invalid"}
         assert client.post("/swarm", data={**payload, "run_time": "10s"}).json["success"]
@@ -68,6 +72,7 @@ def test_early_stop_cancels_old_deadline_and_cannot_stop_new_run(monkeypatch):
 
 
 def test_invalid_deadline_does_not_start_load(monkeypatch):
+    monkeypatch.setenv("LOCUST_CONTROL_TOKEN", CONTROL_HEADERS["X-Locust-Control-Token"])
     monkeypatch.setattr(sys, "argv", ["locust"])
     spec = importlib.util.spec_from_file_location("isolated_locustfile", Path(__file__).resolve().parents[1] / "locustfile.py")
     module = importlib.util.module_from_spec(spec)
@@ -79,7 +84,7 @@ def test_invalid_deadline_does_not_start_load(monkeypatch):
     monkeypatch.setattr(runner, "start", lambda *_: calls.append(True))
     module._on_init(environment)
     try:
-        response = web.app.test_client().post("/swarm", data={"user_count": "1", "spawn_rate": "1", "run_time": "bad"})
+        response = web.app.test_client().post("/swarm", headers=CONTROL_HEADERS, data={"user_count": "1", "spawn_rate": "1", "run_time": "bad"})
         assert response.json["success"] is False
         assert calls == []
     finally:
@@ -87,6 +92,7 @@ def test_invalid_deadline_does_not_start_load(monkeypatch):
 
 
 def test_real_gevent_deadline_survives_worker_loss_but_not_early_stop(monkeypatch):
+    monkeypatch.setenv("LOCUST_CONTROL_TOKEN", CONTROL_HEADERS["X-Locust-Control-Token"])
     monkeypatch.setattr(sys, "argv", ["locust"])
     spec = importlib.util.spec_from_file_location("isolated_locustfile", Path(__file__).resolve().parents[1] / "locustfile.py")
     module = importlib.util.module_from_spec(spec)
@@ -99,6 +105,7 @@ def test_real_gevent_deadline_survives_worker_loss_but_not_early_stop(monkeypatc
     monkeypatch.setattr(runner, "stop", lambda: state.update(running=False))
     module._on_init(environment)
     client = web.app.test_client()
+    client.environ_base["HTTP_X_LOCUST_CONTROL_TOKEN"] = CONTROL_HEADERS["X-Locust-Control-Token"]
     payload = {"user_count": "1", "spawn_rate": "1", "host": "http://isolated.invalid"}
     try:
         assert client.post("/swarm", data={**payload, "run_time": "1s"}).json["success"]

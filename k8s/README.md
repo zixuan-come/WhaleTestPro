@@ -10,8 +10,8 @@
 | 无状态服务 | Deployment + Service | `app` `worker` `redis` `rabbitmq` `frontend` `prometheus` `grafana` `locust-*` |
 | `depends_on`（启动依赖） | 无原生等价 → initContainer 探测端口 / 应用层重试 | `app` 等 mysql、`worker` 等 rabbitmq |
 | `environment`（明文） | ConfigMap | `REDIS_URL`、`CELERY_BROKER_URL` |
-| `environment`（敏感） | Secret | `MYSQL_ROOT_PASSWORD`、`SECRET_KEY`、含密码的连接串 |
-| `ports`（发布到宿主机） | Service `type: NodePort`（或 LoadBalancer/Ingress） | `frontend`:30080、`grafana`:30300、`locust-master`:30089 |
+| `environment`（敏感） | Secret | `MYSQL_ROOT_PASSWORD`、`SECRET_KEY`、独立 `LOCUST_CONTROL_TOKEN`、含密码的连接串 |
+| `ports`（发布到宿主机） | Service `type: NodePort`（或 LoadBalancer/Ingress） | `frontend`:30080、`grafana`:30300；Locust 使用仅集群内可见的 ClusterIP |
 | 挂载配置文件 | ConfigMap + volumeMount subPath | `prometheus.yml` |
 | 同一 compose network | 同 namespace 内 Service DNS `<svc>.<ns>.svc` | 全部服务 |
 | `--scale locust-worker=N` | 声明式 `replicas: N` / `kubectl scale` | `locust-worker` replicas=2 |
@@ -68,3 +68,5 @@ kubectl scale deployment/locust-worker -n whaletestpro --replicas=5
 - 用 SealedSecrets / External Secrets Operator，
 
 **绝不把真实密码/密钥提交进仓库**（与项目铁律一致）。
+
+`LOCUST_CONTROL_TOKEN` 必须使用独立随机值，不复用 JWT `SECRET_KEY`。app/worker 通过 `envFrom` 读取，Locust Master 通过 `secretKeyRef` 读取；内部 8089 的控制和统计 HTTP 接口也必须携带 `X-Locust-Control-Token`。升级后滚动更新 app、worker、locust-master。此项清单调整仅做源码/YAML 检查，尚未在真实 K8s 集群验收。

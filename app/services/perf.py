@@ -21,6 +21,16 @@ class PerfRunBusyError(RuntimeError):
     """Raised when the singleton Locust master is already serving another run."""
 
 
+class PerfControlUnavailableError(RuntimeError):
+    pass
+
+
+def _control_headers() -> dict[str, str]:
+    if not settings.LOCUST_CONTROL_TOKEN:
+        raise PerfControlUnavailableError("压测控制凭证未配置，请配置 LOCUST_CONTROL_TOKEN")
+    return {"X-Locust-Control-Token": settings.LOCUST_CONTROL_TOKEN}
+
+
 def _utcnow() -> datetime:
     """Return a naive UTC datetime suitable for MySQL DATETIME columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -107,6 +117,7 @@ def _stop_owned_run_unlocked(redis_client, lease_id: str) -> None:
     redis_client.expire(RUN_LOCK_KEY, RUN_LOCK_GRACE_SECONDS)
     requests.get(
         f"{settings.LOCUST_MASTER_URL}/stop",
+        headers=_control_headers(),
         timeout=settings.REQUEST_TIMEOUT_SECONDS,
     ).raise_for_status()
 
@@ -252,7 +263,7 @@ def s_run(
                 "spawn_rate": task.spawn_rate,
                 "host": task.target_host,
                 "run_time": f"{max(1, task.duration)}s",
-            }, timeout=settings.REQUEST_TIMEOUT_SECONDS)
+            }, headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
 
         elapsed = 0
@@ -274,7 +285,7 @@ def s_run(
             ) is None:
                 raise RuntimeError("压测任务已不再处于运行状态")
             _refresh_run_keys(redis_client, run_id, task.duration)
-            stats = requests.get(f"{base}/stats/requests", timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
+            stats = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
             history_samples.append({"elapsed_s": elapsed, "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
             metrics.perf_rps.set(stats.get("total_rps") or 0)
@@ -337,6 +348,7 @@ def s_mark_queued(
     task = perf_repo.db_get(db, task_id, project_id)
     if task is None or task.status != "pending":
         return None
+    _control_headers()  # Fail before reserving a lease or publishing any message.
     redis_client = redis.from_url(settings.REDIS_URL)
     run_id = _run_id(project_id, task_id)
     lease_id = _lease_id(run_id, celery_task_id)

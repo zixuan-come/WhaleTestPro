@@ -214,8 +214,6 @@ onUnmounted(stopPoll)
     <div class="panel-head">
       压测任务
       <div class="head-actions">
-        <a class="btn btn-ghost mon" href="http://localhost:8089" target="_blank" rel="noopener"
-           title="Locust 实时监控:RPS/响应时间曲线、P50/P95/P99、各请求明细">Locust 实时</a>
         <a class="btn btn-ghost mon" href="http://localhost:3000" target="_blank" rel="noopener"
            title="Grafana 看板:压测指标时序曲线">Grafana</a>
         <button class="btn btn-primary" @click="openCreate">

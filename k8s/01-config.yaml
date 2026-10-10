@@ -19,6 +19,7 @@ stringData:
   # 占位值 —— 部署前替换,或改用 kubectl create secret 覆盖
   MYSQL_ROOT_PASSWORD: "CHANGE_ME_root_password"
   SECRET_KEY: "CHANGE_ME_jwt_secret_key"
+  LOCUST_CONTROL_TOKEN: "CHANGE_ME_independent_locust_control_token"
   # 含密码的连接串整体作为敏感值(服务名即 K8s Service 名,同 namespace 内 DNS 可达)
   DATABASE_URL: "mysql+pymysql://root:CHANGE_ME_root_password@mysql:3306/whale_test_pro?charset=utf8mb4"
   SHADOW_DATABASE_URL: "mysql+pymysql://root:CHANGE_ME_root_password@mysql:3306/whale_test_pro_shadow?charset=utf8mb4"
@@ -30,6 +31,7 @@ metadata:
   namespace: whaletestpro
 data:
   REDIS_URL: "redis://redis:6379/0"
+  LOCUST_MASTER_URL: "http://locust-master:8089"
   CELERY_BROKER_URL: "amqp://guest:guest@rabbitmq:5672//"
   MYSQL_DATABASE: "whale_test_pro"
 ---

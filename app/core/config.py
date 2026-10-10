@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
     FEISHU_WEBHOOK: str = ""
     LOCUST_MASTER_URL: str = "http://localhost:8089"
+    LOCUST_CONTROL_TOKEN: str = ""
     REQUEST_TIMEOUT_SECONDS: float = 30.0
     PERF_QUEUE_TIMEOUT_SECONDS: int = 300
     PERF_HEARTBEAT_TIMEOUT_SECONDS: int = 60

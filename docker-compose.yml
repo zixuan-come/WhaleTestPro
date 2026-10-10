@@ -1,6 +1,6 @@
 # WhaleTestPro 一键起：app + MySQL + Redis + Celery worker + Prometheus + Grafana
 # 用法：docker compose up -d --build
-# 依赖 .env 里的 SECRET_KEY 和 MYSQL_ROOT_PASSWORD（compose 自动读项目根的 .env）
+# 依赖 .env 里的 SECRET_KEY、MYSQL_ROOT_PASSWORD 和独立 LOCUST_CONTROL_TOKEN
 
 services:
   mysql:
@@ -51,6 +51,8 @@ services:
     restart: unless-stopped
     env_file: .env                            # 注入 SECRET_KEY
     environment:
+      LOCUST_MASTER_URL: http://locust-master:8089
+      LOCUST_CONTROL_TOKEN: ${LOCUST_CONTROL_TOKEN:?请在.env配置独立的Locust控制凭证}
       # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名
       # charset=utf8mb4：pymysql 默认不显式声明字符集，中文会双编码(mojibake)，必须显式加
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro?charset=utf8mb4
@@ -76,6 +78,7 @@ services:
     env_file: .env
     environment:
       LOCUST_MASTER_URL: http://locust-master:8089
+      LOCUST_CONTROL_TOKEN: ${LOCUST_CONTROL_TOKEN:?请在.env配置独立的Locust控制凭证}
       DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro?charset=utf8mb4
       SHADOW_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/whale_test_pro_shadow?charset=utf8mb4
       REDIS_URL: redis://redis:6379/0
@@ -157,13 +160,13 @@ services:
     restart: unless-stopped
     command: locust -f locustfile.py --master
     environment:
+      LOCUST_CONTROL_TOKEN: ${LOCUST_CONTROL_TOKEN:?请在.env配置独立的Locust控制凭证}
       # 与 Celery Worker 共用 Compose Redis，读取任务写入的目标路径
       REDIS_URL: redis://redis:6379/0
     depends_on:
       redis:
         condition: service_started
-    ports:
-      - "8089:8089"                           # web UI + API：s_run POST /swarm、人也能开浏览器看
+    # 控制面仅限容器网络，所有 HTTP 请求还必须携带独立控制凭证。
     networks: [whale]
 
   locust-worker:

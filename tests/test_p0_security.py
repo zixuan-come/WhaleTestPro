@@ -209,6 +209,7 @@ def test_case_retries_defaults_to_zero():
 def test_perf_run_marks_failed_on_worker_error(monkeypatch):
     from types import SimpleNamespace
     from app.services import perf as perf_service
+    monkeypatch.setattr(perf_service.settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
 
     task = SimpleNamespace(id=7, status="queued", celery_task_id="celery-7", target_host="http://app", target_path="/health", users=1, spawn_rate=1, duration=1)
     updates = []
@@ -380,6 +381,7 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
 
 def test_perf_mark_queued_rejects_second_run(monkeypatch):
     from app.services import perf as perf_service
+    monkeypatch.setattr(perf_service.settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
 
     tasks = {
         1: SimpleNamespace(id=1, status="pending", duration=60),
@@ -411,6 +413,7 @@ def test_perf_mark_queued_rejects_second_run(monkeypatch):
 
 def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
     from app.services import perf as perf_service
+    monkeypatch.setattr(perf_service.settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
 
     task = SimpleNamespace(
         id=12,
@@ -432,7 +435,8 @@ def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
         def json(self):
             return {"stats": [], "errors": []}
 
-    def post(url, data, timeout):
+    def post(url, data, timeout, headers):
+        assert headers == {"X-Locust-Control-Token": perf_service.settings.LOCUST_CONTROL_TOKEN}
         swarm_state.update(fake_redis.values)
         return Response()
 

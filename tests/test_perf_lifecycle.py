@@ -226,6 +226,7 @@ class _ControlRedis:
 @pytest.fixture
 def perf_control(monkeypatch):
     from app.services import perf
+    monkeypatch.setattr(perf.settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
 
     engine = create_engine("sqlite:///:memory:")
     PerfTask.__table__.create(engine)

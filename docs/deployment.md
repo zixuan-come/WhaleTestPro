@@ -13,7 +13,7 @@ Docker Compose 会启动以下服务:
 | RabbitMQ | `5672` / `15672` | Celery broker / 管理台 |
 | Grafana | `3000` | 监控看板 |
 | Prometheus | `9090` | 指标查询 |
-| Locust | `8089` | 压测控制台 |
+| Locust | 不发布 | 仅内部 `locust-master:8089` 控制 API，需独立凭证 |
 
 MySQL 和 Redis 只加入 Compose 内部网络,不映射公网端口。生产演示时建议安全组只开放 SSH 和前端 `8080`;其余管理端口按需限制来源 IP。
 
@@ -66,6 +66,7 @@ git status -sb
 ```bash
 openssl rand -hex 24
 openssl rand -hex 32
+openssl rand -hex 32
 ```
 
 在项目根创建 `.env`,只保存以下配置:
@@ -73,6 +74,7 @@ openssl rand -hex 32
 ```dotenv
 MYSQL_ROOT_PASSWORD=<第一段随机值>
 SECRET_KEY=<第二段随机值>
+LOCUST_CONTROL_TOKEN=<第三段独立随机值，不复用SECRET_KEY>
 FEISHU_WEBHOOK=
 ```
 
@@ -84,6 +86,8 @@ grep -E '^[A-Z_][A-Z0-9_]*=' .env | cut -d= -f1
 ```
 
 Compose 会在容器内组装主库、影子库、Redis 和 RabbitMQ 连接地址,无需在 `.env` 重复配置 `DATABASE_URL`。
+
+Locust 控制面不再公开 8089；app、worker、locust-master 共用 `LOCUST_CONTROL_TOKEN`，所有控制及统计 HTTP 请求必须携带 `X-Locust-Control-Token`。不要把凭证加入前端或日志；在平台任务报告和 Grafana 查看结果。升级时需补齐该变量并重建这三个服务，不能只重启旧镜像。
 
 ## 首次部署
 
@@ -198,7 +202,7 @@ sudo docker compose logs --tail=150 app mysql rabbitmq
 curl -i http://127.0.0.1:8001/health/ready
 ```
 
-重点检查 MySQL、RabbitMQ 是否 healthy,以及 `.env` 是否包含 `MYSQL_ROOT_PASSWORD` 和 `SECRET_KEY`。
+重点检查 MySQL、RabbitMQ 是否 healthy,以及 `.env` 是否包含 `MYSQL_ROOT_PASSWORD`、`SECRET_KEY` 和 `LOCUST_CONTROL_TOKEN`。
 
 ### 旧数据卷缺少影子库
 
