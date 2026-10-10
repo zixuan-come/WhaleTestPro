@@ -10,13 +10,16 @@ def render(text: str, context: dict) -> str:
     return re.sub(r"\$\{(\w+)\}", _replace, text)
 
 
-def extract(data: dict, path: str):
+def extract_match(data: dict, path: str):
     expr = parse(path)
     matches = expr.find(data)
     if not matches:
         raise KeyError(f"路径未找到: {path}")
-    value = matches[0].value
-    return value
+    return matches[0]
+
+
+def extract(data: dict, path: str):
+    return extract_match(data, path).value
 
 
 def render_deep(obj, context):

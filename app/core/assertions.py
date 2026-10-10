@@ -2,9 +2,10 @@ import re
 
 from sqlalchemy import text
 from app.core.sql_database import test_sql_session
-from app.core.variables import extract
+from app.core.variables import extract_match
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
+from app.core.redaction import MASK, is_sensitive_source, mask_sensitive
 
 
 _READ_ONLY_SQL = re.compile(r"^\s*select\b", re.IGNORECASE)
@@ -29,18 +30,20 @@ def run_assertions(response, assertions, db):
     results = []
     for a in assertions or []:
         a_type = a["type"]
+        sensitive = is_sensitive_source(a.get("path") or a.get("sql"))
         try:
+            if a_type in {"json_eq", "json_contains", "json_gt", "json_lt"}:
+                match = extract_match(response.json(), a["path"])
+                actual = match.value
+                # Wildcards can select a secret without spelling its key.
+                sensitive = sensitive or is_sensitive_source(str(match.full_path))
             if a_type == "json_eq":
-                actual = extract(response.json(), a["path"])
                 passed = actual == a["expected"]
             elif a_type == "json_contains":
-                actual = extract(response.json(), a["path"])
                 passed = a["expected"] in actual
             elif a_type == "json_gt":
-                actual = extract(response.json(), a["path"])
                 passed = actual > a["expected"]
             elif a_type == "json_lt":
-                actual = extract(response.json(), a["path"])
                 passed = actual < a["expected"]
             elif a_type == "response_time_lt":
                 actual = response.elapsed.total_seconds() * 1000
@@ -62,17 +65,18 @@ def run_assertions(response, assertions, db):
                 actual = f"未知断言类型: {a_type}"
                 passed = False
         except ValidationError as e:
-            actual = f"schema 校验失败: {e.message}"
+            # e.message can embed original credentials.
+            actual = f"schema 校验失败: {e.validator}"
             passed = False
         except Exception as e:
-            actual = f"断言执行出错: {e}"
+            actual = f"断言执行出错: {type(e).__name__}"
             passed = False
 
         results.append({
             "type": a_type,
             "passed": passed,
-            "expected": a.get("expected"),
-            "actual": actual,
+            "expected": MASK if sensitive else mask_sensitive(a.get("expected")),
+            "actual": MASK if sensitive else mask_sensitive(actual),
         })
 
     return results

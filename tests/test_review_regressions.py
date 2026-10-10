@@ -92,6 +92,107 @@ def test_suite_deleted_during_execution_still_keeps_summary_snapshot(foreign_key
     assert db.query(Report).count() == 2
 
 
+@pytest.mark.parametrize("body,path,extracted,secret", [
+    ({"access_token": "synthetic-secret"}, "$.*", "synthetic-secret", "synthetic-secret"),
+    ({"data": {"access_token": "synthetic-secret"}}, "$.data", {"access_token": "synthetic-secret"}, "synthetic-secret"),
+    ({"phone": 13800138000}, "$.phone", 13800138000, "13800138000"),
+])
+@pytest.mark.parametrize("echo_as_string", [True, False])
+def test_sensitive_extraction_alias_is_not_persisted_but_still_drives_next_request(foreign_key_db, monkeypatch, body, path, extracted, secret, echo_as_string):
+    db = foreign_key_db
+    echoed = str(extracted) if echo_as_string else extracted
+    first = Interface(name="extract", method="GET", url="/token", project_id=1)
+    second = Interface(name="reuse", method="GET", url="/safe", headers={"X-Session": "${session}"}, project_id=1)
+    db.add_all([first, second])
+    db.flush()
+    cases = [Case(name="extract", interface_id=first.id, expected_status=200, extract_rules={"session": path}, project_id=1),
+             Case(name="reuse", interface_id=second.id, expected_status=200,
+                  assertions=[{"type": "json_eq", "path": "$.session", "expected": echoed}], project_id=1)]
+    db.add_all(cases)
+    db.commit()
+    calls = []
+    def request(interface, **kwargs):
+        calls.append(kwargs)
+        return response(body if interface.id == first.id else {"session": echoed})
+    monkeypatch.setattr(execution, "_request", request)
+    results = execution.run_chain(db, [case.id for case in cases], None, 1)
+    assert all(result["passed"] for result in results)
+    assert calls[1]["headers"]["X-Session"] == str(extracted)
+    rows = db.query(Report).order_by(Report.id).all()
+    assert secret not in json.dumps([row.detail for row in rows])
+
+
+@pytest.mark.parametrize("secret", [0, 1, -2, 1.25, 13800138000])
+def test_numeric_secret_aliases_are_masked_without_mutating_input(secret):
+    from app.core.redaction import mask_sensitive, sensitive_strings
+    original = {"session": secret, "nested": [secret, {"value": secret}], "passed": True, "missing": None}
+    masked = mask_sensitive(original, secrets=tuple(sensitive_strings({"phone": secret})))
+    assert masked == {"session": "***", "nested": ["***", {"value": "***"}], "passed": True, "missing": None}
+    assert original["session"] == secret and original["nested"][0] == secret
+    assert mask_sensitive(original) == original
+    assert mask_sensitive(False, secrets=("False",)) is False
+
+
+@pytest.mark.parametrize("secret", [0, 1, 200])
+def test_numeric_alias_redaction_preserves_chain_ids_and_verdicts(foreign_key_db, monkeypatch, secret):
+    db = foreign_key_db
+    first = Interface(name="extract", method="GET", url="/token", project_id=1)
+    second = Interface(name="reuse", method="GET", url="/safe", headers={"X-Session": "${session}"}, project_id=1)
+    db.add_all([first, second])
+    db.flush()
+    cases = [Case(name="extract", interface_id=first.id, expected_status=200,
+                  extract_rules={"session": "$.phone"}, project_id=1),
+             Case(name="reuse", interface_id=second.id, expected_status=200,
+                  assertions=[{"type": "json_eq", "path": "$.session", "expected": secret}], project_id=1)]
+    db.add_all(cases)
+    db.commit()
+    ids = [case.id for case in cases]
+    sent_headers = []
+    def request(interface, **kwargs):
+        sent_headers.append(kwargs["headers"])
+        return response({"phone": secret} if interface.id == first.id else {"session": secret})
+    monkeypatch.setattr(execution, "_request", request)
+    results = execution.run_chain(db, ids, None, 1)
+    assert [item["case_id"] for item in results] == ids
+    assert all(item["passed"] is True for item in results)
+    assert all(item["actual_status"] == item["expected_status"] == 200 for item in results)
+    assert sent_headers[1]["X-Session"] == str(secret)
+    reports = db.query(Report).order_by(Report.id).all()
+    assert [item.case_id for item in reports] == ids
+    assert all(item.passed is True for item in reports)
+    assert [item.detail["step"]["sequence"] for item in reports] == [1, 2]
+    assert all(item.detail["step"]["duration_ms"] >= 0 for item in reports)
+    step = reports[1].detail["step"]
+    assert step["response_detail"]["status_code"] == 200
+    assert step["assertions"][0] == {"type": "status_code", "passed": True, "expected": 200, "actual": 200}
+    assert step["response_detail"]["body"]["session"] == "***"
+    assert step["assertions"][-1]["actual"] == step["assertions"][-1]["expected"] == "***"
+    assert step["assertions"][-1]["passed"] is True
+
+
+@pytest.mark.parametrize("secret", [1, "json"])
+def test_redaction_preserves_assertion_type_and_case_name_limit(foreign_key_db, monkeypatch, secret):
+    from app.models.scenario_report import ScenarioReportStep
+    db = foreign_key_db
+    interface = Interface(name="redaction-boundary", method="GET", url="/safe", project_id=1)
+    db.add(interface)
+    db.flush()
+    name = ("case-" + str(secret) * 100)[:100]
+    case = Case(name=name, interface_id=interface.id, expected_status=200,
+                assertions=[{"type": "json_eq", "path": "$.session", "expected": secret}], project_id=1)
+    db.add(case)
+    db.commit()
+    monkeypatch.setattr(execution, "_env_context", lambda *args: {"phone": secret})
+    monkeypatch.setattr(execution, "_request", lambda *args, **kwargs: response({"session": secret}))
+    results = execution.run_chain(db, [case.id], None, 1, scenario_id=123, scenario_name="redaction-boundary")
+    step = db.query(ScenarioReportStep).one()
+    assert step.passed is True and results[0]["passed"] is True
+    assert step.case_name == results[0]["case_name"]
+    assert len(step.case_name) <= ScenarioReportStep.case_name.type.length
+    assert str(secret) not in step.case_name
+    for row in (step.assertions[-1], results[0]["assertions"][-1]):
+        assert row == {"type": "json_eq", "passed": True, "actual": "***", "expected": "***"}
+    assert db.get(Case, case.id).name == name
 
 
 @pytest.mark.parametrize("field", ["name", "type"])
@@ -130,10 +231,32 @@ def response(body):
     return result
 
 
+def test_large_json_is_redacted_before_report_truncation():
+    result = execution._response_detail(response({"password": "synthetic-secret", "padding": "x" * 70000}))
+    assert result["body_truncated"] is True
+    assert "synthetic-secret" not in json.dumps(result)
 
 
+def test_oversized_body_is_omitted_without_unbounded_json_parsing():
+    def forbidden():
+        raise AssertionError("oversized response must not be parsed for evidence")
+    reply = SimpleNamespace(
+        status_code=200, content=b"x" * (execution.MAX_REDACTION_PARSE_BYTES + 1),
+        headers={"X-API-Key": "synthetic-secret"}, json=forbidden,
+    )
+    detail = execution._response_detail(reply)
+    assert detail["body"] is None and detail["body_truncated"] is True
+    assert detail["headers"]["X-API-Key"] == "***"
 
 
+@pytest.mark.parametrize("kind,path", [("json_eq", "$.access_token"), ("header_eq", "Authorization"), ("json_eq", "$['password']"), ("json_eq", "$.*"), ("json_eq", "$..access_token")])
+def test_assertion_evidence_masks_sensitive_scalars_without_changing_verdict(kind, path):
+    result = response({"access_token": "synthetic-secret", "password": "synthetic-secret"})
+    result.headers["Authorization"] = "synthetic-secret"
+    row = assertions.run_assertions(result, [{"type": kind, "path": path, "expected": "synthetic-secret"}], None)[0]
+    assert row["passed"] is True
+    assert row["actual"] == row["expected"] == "***"
+    assert "synthetic-secret" not in json.dumps(row)
 
 
 @pytest.mark.parametrize("case_ids", [[], [999999]])
@@ -146,8 +269,15 @@ def test_suite_rejects_invalid_environment_before_resolving_members(foreign_key_
     assert db.query(Report).count() == 0
 
 
+def test_schema_error_does_not_echo_sensitive_response_values():
+    row = assertions.run_assertions(response({"password": "synthetic-secret"}), [{"type": "json_schema", "expected": {"type": "object", "properties": {"password": {"type": "integer"}}}}], None)[0]
+    assert row["passed"] is False
+    assert "synthetic-secret" not in json.dumps(row)
 
 
+@pytest.mark.parametrize("key", ["X-API-Key", "api-key", "API_KEY", "x_api_key", "access-token"])
+def test_recording_masks_api_key_aliases(key):
+    assert _mask({"headers": {key: "synthetic-secret", "Accept": "application/json"}}) == {"headers": {key: "***", "Accept": "application/json"}}
 
 
 def test_delete_cannot_remove_task_queued_after_old_snapshot(perf_control, monkeypatch):

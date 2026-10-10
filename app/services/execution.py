@@ -3,59 +3,39 @@ from app.repositories import interface as interface_repo
 from app.repositories import report as report_repo
 from app.repositories import environment as env_repo
 from app.repositories import scenario_report as scenario_report_repo
-from app.core.variables import render, extract, render_deep
+from app.core.variables import render, extract_match, render_deep
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
 from app.core.notifier import send_feishu
 from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
 from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
+from app.core.redaction import MASK, is_sensitive_source, sensitive_strings, mask_sensitive as _mask_sensitive
+import json
 import requests
 from datetime import datetime
 from time import perf_counter
 
 
-SENSITIVE_KEYS = {
-    "password", "passwd", "pwd", "token", "authorization", "cookie",
-    "set-cookie", "secret", "api-key", "x-api-key", "phone", "mobile",
-    "id_card", "idcard",
-}
 MAX_RESPONSE_BODY_BYTES = 64 * 1024
-
-
-def _is_sensitive_key(key):
-    normalized = str(key).lower().replace("_", "-")
-    return (
-        normalized in SENSITIVE_KEYS
-        or normalized.endswith("-token")
-        or normalized.endswith("-password")
-        or normalized.endswith("-secret")
-    )
-
-
-def _mask_sensitive(value):
-    if isinstance(value, dict):
-        return {
-            key: "***" if _is_sensitive_key(key) else _mask_sensitive(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_mask_sensitive(item) for item in value]
-    return value
+MAX_REDACTION_PARSE_BYTES = 256 * 1024
 
 
 def _response_detail(response):
     content = response.content or b""
     truncated = len(content) > MAX_RESPONSE_BODY_BYTES
-    if not content:
+    if not content or len(content) > MAX_REDACTION_PARSE_BYTES:
+        # Do not parse/copy unbounded JSON just to produce a small report sample.
         body = None
-    elif truncated:
-        body = content[:MAX_RESPONSE_BODY_BYTES].decode(response.encoding or "utf-8", errors="replace")
     else:
         try:
-            body = response.json()
+            body = _mask_sensitive(response.json())
+            if truncated:
+                # Truncate only the redacted representation, never raw bytes.
+                safe_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                body = safe_bytes[:MAX_RESPONSE_BODY_BYTES].decode("utf-8", errors="ignore")
         except ValueError:
-            body = response.text
+            body = None if truncated else response.text
 
     return {
         "status_code": response.status_code,
@@ -133,6 +113,7 @@ def run_chain(
     report_started_at = datetime.utcnow()
     report_started = perf_counter()
     context = _env_context(db, env_id, project_id)
+    report_secrets = set(sensitive_strings(context))
     results = []
     report_steps = []
     for sequence, case_id in enumerate(case_ids, start=1):
@@ -209,9 +190,12 @@ def run_chain(
                 data = response.json()
                 rendered_extract_rules = render_deep(case.extract_rules, context)
                 for var_name, path in rendered_extract_rules.items():
-                    extracted = extract(data, path)
+                    match = extract_match(data, path)
+                    extracted = match.value
+                    sensitive = is_sensitive_source(str(match.full_path)) or is_sensitive_source(var_name)
+                    report_secrets.update(sensitive_strings(extracted, sensitive=sensitive))
                     context[var_name] = extracted
-                    extracted_variables[var_name] = extracted
+                    extracted_variables[var_name] = MASK if sensitive else extracted
         except Exception as e:
             passed = False
             error = str(e)
@@ -249,6 +233,38 @@ def run_chain(
             "duration_ms": round((perf_counter() - step_started) * 1000),
         })
 
+    # Keep raw values only in the in-memory execution context. Aliases and
+    # templated request/response evidence must not erase their sensitive origin.
+    report_secrets = tuple(sorted(report_secrets, key=len, reverse=True))
+    # Redact evidence, not operational IDs/statuses/timing that may coincidentally
+    # equal a small numeric secret. Persistence still requires real case IDs.
+    for record in report_steps + results:
+        for field in ("case_name", "extracted_variables", "error"):
+            if field in record:
+                record[field] = _mask_sensitive(record[field], secrets=report_secrets)
+        if isinstance(record.get("case_name"), str):
+            # Replacement can expand a valid name beyond String(100).
+            record["case_name"] = record["case_name"][:100]
+        assertions = record.get("assertions")
+        if assertions:
+            # Only this internally generated first row is status metadata;
+            # user-defined assertions still have their evidence redacted.
+            metadata_count = 1 if "sequence" in record else 0
+            record["assertions"] = assertions[:metadata_count] + [
+                {**assertion,
+                 "expected": _mask_sensitive(assertion.get("expected"), secrets=report_secrets),
+                 "actual": _mask_sensitive(assertion.get("actual"), secrets=report_secrets)}
+                for assertion in assertions[metadata_count:]
+            ]
+        for detail_key, fields in (
+            ("request_detail", ("url", "headers", "params", "body")),
+            ("response_detail", ("headers", "body")),
+        ):
+            detail = record.get(detail_key)
+            if detail is not None:
+                for field in fields:
+                    if field in detail:
+                        detail[field] = _mask_sensitive(detail[field], secrets=report_secrets)
     if scenario_id is None:
         for result, step in zip(results, report_steps):
             report_repo.db_create(
