@@ -33,16 +33,87 @@ def foreign_key_db(suite_db):
     return suite_db
 
 
+def test_delete_executed_suite_retains_report_snapshot(foreign_key_db):
+    db = foreign_key_db
+    item = suite.s_create(db, SuiteCreate(name="report-snapshot", type="case"), 1)
+    suite.run_suite(db, item.id, 1)
+    report = db.query(Report).filter_by(suite_id=item.id).one()
+    report_id = report.id
+    suite.s_delete(db, item.id, 1)
+    db.expire_all()
+    report = db.get(Report, report_id)
+    assert report.suite_id is None
+    assert report.suite_name == "report-snapshot"
+    assert db.query(Report).count() == 1
+
+
+def test_delete_scheduled_suite_returns_conflict_without_detaching_report(foreign_key_db):
+    db = foreign_key_db
+    item = suite.s_create(db, SuiteCreate(name="scheduled", type="case"), 1)
+    suite.run_suite(db, item.id, 1)
+    db.add(Schedule(name="schedule", cron="* * * * *", suite_id=item.id, project_id=1))
+    db.commit()
+    with pytest.raises(HTTPException) as caught:
+        suite.s_delete(db, item.id, 1)
+    assert caught.value.status_code == 409
+    assert db.query(Report).filter_by(suite_id=item.id).count() == 1
+
+
+@pytest.mark.parametrize("deletion_phase", ["during_request", "before_summary"])
+def test_suite_deleted_during_execution_still_keeps_summary_snapshot(foreign_key_db, monkeypatch, deletion_phase):
+    from app.repositories import report as report_repo
+    db = foreign_key_db
+    interface = Interface(name="isolated", method="GET", url="/safe", project_id=1)
+    db.add(interface)
+    db.flush()
+    case = Case(name="isolated", interface_id=interface.id, expected_status=200, project_id=1)
+    db.add(case)
+    db.commit()
+    item = suite.s_create(db, SuiteCreate(name="immutable-snapshot", type="case", case_ids=[case.id]), 1)
+    item_id = item.id
+    def delete_suite():
+        with Session(db.get_bind()) as competing:
+            suite.s_delete(competing, item_id, 1)
+    def request(*args, **kwargs):
+        if deletion_phase == "during_request":
+            delete_suite()
+        return response({"ok": True})
+    monkeypatch.setattr(execution, "_request", request)
+    create_summary = report_repo.db_create_suite_report
+    def summary(*args, **kwargs):
+        if deletion_phase == "before_summary":
+            delete_suite()
+        return create_summary(*args, **kwargs)
+    monkeypatch.setattr(report_repo, "db_create_suite_report", summary)
+    result = suite.run_suite(db, item_id, 1)
+    assert result["suite_name"] == "immutable-snapshot" and result["passed"] == 1
+    report = db.query(Report).filter_by(execution_type="suite").one()
+    assert report.suite_id is None and report.suite_name == "immutable-snapshot"
+    assert db.query(Report).count() == 2
 
 
 
 
+@pytest.mark.parametrize("field", ["name", "type"])
+def test_suite_update_rejects_explicit_null_but_accepts_omission(field):
+    assert SuiteUpdate().model_dump(exclude_unset=True) == {}
+    with pytest.raises(ValidationError):
+        SuiteUpdate(**{field: None})
 
 
-
-
-
-
+def test_suite_route_maps_foreign_environment_to_not_found(foreign_key_db):
+    db = foreign_key_db
+    interface = Interface(name="isolated", method="GET", url="/safe", project_id=1)
+    db.add(interface)
+    db.flush()
+    case = Case(name="isolated", interface_id=interface.id, expected_status=200, project_id=1)
+    db.add(case)
+    db.commit()
+    item = suite.s_create(db, SuiteCreate(name="foreign-env", type="case", case_ids=[case.id]), 1)
+    with pytest.raises(HTTPException) as caught:
+        suite_router.run_suite(item.id, 999999, db, SimpleNamespace(project_id=1))
+    assert caught.value.status_code == 404
+    assert db.query(Report).count() == 0
 
 
 
@@ -65,6 +136,14 @@ def response(body):
 
 
 
+@pytest.mark.parametrize("case_ids", [[], [999999]])
+def test_suite_rejects_invalid_environment_before_resolving_members(foreign_key_db, case_ids):
+    db = foreign_key_db
+    item = suite.s_create(db, SuiteCreate(name="validate-first", type="case", case_ids=case_ids), 1)
+    with pytest.raises(HTTPException) as caught:
+        suite_router.run_suite(item.id, 999999, db, SimpleNamespace(project_id=1))
+    assert caught.value.status_code == 404
+    assert db.query(Report).count() == 0
 
 
 

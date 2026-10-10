@@ -53,6 +53,14 @@ class SuiteUpdate(BaseModel):
     case_ids: list[int] | None = None
     tags: list[str] | None = None
 
+    @field_validator("name", "type", mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        # Defaults allow omission; supplied values cannot clear NOT NULL columns.
+        if value is None:
+            raise ValueError("套件名称和类型不能为 null")
+        return value
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str | None) -> str | None:

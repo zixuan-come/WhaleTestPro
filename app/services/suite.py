@@ -1,11 +1,13 @@
 from datetime import datetime
 from time import perf_counter
+from types import SimpleNamespace
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from app.repositories import suite as suite_repo
 from app.repositories import case as case_repo
 from app.repositories import scenario as scenario_repo
+from app.repositories import environment as environment_repo
 from app.repositories import report as report_repo
 from app.services import execution
 from app.schemas.suite import SuiteCreate, SuiteUpdate
@@ -39,7 +41,10 @@ def s_update(db: Session, suite_id: int, project_id: int, suite_update: SuiteUpd
 
 def s_delete(db: Session, suite_id: int, project_id: int):
     """删除测试套件"""
-    success = suite_repo.db_delete(db, suite_id, project_id)
+    try:
+        success = suite_repo.db_delete(db, suite_id, project_id)
+    except suite_repo.SuiteInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not success:
         raise HTTPException(status_code=404, detail="测试套件不存在")
     return {"message": "删除成功"}
@@ -59,6 +64,16 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
     if not suite:
         raise HTTPException(status_code=404, detail="测试套件不存在")
 
+    if env_id is not None and environment_repo.db_get(db, env_id, project_id) is None:
+        raise ValueError(f"环境 id={env_id} 不存在或不属于当前项目")
+
+    # Child-report commits expire ORM objects; another request may delete or
+    # edit the suite while HTTP calls run. Execute a fixed value snapshot.
+    suite = SimpleNamespace(
+        id=suite.id, name=suite.name, type=suite.type,
+        scenario_ids=tuple(suite.scenario_ids or ()),
+        case_ids=tuple(suite.case_ids or ()), tags=tuple(suite.tags or ()),
+    )
     started_at = datetime.utcnow()
     started = perf_counter()
 

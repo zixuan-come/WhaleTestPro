@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.authorization import ProjectContext, authorize
@@ -80,7 +80,11 @@ def run_suite(
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.SUITE, Action.EXECUTE)),
 ):
+    try:
+        result = suite_service.run_suite(db, suite_id, context.project_id, env_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return success_response(
-        suite_service.run_suite(db, suite_id, context.project_id, env_id),
+        result,
         message="测试套件执行完成",
     )

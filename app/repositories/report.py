@@ -2,6 +2,7 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.report import TestReport
+from app.models.suite import TestSuite
 
 
 def _report_data(report, case_name):
@@ -28,17 +29,21 @@ def db_create_suite_report(db: Session, suite_id: int, suite_name: str, passed: 
     # case_id 列 NOT NULL,但套件汇总不对应单个用例,用 0 占位;
     # 报告列表 outerjoin Case 时 join 不到即 case_name=None(不崩),
     # 靠 execution_type="suite" 与单用例/回归报告区分。
-    db_report = TestReport(
-        case_id=0,
-        passed=passed,
-        detail=detail,
-        suite_id=suite_id,
-        suite_name=suite_name,
-        execution_type="suite",
-        project_id=project_id,
-    )
-    db.add(db_report)
-    db.commit()
+    try:
+        # Serialize only persistence with deletion, not long HTTP execution.
+        parent = db.query(TestSuite.id).filter(
+            TestSuite.id == suite_id, TestSuite.project_id == project_id,
+        ).with_for_update().first()
+        db_report = TestReport(
+            case_id=0, passed=passed, detail=detail,
+            suite_id=parent[0] if parent else None,
+            suite_name=suite_name, execution_type="suite", project_id=project_id,
+        )
+        db.add(db_report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(db_report)
     return db_report
 
