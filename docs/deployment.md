@@ -94,7 +94,12 @@ sudo docker compose pull
 sudo docker compose up -d --build --remove-orphans
 ```
 
-首次创建 MySQL 数据卷时,`docker/mysql/init/01-create-shadow-db.sql` 会自动创建 `whale_test_pro_shadow`;FastAPI 启动后在主库和影子库自动建表并按顺序幂等执行 005～008 迁移，其中 007 会永久删除已校验并迁移完成的旧项目成员归档表，008 会升级团队邀请的 pending 唯一约束。
+首次创建 MySQL 数据卷时,`docker/mysql/init/01-create-shadow-db.sql` 会自动创建 `whale_test_pro_shadow`;FastAPI 启动后在主库和影子库自动建表并按顺序幂等执行 005～011 迁移，其中 007 会永久删除已校验并迁移完成的旧项目成员归档表，008 会升级团队邀请的 pending 唯一约束，009 会移除废弃的自动团队标记，010 会增加压测任务队列状态、Worker 心跳与 Celery Task ID 字段，011 增加定时任务执行环境。
+
+定时任务必须选择环境；测试本平台时使用 Worker 可访问的 `http://app:8000`。
+Redis 已配置命名卷和 AOF，周期对账会从 MySQL 重建丢失的 RedBeat 条目。
+用户 SQL 默认关闭；如需启用，配置独立受限账号的 `TEST_DATABASE_URL`，不能复用平台主库、影子库或 root。
+完整配置边界及本次部署验收清单见 [P1 修复与验证](P1修复与验证-2026-10-07.md)。
 
 检查容器、健康接口和前端代理:
 
@@ -113,6 +118,23 @@ sudo docker stats --no-stream
 - 存活检查 `/health/live` 与就绪检查 `/health/ready` 均返回 HTTP `200`;就绪响应中的主库、影子库、Redis、RabbitMQ 均为 `ok`;
 - 业务接口成功响应包含 `code`、`message`、`data`,删除接口返回 `data: null`;
 - `/docs` 可以打开 Swagger,`/metrics` 仍保持 Prometheus 文本格式。
+- Prometheus Targets 中 `worker:8002` 与 `rabbitmq:15692` 均为 `UP`，Grafana 自动加载“WhaleTestPro RabbitMQ 队列”看板。
+- Compose Worker 使用线程池，使任务内更新的 Prometheus 指标与 `worker:8002` 指标服务处于同一进程；不要直接改回 prefork 后仍假定这些自定义 Gauge 可见。
+
+压测任务看门狗默认在排队 300 秒或运行心跳中断 60 秒后将任务标记为失败。可在 `.env` 中覆盖：
+
+```dotenv
+PERF_QUEUE_TIMEOUT_SECONDS=300
+PERF_HEARTBEAT_TIMEOUT_SECONDS=60
+```
+
+验证 RabbitMQ 指标插件和容器内指标端点：
+
+```bash
+sudo docker compose exec rabbitmq rabbitmq-plugins list -e
+sudo docker compose exec prometheus wget -qO- http://rabbitmq:15692/metrics | head
+sudo docker compose exec prometheus wget -qO- http://worker:8002/metrics | head
+```
 
 浏览器访问 `http://<服务器公网地址>:8080`。首次使用时注册账号,登录后创建项目和环境。
 

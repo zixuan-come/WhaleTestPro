@@ -118,7 +118,11 @@ flowchart TB
 
 3. 打开浏览器访问 **http://localhost:8080** —— 即完整平台。前端由 Nginx 托管打包产物,`/api` 反代到后端容器,无需单独起前端。
 
-> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表，并按顺序幂等执行 005～008 迁移。007 会在 005 完成数据校验和团队成员迁移后永久删除旧项目成员归档表；008 将团队邀请约束升级为“仅 pending 唯一”，允许保留多次 accepted/rejected 历史。正式更新请使用 `bash scripts/deploy.sh`，脚本会在启动新应用前先运行 `python -m scripts.run_migrations`；初始化脚本只在空数据卷首次启动时执行。
+> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表，并按顺序幂等执行 005～011 迁移。007 会在 005 完成数据校验和团队成员迁移后永久删除旧项目成员归档表；008 将团队邀请约束升级为“仅 pending 唯一”，允许保留多次 accepted/rejected 历史；009 移除废弃的自动团队标记；010 增加压测任务队列状态、Worker 心跳与 Celery Task ID；011 增加定时任务执行环境。正式更新请使用 `bash scripts/deploy.sh`，脚本会在启动新应用前先运行 `python -m scripts.run_migrations`；初始化脚本只在空数据卷首次启动时执行。
+
+> 用户 SQL 默认关闭；启用需要独立受限账号的 `TEST_DATABASE_URL`，禁止使用平台或影子库连接。定时任务必须选择 Worker 可访问的环境。配置细节与验收限制见 [P1 修复与验证](docs/P1修复与验证-2026-10-07.md)。
+
+> 执行边界：手动执行测试套件当前在接口请求内同步完成，不经过 RabbitMQ；定时套件/回归、性能测试及流量录制使用 Celery。录制是尽力而为，入队失败可能丢失记录，但不应影响原业务响应。
 
 > 前端热开发(可选):改前端代码想热更新时,可另起 vite dev server —— `cd frontend && npm install && npm run dev`(http://localhost:5173,`/api` 经 vite 代理到后端 8001)。日常部署/演示走 8080 的 Nginx 容器即可。
 
@@ -129,7 +133,7 @@ flowchart TB
 ```bash
 pip install -r requirements.txt
 python main.py                                   # uvicorn 127.0.0.1:8000(带 reload)
-celery -A app.core.celery_app worker -l info     # 另开终端:Celery Worker
+celery -A app.core.celery_app worker -l info --pool=threads --concurrency=4  # 另开终端:Celery Worker
 ```
 
 > 注:`main.py` 本地默认监听 `8000`,而前端代理指向 `8001`;本地起后端时把 `frontend/vite.config.js` 的 proxy target 改为 `8000`,或用 `uvicorn main:app --port 8001` 起。

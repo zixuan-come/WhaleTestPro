@@ -304,7 +304,7 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 
 ### 模块 12 · 压测（`/perf/tasks`）
 
-**数据模型 `perf_tasks`**：`id`、`name`、`target_host`、`target_path`、`users`、`spawn_rate`、`duration`、`status`(默认pending)、`rps`、`avg_response_ms`、`fail_ratio`、`project_id`。
+**数据模型 `perf_tasks`**：`id`、`name`、`target_host`、`target_path`、`users`、`spawn_rate`、`duration`、`status`(默认pending)、`celery_task_id`、`queued_at`、`started_at`、`heartbeat_at`、`finished_at`、`failure_reason`、`rps`、`avg_response_ms`、`fail_ratio`、`project_id`。
 
 **接口清单**（登录 + `X-Project-Id`）
 | 方法 | 路径 | 说明 |
@@ -316,15 +316,16 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 | POST | `/perf/tasks/{id}/run` | 运行压测 |
 
 **运行逻辑**
-1. 标记任务 `running`。
-2. 把 `target_path` 写入 Redis（`locust:target_path`），master 在 test_start 广播给 worker。
-3. 调 Locust master `/swarm`（`user_count`/`spawn_rate`/`host`）。
-4. 每 2 秒采样一次 `/stats/requests`，刷新 Prometheus 指标（rps/fail_ratio/user_count/avg_response_ms）→ 实时曲线。
-5. 到 `duration` 后调 `/stop`，指标清零，把最后一次采样写回任务（rps/avg/fail_ratio）、状态 `done`。
+1. API 生成 Celery Task ID，并标记任务 `queued`。
+2. Celery Worker 取得任务后原子标记 `running`，运行期间持续刷新心跳。
+3. 把按运行 ID 隔离的 `target_path` 写入 Redis，master 在 test_start 广播给 worker。
+4. 调 Locust master `/swarm`（`user_count`/`spawn_rate`/`host`）。
+5. 每 2 秒采样一次 `/stats/requests`，刷新 Prometheus 指标（rps/fail_ratio/user_count/avg_response_ms）→ 实时曲线。
+6. 到 `duration` 后调 `/stop`，指标清零，把最后一次采样写回任务（rps/avg/fail_ratio）、状态 `done`。
 
-**状态机**：`pending → running → done`。
+**状态机**：`pending → queued → running → done`；入队失败、排队超时、Worker 心跳超时或执行异常进入 `failed`，用户停止进入 `cancelled`。
 
-**前端（v1.1，07-07 增强）**：新建时可从接口列表选 `target_path`、从环境列表选 `target_host` 自动填入；提供 Locust / Grafana 外链入口；任务处 `running` 时前端轮询自动刷新结果。
+**前端（v1.1，07-07 增强）**：新建时可从接口列表选 `target_path`、从环境列表选 `target_host` 自动填入；提供 Locust / Grafana 外链入口；任务处 `queued` 或 `running` 时前端轮询自动刷新结果。
 
 ---
 
