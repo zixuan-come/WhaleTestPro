@@ -148,6 +148,11 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         "ensure_explicit_project_team_schema",
         lambda bind: calls.append((bind, "009")),
     )
+    monkeypatch.setattr(
+        migrations,
+        "ensure_perf_task_lifecycle_schema",
+        lambda bind: calls.append((bind, "010")),
+    )
 
     migrations.run_all_migrations("main", "shadow")
 
@@ -157,9 +162,11 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("main", "007"),
         ("main", "008"),
         ("main", "009"),
+        ("main", "010"),
         ("shadow", "005"),
         ("shadow", "006"),
         ("shadow", "007"),
         ("shadow", "008"),
         ("shadow", "009"),
+        ("shadow", "010"),
     ]

@@ -37,6 +37,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.schedule.reconcile_schedule_outbox",
         "schedule": 30.0,
     },
+    "reconcile-stale-perf-tasks": {
+        "task": "app.tasks.perf.reconcile_stale_perf_tasks",
+        "schedule": 30.0,
+    },
 }
 
 

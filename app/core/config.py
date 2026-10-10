@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     FEISHU_WEBHOOK: str = ""
     LOCUST_MASTER_URL: str = "http://localhost:8089"
     REQUEST_TIMEOUT_SECONDS: float = 30.0
+    PERF_QUEUE_TIMEOUT_SECONDS: int = 300
+    PERF_HEARTBEAT_TIMEOUT_SECONDS: int = 60
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
-
-

@@ -28,6 +28,7 @@ from app.core.bootstrap import (
     ensure_test_suite_schema,
     ensure_user_schema,
 )
+from app.core.migrations import run_all_migrations
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
@@ -67,6 +68,7 @@ import app.models.scenario_report
 
 Base.metadata.create_all(bind=engine)
 Base.metadata.create_all(bind=engine_shadow)
+run_all_migrations(engine, engine_shadow)
 ensure_test_suite_schema(engine)
 ensure_test_suite_schema(engine_shadow)
 ensure_user_schema(engine)

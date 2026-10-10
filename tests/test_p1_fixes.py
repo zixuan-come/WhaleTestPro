@@ -41,7 +41,15 @@ class Redis:
     def delete(self, *keys):
         for key in keys:
             self.values.pop(key, None)
-    def eval(self, script, count, lock, active, target, lease, run_id=None):
+    def eval(self, script, count, *args):
+        if count == 1:
+            key, owner = args
+            if self.get(key) != owner:
+                return 0
+            self.delete(key)
+            return 1
+        lock, active, target, lease, *extra = args
+        run_id = extra[0] if extra else None
         if self.get(lock) != lease:
             return 0
         if self.get(active) == (run_id or lease):
@@ -76,6 +84,24 @@ def _perf(db, status="pending", **extra):
     db.add(task)
     db.commit()
     return task
+
+
+def test_recovery_cannot_stop_newer_locust_owner(monkeypatch):
+    cache = Redis({perf.RUN_LOCK_KEY: "1:8:new", perf.ACTIVE_RUN_KEY: "1:8"})
+    calls = []
+    monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: calls.append(args))
+    assert not perf._cleanup_run(cache, "1:7", "1:7:old", True)
+    assert calls == []
+    assert cache.get(perf.RUN_LOCK_KEY) == "1:8:new"
+
+
+def test_normal_completion_cannot_stop_newer_owner(monkeypatch):
+    cache = Redis({perf.RUN_LOCK_KEY: "1:8:new"})
+    calls = []
+    monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: calls.append(args))
+    with pytest.raises(RuntimeError, match="禁止停止其他任务"):
+        perf._stop_owned_run(cache, "1:7:old")
+    assert calls == []
 
 
 def test_teardown_failure_persists_failed_report(db, monkeypatch):
@@ -115,3 +141,63 @@ def test_empty_regression_and_scenario_suite_never_pass(db):
     assert result["failed"] == 1
     assert not db.query(ScenarioReport).one().passed
     assert not db.query(Report).one().passed
+
+
+@pytest.mark.parametrize("retry_id", ["winner", "loser"])
+def test_duplicate_http_start_cannot_delete_winners_lease(db, monkeypatch, retry_id):
+    task = _perf(db)
+    second = Session(db.get_bind())
+    stale = perf.perf_repo.db_get(second, task.id, 1)
+    cache = Redis()
+    monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
+    assert perf.s_mark_queued(db, task.id, 1, "winner").status == "queued"
+    assert stale.status == "pending"
+    with pytest.raises(perf.PerfRunBusyError):
+        perf.s_mark_queued(second, task.id, 1, retry_id)
+    assert cache.get(perf.RUN_LOCK_KEY) == f"1:{task.id}:winner"
+    second.close()
+
+
+def test_duplicate_worker_cas_loser_preserves_lock(monkeypatch):
+    task = SimpleNamespace(status="queued", duration=1, celery_task_id="winner")
+    cache = Redis({perf.RUN_LOCK_KEY: "1:7:winner"})
+    monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
+    monkeypatch.setattr(perf.perf_repo, "db_get", lambda *_: task)
+    monkeypatch.setattr(perf.perf_repo, "db_update_if_status", lambda *args, **kwargs: None)
+    assert perf.s_run(None, 7, 1, "winner") is task
+    assert cache.get(perf.RUN_LOCK_KEY) == "1:7:winner"
+
+
+def test_stale_cleanup_stops_master_and_keeps_lock_if_stop_fails(db, monkeypatch):
+    now = datetime.utcnow()
+    task = _perf(db, "running", celery_task_id="lost", started_at=now-timedelta(minutes=10), heartbeat_at=now-timedelta(minutes=5))
+    run_id = f"1:{task.id}"
+    cache = Redis({perf.RUN_LOCK_KEY: run_id + ":lost", perf.ACTIVE_RUN_KEY: run_id})
+    monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(args[0])
+        raise OSError("master unreachable")
+    monkeypatch.setattr(perf.requests, "get", fail)
+    assert perf.s_reconcile_stale(db)["failed"] == 1
+    assert db.get(PerfTask, task.id).status == "failed"
+    assert cache.get(perf.RUN_LOCK_KEY) is not None
+    assert calls[0].endswith("/stop")
+    monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: SimpleNamespace(raise_for_status=lambda: None))
+    perf.s_reconcile_stale(db)
+    assert cache.get(perf.RUN_LOCK_KEY) is None
+
+
+def test_worker_supplies_locust_native_stop_deadline(db, monkeypatch):
+    task = _perf(db)
+    cache = Redis()
+    monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
+    perf.s_mark_queued(db, task.id, 1, "run")
+    requests = []
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"stats": []})
+    monkeypatch.setattr(perf.requests, "post", lambda *args, **kwargs: requests.append(kwargs) or response)
+    monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(perf.time, "sleep", lambda _: None)
+    perf.s_run(db, task.id, 1, "run")
+    assert requests[0]["data"]["run_time"] == "1s"
+    assert cache.get(perf.RUN_LOCK_KEY) is None

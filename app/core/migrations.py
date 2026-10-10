@@ -8,6 +8,21 @@ OPERATIONAL_CONSISTENCY_MIGRATION = "006_operational_consistency"
 LEGACY_PROJECT_MEMBER_CLEANUP_MIGRATION = "007_drop_legacy_project_member"
 TEAM_INVITATION_CONSISTENCY_MIGRATION = "008_team_invitation_consistency"
 EXPLICIT_PROJECT_TEAM_MIGRATION = "009_require_explicit_project_team"
+PERF_TASK_LIFECYCLE_MIGRATION = "010_perf_task_lifecycle"
+
+PERF_TASK_LIFECYCLE_COLUMNS = {
+    "celery_task_id": "VARCHAR(255) NULL",
+    "queued_at": "DATETIME NULL",
+    "started_at": "DATETIME NULL",
+    "heartbeat_at": "DATETIME NULL",
+    "finished_at": "DATETIME NULL",
+    "failure_reason": "VARCHAR(500) NULL",
+}
+
+PERF_TASK_LIFECYCLE_INDEXES = {
+    "ix_perf_tasks_celery_task_id": "celery_task_id",
+    "ix_perf_tasks_heartbeat_at": "heartbeat_at",
+}
 
 
 def _has_project_team_foreign_key(inspector) -> bool:
@@ -378,6 +393,48 @@ def ensure_explicit_project_team_schema(bind) -> None:
         _record_migration(connection, EXPLICIT_PROJECT_TEAM_MIGRATION)
 
 
+def ensure_perf_task_lifecycle_schema(bind) -> None:
+    """Add durable Celery correlation and Worker heartbeat fields."""
+    preparer = bind.dialect.identifier_preparer
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("perf_tasks"):
+            if bind.dialect.name == "mysql":
+                _record_migration(connection, PERF_TASK_LIFECYCLE_MIGRATION)
+            return
+
+        existing_columns = {
+            column["name"]
+            for column in inspector.get_columns("perf_tasks")
+        }
+        for column_name, column_type in PERF_TASK_LIFECYCLE_COLUMNS.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {preparer.quote('perf_tasks')} "
+                        f"ADD COLUMN {preparer.quote(column_name)} {column_type}"
+                    )
+                )
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        existing_indexes = {
+            index.get("name")
+            for index in inspector.get_indexes("perf_tasks")
+        }
+        for index_name, column_name in PERF_TASK_LIFECYCLE_INDEXES.items():
+            if index_name not in existing_indexes:
+                connection.execute(
+                    text(
+                        f"CREATE INDEX {preparer.quote(index_name)} "
+                        f"ON {preparer.quote('perf_tasks')} "
+                        f"({preparer.quote(column_name)})"
+                    )
+                )
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, PERF_TASK_LIFECYCLE_MIGRATION)
+
+
 def run_all_migrations(*binds) -> None:
     for bind in binds:
         ensure_project_team_schema(bind)
@@ -385,3 +442,4 @@ def run_all_migrations(*binds) -> None:
         ensure_legacy_project_member_removed(bind)
         ensure_team_invitation_consistency_schema(bind)
         ensure_explicit_project_team_schema(bind)
+        ensure_perf_task_lifecycle_schema(bind)

@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 import app.core.bootstrap as bootstrap
 from app.core.bootstrap import ensure_perf_schema, ensure_test_suite_schema, ensure_user_schema
 from app.models.user import User
+from app.core.migrations import ensure_perf_task_lifecycle_schema
 
 
 class _FakeScalarResult:
@@ -82,6 +83,37 @@ def test_ensure_perf_schema_adds_missing_observability_columns():
         } <= columns
     finally:
         db.close()
+
+
+def test_perf_task_lifecycle_migration_is_idempotent():
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE perf_tasks ("
+                "id INTEGER PRIMARY KEY, name VARCHAR(100), status VARCHAR(50), "
+                "project_id INTEGER)"
+            )
+        )
+
+    ensure_perf_task_lifecycle_schema(engine)
+    ensure_perf_task_lifecycle_schema(engine)
+
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("perf_tasks")}
+    indexes = {index["name"] for index in inspector.get_indexes("perf_tasks")}
+    assert {
+        "celery_task_id",
+        "queued_at",
+        "started_at",
+        "heartbeat_at",
+        "finished_at",
+        "failure_reason",
+    } <= columns
+    assert {
+        "ix_perf_tasks_celery_task_id",
+        "ix_perf_tasks_heartbeat_at",
+    } <= indexes
 
 
 def test_ensure_test_suite_schema_upgrades_main_and_shadow_idempotently():

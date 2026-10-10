@@ -25,7 +25,7 @@ const runningId = ref(null)      // 正在触发运行的任务 id
 const form = reactive({ name: '', interface_id: '', env_id: '', target_host: '', target_path: '', users: 10, spawn_rate: 2, duration: 30 })
 
 const total = computed(() => items.value.length)
-const runningCount = computed(() => items.value.filter(t => t.status === 'running').length)
+const runningCount = computed(() => items.value.filter(t => ['queued', 'running'].includes(t.status)).length)
 const doneCount = computed(() => items.value.filter(t => t.status === 'done').length)
 const maxRps = computed(() => {
   const vals = items.value.map(t => t.rps).filter(v => v != null)
@@ -57,11 +57,11 @@ const historyChart = computed(() => {
   }
 })
 
-const STATUS_TEXT = { pending: '待运行', running: '运行中', done: '已完成', failed: '失败', cancelled: '已停止' }
+const STATUS_TEXT = { pending: '待运行', queued: '排队中', running: '运行中', done: '已完成', failed: '失败', cancelled: '已停止' }
 function statusText(s) { return STATUS_TEXT[s] || s || '—' }
 function statusClass(s) {
   if (s === 'done') return 'b-pass'
-  if (s === 'running') return 'b-warn'
+  if (s === 'queued' || s === 'running') return 'b-warn'
   if (s === 'failed') return 'b-fail'
   return 'b-skip'
 }
@@ -150,7 +150,7 @@ async function onRun(task) {
   runningId.value = task.id
   try {
     const updated = await runPerfTask(task.id)
-    // 后端把状态标成 running 并返回;就地更新该行,压测本身异步跑,稍后刷新看结果
+    // 后端先返回 queued；Worker 真正开始后才会变成 running。
     const i = items.value.findIndex(t => t.id === task.id)
     if (i !== -1 && updated) items.value[i] = updated
   } catch (e) {
@@ -182,7 +182,7 @@ async function onDelete(task) {
   }
 }
 
-// 有任务在 running 时轮询静默刷新,让 running→done + 指标自动更新,不用手动刷新页面
+// 有任务在 queued/running 时轮询，展示 Worker 实际开始和最终结果。
 let pollTimer = null
 async function refresh() {
   try {
@@ -205,7 +205,7 @@ onUnmounted(stopPoll)
 <template>
   <div class="cards">
     <div class="card"><div class="k">压测任务</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">运行中</div><div class="v warn">{{ runningCount }}</div></div>
+    <div class="card"><div class="k">排队/运行中</div><div class="v warn">{{ runningCount }}</div></div>
     <div class="card"><div class="k">已完成</div><div class="v pass">{{ doneCount }}</div></div>
     <div class="card"><div class="k">峰值 RPS</div><div class="v">{{ maxRps }}</div></div>
   </div>
@@ -256,12 +256,12 @@ onUnmounted(stopPoll)
         <span class="c-p99">{{ fmtMs(t.p99_response_ms) }}</span>
         <span class="c-fail" :class="{ bad: t.fail_ratio > 0 }">{{ fmtFail(t.fail_ratio) }}</span>
         <span class="c-act">
-          <button v-if="t.status !== 'running'" class="icon-btn run" title="运行" :disabled="runningId === t.id" @click="onRun(t)">
+          <button v-if="t.status === 'pending'" class="icon-btn run" title="运行" :disabled="runningId === t.id" @click="onRun(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
-          <button v-if="t.status === 'running'" class="icon-btn stop" title="停止" @click="onStop(t)">■</button>
+          <button v-if="['queued', 'running'].includes(t.status)" class="icon-btn stop" title="停止" @click="onStop(t)">■</button>
           <button class="icon-btn detail" title="查看详情" @click="openDetail(t)">≡</button>
-          <button class="icon-btn del" title="删除" @click="onDelete(t)">
+          <button class="icon-btn del" title="删除" :disabled="['queued', 'running'].includes(t.status)" @click="onDelete(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
           </button>
         </span>
@@ -272,6 +272,7 @@ onUnmounted(stopPoll)
 <Modal v-if="showDetail" title="压测结果详情" :max-width="760" @close="showDetail = false">
     <div v-if="detailTask" class="perf-detail">
       <div class="detail-head"><div><strong>{{ detailTask.name }}</strong><small>{{ detailTask.target_host }}{{ detailTask.target_path }}</small></div><span class="badge" :class="statusClass(detailTask.status)"><span class="dot"></span>{{ statusText(detailTask.status) }}</span></div>
+      <div v-if="detailTask.failure_reason" class="form-err">{{ detailTask.failure_reason }}</div>
       <div class="detail-metrics"><div><span>RPS</span><strong>{{ fmtRps(detailTask.rps) }}</strong></div><div><span>平均耗时</span><strong>{{ fmtMs(detailTask.avg_response_ms) }}</strong></div><div><span>P95</span><strong>{{ fmtMs(detailTask.p95_response_ms) }}</strong></div><div><span>P99</span><strong>{{ fmtMs(detailTask.p99_response_ms) }}</strong></div><div><span>失败率</span><strong>{{ fmtFail(detailTask.fail_ratio) }}</strong></div></div>
       <div class="detail-section"><div class="detail-title">接口维度统计</div><div v-if="detailTask.request_stats?.length" class="detail-table detail-table-wide"><div class="detail-row detail-row-head"><span>接口</span><span>请求数</span><span>失败数</span><span>失败率</span><span>RPS</span><span>平均耗时</span><span>P95</span><span>P99</span></div><div v-for="row in detailTask.request_stats" :key="`${row.method}-${row.name}`" class="detail-row detail-row-wide"><span>{{ row.method }} {{ row.name }}</span><span>{{ row.num_requests ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ row.num_failures ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ fmtFail(row.num_requests ? row.num_failures / row.num_requests : 0) }}</span><span>{{ fmtRps(row.rps) }}</span><span>{{ fmtMs(row.avg_response_ms) }}</span><span>{{ fmtMs(row.p95_response_ms) }}</span><span>{{ fmtMs(row.p99_response_ms) }}</span></div></div><div v-else class="state">暂无按接口统计。</div></div>
       <div class="detail-section"><div class="detail-title">历史趋势</div><div v-if="historyChart" class="history-chart"><div class="history-chart-head"><span>压测趋势</span><small>RPS 左轴 · 平均耗时右轴 · 最近 {{ historyChart.lastElapsed }}s</small></div><svg viewBox="0 0 640 190" role="img" aria-label="压测历史趋势图" preserveAspectRatio="none"><line x1="42" y1="18" x2="42" y2="158" /><line x1="598" y1="18" x2="598" y2="158" /><line x1="42" y1="158" x2="598" y2="158" /><line class="grid-line" x1="42" y1="88" x2="598" y2="88" /><text x="6" y="22">{{ fmtRps(historyChart.maxRps) }}</text><text x="10" y="162">0</text><text x="602" y="22">{{ fmtMs(historyChart.maxLatency) }}</text><text x="612" y="162">0 ms</text><polyline class="trend-rps" :points="historyChart.rpsPoints" /><polyline class="trend-latency" :points="historyChart.latencyPoints" /></svg><div class="history-legend"><span><i class="legend-rps"></i>RPS（峰值 {{ fmtRps(historyChart.maxRps) }}）</span><span><i class="legend-latency"></i>平均耗时（峰值 {{ fmtMs(historyChart.maxLatency) }}）</span></div></div><div v-else class="state">采样点不足，完成一次压测后显示趋势。</div></div><div class="detail-section"><div class="detail-title">历史采样明细</div><div v-if="detailTask.history_samples?.length" class="history-list"><div v-for="sample in detailTask.history_samples" :key="sample.elapsed_s" class="history-row"><span>{{ sample.elapsed_s }}s</span><span>RPS {{ fmtRps(sample.rps) }}</span><span>平均 {{ fmtMs(sample.avg_response_ms) }}</span><span>P95 {{ fmtMs(sample.p95_response_ms) }}</span><span>失败 {{ fmtFail(sample.fail_ratio) }}</span></div></div><div v-else class="state">暂无历史采样。</div></div>

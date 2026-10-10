@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import ConfigDict, Field, field_validator
 from app.schemas.base import NamedSchema
 
@@ -27,6 +29,12 @@ class PerfTaskCreate(NamedSchema):
 class PerfTaskOut(PerfTaskCreate):
     id: int
     status: str
+    celery_task_id: str | None = None
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    finished_at: datetime | None = None
+    failure_reason: str | None = None
     rps: float | None = None
     avg_response_ms: float | None = None
     p95_response_ms: float | None = None

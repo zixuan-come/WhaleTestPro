@@ -39,10 +39,18 @@ class _FakeRedis:
     def expire(self, key, seconds):
         return key in self.values
 
-    def eval(self, script, numkeys, lock_key, active_key, target_key, owner):
+    def eval(self, script, numkeys, *args):
+        if numkeys == 1:
+            key, owner = args
+            if self.values.get(key) != owner:
+                return 0
+            self.delete(key)
+            return 1
+        lock_key, active_key, target_key, owner, *extra = args
+        run_id = extra[0] if extra else None
         if self.values.get(lock_key) != owner:
             return 0
-        if self.values.get(active_key) == owner:
+        if self.values.get(active_key) == (run_id or owner):
             self.values.pop(active_key, None)
         self.values.pop(target_key, None)
         self.values.pop(lock_key, None)
@@ -202,11 +210,16 @@ def test_perf_run_marks_failed_on_worker_error(monkeypatch):
     from types import SimpleNamespace
     from app.services import perf as perf_service
 
-    task = SimpleNamespace(id=7, target_host="http://app", target_path="/health", users=1, spawn_rate=1, duration=1)
+    task = SimpleNamespace(id=7, status="queued", celery_task_id="celery-7", target_host="http://app", target_path="/health", users=1, spawn_rate=1, duration=1)
     updates = []
 
     monkeypatch.setattr(perf_service.perf_repo, "db_get", lambda db, task_id, project_id: task)
-    monkeypatch.setattr(perf_service.perf_repo, "db_update", lambda db, task_id, project_id, **fields: updates.append(fields) or task)
+    def update_if_status(db, task_id, project_id, expected_status, **fields):
+        updates.append(fields)
+        task.status = fields.get("status", task.status)
+        return task
+    monkeypatch.setattr(perf_service.perf_repo, "db_update_if_status", update_if_status)
+    monkeypatch.setattr(perf_service.perf_repo, "db_update_if_status_in", lambda db, task_id, project_id, expected_statuses, **fields: updates.append(fields) or task)
     monkeypatch.setattr(perf_service.redis, "from_url", lambda url: _FakeRedis())
     monkeypatch.setattr(perf_service.requests, "post", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("locust unavailable")))
     for name in ("perf_rps", "perf_fail_ratio", "perf_user_count", "perf_avg_response_ms"):
@@ -215,8 +228,9 @@ def test_perf_run_marks_failed_on_worker_error(monkeypatch):
     with pytest.raises(RuntimeError, match="locust unavailable"):
         perf_service.s_run(object(), 7, 11)
 
-    assert updates[0] == {"status": "running"}
-    assert {"status": "failed"} in updates
+    assert updates[0]["status"] == "running"
+    assert updates[-1]["status"] == "failed"
+    assert updates[-1]["failure_reason"] == "locust unavailable"
 
 def test_interface_references_batch_indexes_reports_and_scenarios():
     from datetime import datetime, timedelta
@@ -352,18 +366,19 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
     fake_redis = _FakeRedis()
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda db, task_id, project_id, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
-    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
+    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: (updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status))) if task.status == expected_status else None)
+    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status_in', lambda db, task_id, project_id, expected_statuses, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
     monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: fake_redis)
     monkeypatch.setattr(perf_service.requests, 'get', lambda *args, **kwargs: SimpleNamespace())
 
     result = perf_service.s_cancel(object(), 8, 11)
 
     assert result.status == 'cancelled'
-    assert updates[-1] == {'status': 'cancelled'}
+    assert updates[-1]['status'] == 'cancelled'
     assert fake_redis.values['locust:cancel:11:8'] == '1'
 
 
-def test_perf_mark_running_rejects_second_run(monkeypatch):
+def test_perf_mark_queued_rejects_second_run(monkeypatch):
     from app.services import perf as perf_service
 
     tasks = {
@@ -378,18 +393,20 @@ def test_perf_mark_running_rejects_second_run(monkeypatch):
         lambda db, task_id, project_id: tasks[task_id],
     )
 
-    def update(db, task_id, project_id, **fields):
+    def update(db, task_id, project_id, expected_status, **fields):
         tasks[task_id].status = fields["status"]
+        tasks[task_id].celery_task_id = fields["celery_task_id"]
         return tasks[task_id]
 
-    monkeypatch.setattr(perf_service.perf_repo, "db_update", update)
+    monkeypatch.setattr(perf_service.perf_repo, "db_update_if_status", update)
 
-    assert perf_service.s_mark_running(object(), 1, 10).status == "running"
+    assert perf_service.s_mark_queued(object(), 1, 10, "celery-1").status == "queued"
     with pytest.raises(perf_service.PerfRunBusyError):
-        perf_service.s_mark_running(object(), 2, 20)
+        perf_service.s_mark_queued(object(), 2, 20, "celery-2")
 
     assert tasks[2].status == "pending"
-    assert fake_redis.values[perf_service.RUN_LOCK_KEY] == "10:1"
+    assert tasks[1].celery_task_id == "celery-1"
+    assert fake_redis.values[perf_service.RUN_LOCK_KEY] == "10:1:celery-1"
 
 
 def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
@@ -405,7 +422,7 @@ def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
         duration=0,
     )
     run_id = "3:12"
-    fake_redis = _FakeRedis({perf_service.RUN_LOCK_KEY: run_id})
+    fake_redis = _FakeRedis({perf_service.RUN_LOCK_KEY: run_id + ":legacy"})
     swarm_state = {}
 
     class Response:
@@ -509,7 +526,7 @@ def test_perf_run_route_returns_conflict_when_master_is_busy(monkeypatch):
     def busy(*args, **kwargs):
         raise perf_service.PerfRunBusyError("已有压测任务正在运行")
 
-    monkeypatch.setattr(perf_router.perf_service, "s_mark_running", busy)
+    monkeypatch.setattr(perf_router.perf_service, "s_mark_queued", busy)
 
     with pytest.raises(HTTPException) as exc:
         perf_router.run_task(2, object(), SimpleNamespace(project_id=20))

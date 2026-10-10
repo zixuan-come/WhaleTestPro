@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -76,15 +78,24 @@ def run_task(
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.PERF, Action.EXECUTE)),
 ):
+    celery_task_id = str(uuid4())
     try:
-        task = perf_service.s_mark_running(db, task_id, context.project_id)
+        task = perf_service.s_mark_queued(
+            db,
+            task_id,
+            context.project_id,
+            celery_task_id,
+        )
     except perf_service.PerfRunBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if task is None:
         raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在")
     try:
-        run_perf_task.delay(task_id, context.project_id)
+        run_perf_task.apply_async(
+            args=(task_id, context.project_id),
+            task_id=celery_task_id,
+        )
     except Exception:
         perf_service.s_mark_failed(db, task_id, context.project_id)
         raise HTTPException(status_code=503, detail="压测任务入队失败，请稍后重试")
-    return success_response(task, message="压测任务已启动")
+    return success_response(task, message="压测任务已进入队列")
