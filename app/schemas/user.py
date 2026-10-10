@@ -10,6 +10,13 @@ class UserCreate(UserBase):
     username: str = Field(..., min_length=4, max_length=20)
     password: str = Field(..., min_length=4, max_length=20)
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("密码 UTF-8 编码后不能超过 72 字节")
+        return value
+
     @field_validator("username")
     @classmethod
     def validate_username(cls, value: str) -> str:

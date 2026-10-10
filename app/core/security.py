@@ -11,7 +11,13 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    try:
+        encoded = password.encode("utf-8")
+        if len(encoded) > 72:
+            return False
+        return bcrypt.checkpw(encoded, hashed.encode())
+    except ValueError:
+        return False
 
 
 def create_access_token(user_id: int) -> str:

@@ -217,10 +217,21 @@ def test_suite_route_maps_foreign_environment_to_not_found(foreign_key_db):
     assert db.query(Report).count() == 0
 
 
+def test_register_rejects_password_exceeding_bcrypt_bytes():
+    with pytest.raises(ValidationError, match="72"):
+        UserCreate(username="review-user", password="\U0001f30a" * 20)
 
 
+def test_multibyte_password_at_bcrypt_boundary_still_works():
+    password = "\U0001f30a" * 18
+    user = UserCreate(username="review-user", password=password)
+    assert security.verify_password(user.password, security.hash_password(password))
 
 
+def test_oversized_login_is_auth_failure_not_bcrypt_exception():
+    login = UserLogin(username="review-user", password="x" * 73)
+    hashed = security.hash_password("safe-password")
+    assert security.verify_password(login.password, hashed) is False
 
 
 def response(body):

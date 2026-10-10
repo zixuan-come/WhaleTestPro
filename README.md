@@ -125,6 +125,7 @@ flowchart TB
 
 > `LOCUST_CONTROL_TOKEN` 是 app、Celery Worker、Locust Master 共用的独立控制凭证，不要使用 JWT 的 `SECRET_KEY`。可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 生成后写入本地 `.env`，不要提交。8089 不再发布到宿主机，控制和统计接口均要求 `X-Locust-Control-Token`；在平台查看任务报告或 Grafana 指标。修改配置后重建 app、worker、locust-master。
 
+> 注册密码为 4–20 字符，UTF-8 编码不超过 72 字节；超过字节上限返回 422，登录时超长密码按认证失败返回 401，不截断密码。
 
 > 执行边界：手动执行测试套件当前在接口请求内同步完成，不经过 RabbitMQ；定时套件/回归、性能测试及流量录制使用 Celery。录制是尽力而为，入队失败可能丢失记录，但不应影响原业务响应。
 
