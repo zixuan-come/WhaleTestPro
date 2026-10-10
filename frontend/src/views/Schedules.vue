@@ -5,11 +5,13 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from '../api/schedule'
 import { listCases } from '../api/case'
 import { listSuites } from '../api/suite'
+import { listEnvironments } from '../api/environment'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
 const cases = ref([])
 const suites = ref([])
+const environments = ref([])
 const loading = ref(true)
 const error = ref('')
 
@@ -99,7 +101,7 @@ const showModal = ref(false)
 const saving = ref(false)
 const formErr = ref('')
 const editingId = ref(null)
-const form = reactive({ name: '', cron: '', tag: '', suite_id: null, enabled: true })
+const form = reactive({ name: '', cron: '', tag: '', suite_id: null, env_id: null, enabled: true })
 
 const total = computed(() => items.value.length)
 const enabledCount = computed(() => items.value.filter(s => s.enabled).length)
@@ -114,6 +116,7 @@ async function load() {
     // 加载测试套件列表(供定时任务绑定);统一走 http 实例,别再手搓 axios+localStorage
     const suitesData = await listSuites()
     suites.value = Array.isArray(suitesData) ? suitesData : []
+    environments.value = await listEnvironments()
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -126,6 +129,7 @@ function openCreate() {
   form.name = ''
   form.tag = ''
   form.suite_id = null
+  form.env_id = null
   form.enabled = true
   Object.assign(cronUi, { freq: 'daily', minute: 0, hour: 2, dow: '1', dom: 1 })
   form.cron = builtCron.value
@@ -139,6 +143,7 @@ function openEdit(s) {
   form.cron = s.cron
   form.tag = s.tag || ''
   form.suite_id = s.suite_id || null
+  form.env_id = s.env_id || null
   form.enabled = s.enabled
   loadCronToUi(s.cron)
   formErr.value = ''
@@ -153,6 +158,7 @@ function closeModal() {
 async function save() {
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写任务名称'; return }
+  if (!form.env_id) { formErr.value = '请选择执行环境；没有环境时请先创建环境'; return }
   if (!form.cron.trim()) { formErr.value = '请填写 Cron 表达式'; return }
   if (cronUi.freq === 'custom' && !cronPreview.value.ok) { formErr.value = 'Cron 表达式非法:' + cronPreview.value.text; return }
 
@@ -161,6 +167,7 @@ async function save() {
     cron: form.cron.trim(),
     tag: form.tag.trim() || null,
     suite_id: form.suite_id || null,
+    env_id: form.env_id,
     enabled: form.enabled,
   }
 
@@ -180,7 +187,8 @@ async function save() {
 // 列表里直接切启用/停用:复用 update,只翻 enabled
 async function toggleEnabled(s) {
   try {
-    await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, enabled: !s.enabled })
+    if (!s.env_id) { openEdit(s); formErr.value = '请先选择执行环境再启用或停用'; return }
+    await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, suite_id: s.suite_id, env_id: s.env_id, enabled: !s.enabled })
     await load()
   } catch (e) {
     showMessage(e.message || '切换失败', 'error')
@@ -262,6 +270,14 @@ onMounted(load)
       <select v-model="cronUi.freq">
         <option v-for="f in FREQS" :key="f.key" :value="f.key">{{ f.label }}</option>
       </select>
+    </div>
+    <div class="field">
+      <label>执行环境</label>
+      <select v-model="form.env_id">
+        <option :value="null">请选择环境</option>
+        <option v-for="env in environments" :key="env.id" :value="env.id">{{ env.name }}</option>
+      </select>
+      <div class="tip">使用所选环境的 base_url 和变量执行定时测试。</div>
     </div>
 
     <div class="field time-row" v-if="cronUi.freq !== 'custom'">

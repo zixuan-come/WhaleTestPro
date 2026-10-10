@@ -113,6 +113,7 @@ def test_delete_project_removes_all_project_resources():
                     name="daily",
                     cron="0 0 * * *",
                     suite_id=suite.id,
+                    env_id=environment.id,
                     enabled=True,
                     project_id=project.id,
                 ),

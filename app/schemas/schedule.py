@@ -6,6 +6,7 @@ class ScheduleCreate(NamedSchema):
     cron: str = Field(min_length=1, max_length=100)
     tag: str | None = Field(default=None, max_length=50)
     suite_id: int | None = None
+    env_id: int = Field(gt=0)
     enabled: bool = True
 
     @field_validator("cron")
@@ -30,6 +31,8 @@ class ScheduleCreate(NamedSchema):
         return value or None
 
 class ScheduleOut(ScheduleCreate):
+    # Existing schedules have no environment until explicitly edited.
+    env_id: int | None = None
     id: int
     project_id: int
     sync_status: str

@@ -154,6 +154,11 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         lambda bind: calls.append((bind, "010")),
     )
 
+    monkeypatch.setattr(
+        migrations,
+        "ensure_schedule_environment_schema",
+        lambda bind: calls.append((bind, "011")),
+    )
     migrations.run_all_migrations("main", "shadow")
 
     assert calls == [
@@ -163,10 +168,12 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("main", "008"),
         ("main", "009"),
         ("main", "010"),
+        ("main", "011"),
         ("shadow", "005"),
         ("shadow", "006"),
         ("shadow", "007"),
         ("shadow", "008"),
         ("shadow", "009"),
         ("shadow", "010"),
+        ("shadow", "011"),
     ]

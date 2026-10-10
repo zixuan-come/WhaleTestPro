@@ -9,6 +9,7 @@ from app.models.suite import TestSuite  # noqa: F401  schedule.suite_id target
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.user import User
+from app.models.environment import Environment
 from app.schemas.schedule import ScheduleCreate
 from app.services import schedule as schedule_service
 
@@ -26,12 +27,14 @@ def _db():
     db.add(TeamMember(team_id=team.id, user_id=user.id, role="owner"))
     project = Project(name="schedule-project", team_id=team.id)
     db.add(project)
+    db.flush()
+    db.add(Environment(id=1, name="local", base_url="http://app:8000", project_id=project.id))
     db.commit()
     return db, project.id
 
 
 def _schedule_data(cron="0 0 * * *"):
-    return ScheduleCreate(name="daily", cron=cron, enabled=True)
+    return ScheduleCreate(name="daily", cron=cron, enabled=True, env_id=1)
 
 
 def test_create_schedule_clears_outbox_after_redbeat_sync(monkeypatch):

@@ -443,3 +443,23 @@ def run_all_migrations(*binds) -> None:
         ensure_team_invitation_consistency_schema(bind)
         ensure_explicit_project_team_schema(bind)
         ensure_perf_task_lifecycle_schema(bind)
+        ensure_schedule_environment_schema(bind)
+
+
+def ensure_schedule_environment_schema(bind) -> None:
+    """Add nullable environment linkage without inventing a target for old jobs."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("schedule"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("schedule")}
+        if "env_id" not in columns:
+            connection.execute(text("ALTER TABLE schedule ADD COLUMN env_id INTEGER NULL"))
+        if bind.dialect.name == "mysql":
+            inspector = inspect(connection)
+            if not any(fk.get("constrained_columns") == ["env_id"] for fk in inspector.get_foreign_keys("schedule")):
+                connection.execute(text(
+                    "ALTER TABLE schedule ADD CONSTRAINT fk_schedule_environment "
+                    "FOREIGN KEY (env_id) REFERENCES environment(id) ON DELETE RESTRICT"
+                ))
+            _record_migration(connection, "011_schedule_environment")

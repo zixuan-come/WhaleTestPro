@@ -605,7 +605,7 @@ def test_schedule_schema_validates_field_lengths():
     from pydantic import ValidationError
     from app.schemas.schedule import ScheduleCreate
 
-    schedule = ScheduleCreate(name='daily', cron='0 0 * * *', tag=' smoke ')
+    schedule = ScheduleCreate(name='daily', cron='0 0 * * *', tag=' smoke ', env_id=1)
     assert schedule.tag == 'smoke'
 
     with pytest.raises(ValidationError):

@@ -11,6 +11,7 @@ def schedule_payload(schedule: Schedule) -> dict:
         "cron": schedule.cron,
         "tag": schedule.tag,
         "suite_id": schedule.suite_id,
+        "env_id": schedule.env_id,
         "enabled": schedule.enabled,
     }
 

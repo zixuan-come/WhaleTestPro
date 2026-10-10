@@ -29,7 +29,7 @@ def db_update(db: Session, schedule_id: int, schedule, project_id: int):
     ).first()
     if db_schedule is None:
         return None
-    for key, value in schedule.model_dump().items():
+    for key, value in schedule.model_dump(exclude_unset=True).items():
         setattr(db_schedule, key, value)
     sync_repo.db_enqueue_sync(db, db_schedule)
     db.flush()

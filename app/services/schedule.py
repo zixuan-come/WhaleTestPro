@@ -2,11 +2,14 @@ import logging
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
 from app.core import scheduler
 from app.models.schedule import Schedule
 from app.repositories import schedule as schedule_repo
 from app.repositories import schedule_sync as sync_repo
+from app.repositories import environment as env_repo
+from app.repositories import suite as suite_repo
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +69,47 @@ def reconcile_pending(db: Session, limit: int = 100) -> dict[str, int]:
     return {"synced": synced, "failed": failed}
 
 
+def reconcile_desired(db: Session, batch_size: int = 100) -> dict[str, int]:
+    """Restore lost RedBeat entries even after their outbox event was drained."""
+    repaired = failed = 0
+    last_id = 0
+    while True:
+        ids = [row[0] for row in db.query(Schedule.id).filter(
+            Schedule.id > last_id
+        ).order_by(Schedule.id).limit(batch_size).all()]
+        if not ids:
+            break
+        for schedule_id in ids:
+            schedule = db.query(Schedule).filter(Schedule.id == schedule_id).with_for_update().first()
+            if schedule is None:
+                db.rollback()
+                continue
+            try:
+                in_sync = scheduler.schedule_is_synced(schedule)
+            except Exception:
+                db.rollback()
+                failed += 1
+                continue
+            if in_sync:
+                db.commit()
+                continue
+            sync_repo.db_enqueue_sync(db, schedule)
+            db.commit()
+            if process_sync_event(db, schedule_id):
+                repaired += 1
+            else:
+                failed += 1
+        last_id = ids[-1]
+    return {"repaired": repaired, "failed": failed}
+
+
+def _validate_references(db, data, project_id):
+    if env_repo.db_get(db, data.env_id, project_id) is None:
+        raise HTTPException(status_code=404, detail="环境不存在或不属于当前项目")
+    if data.suite_id is not None and suite_repo.db_get(db, data.suite_id, project_id) is None:
+        raise HTTPException(status_code=404, detail="测试套件不存在或不属于当前项目")
+
+
 def _commit_and_try_sync(db: Session, obj: Schedule) -> Schedule:
     db.commit()
     schedule_id = obj.id
@@ -76,6 +120,7 @@ def _commit_and_try_sync(db: Session, obj: Schedule) -> Schedule:
 
 def s_create(db: Session, schedule, project_id: int):
     try:
+        _validate_references(db, schedule, project_id)
         obj = schedule_repo.db_create(db, schedule, project_id)
         return _commit_and_try_sync(db, obj)
     except Exception:
@@ -93,6 +138,15 @@ def s_list(db: Session, project_id: int):
 
 def s_update(db: Session, schedule_id: int, schedule, project_id: int):
     try:
+        current = schedule_repo.db_get(db, schedule_id, project_id)
+        if current is None:
+            return None
+        # Omitted optional fields retain their existing value, including suite_id.
+        effective = SimpleNamespace(**{
+            **sync_repo.schedule_payload(current),
+            **schedule.model_dump(exclude_unset=True),
+        })
+        _validate_references(db, effective, project_id)
         obj = schedule_repo.db_update(db, schedule_id, schedule, project_id)
         if obj is None:
             return None

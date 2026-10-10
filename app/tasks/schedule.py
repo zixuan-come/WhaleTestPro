@@ -9,13 +9,15 @@ from app.services import schedule as schedule_service
 def reconcile_schedule_outbox():
     db = SessionLocal()
     try:
-        return schedule_service.reconcile_pending(db)
+        pending = schedule_service.reconcile_pending(db)
+        desired = schedule_service.reconcile_desired(db)
+        return {"synced": pending["synced"], "repaired": desired["repaired"], "failed": pending["failed"] + desired["failed"]}
     finally:
         db.close()
 
 
 @celery_app.task
-def scheduled_regression(project_id=None, tag=None, suite_id=None):
+def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None):
     """
     Celery Beat 定时触发的回归任务。
 
@@ -30,12 +32,15 @@ def scheduled_regression(project_id=None, tag=None, suite_id=None):
     """
     db = SessionLocal()
     try:
+        if env_id is None:
+            raise ValueError("定时任务未配置执行环境，请编辑后重新启用")
+        execution_service._env_context(db, env_id, project_id)
         if suite_id is not None:
             # 新逻辑：运行测试套件
-            suite_service.run_suite(db, suite_id, project_id)
+            return suite_service.run_suite(db, suite_id, project_id, env_id=env_id)
         else:
             # 旧逻辑：按 tag 运行回归
-            execution_service.run_regression(db, tag=tag, notify=True, project_id=project_id)
+            return execution_service.run_regression(db, tag=tag, notify=True, project_id=project_id, env_id=env_id)
     finally:
         db.close()
 
