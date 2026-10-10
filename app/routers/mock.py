@@ -90,6 +90,7 @@ def hit_mock(
     rule = mock_service.s_match(db, project_id, "/" + full_path, request.method)
     if rule is None:
         return JSONResponse(status_code=404, content={"detail": "未匹配到挡板规则"})
+    request.state.recording_project_id = rule.project_id
     if rule.delay_ms:
         time.sleep(rule.delay_ms / 1000)
     return JSONResponse(status_code=rule.status, content=rule.body)

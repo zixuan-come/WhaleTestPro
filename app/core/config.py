@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     REQUEST_TIMEOUT_SECONDS: float = 30.0
     PERF_QUEUE_TIMEOUT_SECONDS: int = 300
     PERF_HEARTBEAT_TIMEOUT_SECONDS: int = 60
+    RECORDING_PUBLISH_TIMEOUT_SECONDS: float = 1.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -86,6 +86,15 @@ def _perf(db, status="pending", **extra):
     return task
 
 
+def test_recording_pool_rejects_overflow_without_unbounded_queue(monkeypatch):
+    from app.core import recording_publisher as publisher
+    monkeypatch.setattr(publisher, "_slots", asyncio.Semaphore(0))
+    async def scenario():
+        with pytest.raises(RuntimeError, match="队列已满"):
+            await publisher.publish_recording(None, {})
+    asyncio.run(scenario())
+
+
 def test_recovery_cannot_stop_newer_locust_owner(monkeypatch):
     cache = Redis({perf.RUN_LOCK_KEY: "1:8:new", perf.ACTIVE_RUN_KEY: "1:8"})
     calls = []
@@ -102,6 +111,21 @@ def test_normal_completion_cannot_stop_newer_owner(monkeypatch):
     with pytest.raises(RuntimeError, match="禁止停止其他任务"):
         perf._stop_owned_run(cache, "1:7:old")
     assert calls == []
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_replay_uses_recorded_method(method, monkeypatch):
+    record = SimpleNamespace(id=1, method=method, path="/demo/orders", request_body=None, response_status=200, response_body={"ok": True})
+    monkeypatch.setattr(traffic_replay.traffic_record_repo, "db_get", lambda *_: record)
+    calls = []
+    def request(*, method, **kwargs):
+        calls.append((method, kwargs))
+        return SimpleNamespace(status_code=200, json=lambda: {"ok": True})
+    monkeypatch.setattr(traffic_replay.requests, "request", request)
+    result = traffic_replay.s_replay(None, 1, 1)
+    assert result["replayed_status"] == 200
+    assert calls[0][0] == method
+    assert calls[0][1]["headers"]["X-Shadow"] == "1"
 
 
 def test_teardown_failure_persists_failed_report(db, monkeypatch):
@@ -336,3 +360,23 @@ def test_perf_enqueue_failure_returns_503_and_releases_lease(db, monkeypatch):
     assert task.finished_at is not None
     assert cache.get(perf.RUN_LOCK_KEY) is None
     assert cache.get(perf.CONTROL_LOCK_KEY) is None
+
+
+def test_recording_publish_does_not_block_event_loop(monkeypatch):
+    from app.core import recording_publisher as publisher
+    monkeypatch.setattr(publisher, "_slots", asyncio.Semaphore(2))
+    monkeypatch.setattr(settings, "RECORDING_PUBLISH_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(publisher, "_publish", lambda *args: time.sleep(0.05))
+    async def scenario():
+        ticks = []
+        async def other_request():
+            await asyncio.sleep(0.001)
+            ticks.append(True)
+        other = asyncio.create_task(other_request())
+        with pytest.raises(asyncio.TimeoutError):
+            await publisher.publish_recording(None, {})
+        assert ticks == [True]
+        await other
+        await asyncio.sleep(0.06)  # Let the timed-out thread release its slot.
+        assert publisher._slots._value == 2
+    asyncio.run(scenario())

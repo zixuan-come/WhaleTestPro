@@ -110,7 +110,7 @@ def test_authorize_dependency_rejects_denied_action():
     dependency = authorize(Resource.SUITE, Action.WRITE)
 
     with pytest.raises(HTTPException) as exc_info:
-        dependency(context)
+        dependency(context=context, request=None)
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "无权执行 suite.write 操作"

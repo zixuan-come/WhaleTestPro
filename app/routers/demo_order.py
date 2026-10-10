@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.core.authorization import optional_project_for_recording
 from app.schemas.demo_order import DemoOrderCreate, DemoOrderOut
 from app.schemas.response import ApiResponse, success_response
 from app.services import demo_order as order_service
 
-router = APIRouter(prefix="/demo/orders", tags=["demo"])
+router = APIRouter(prefix="/demo/orders", tags=["demo"], dependencies=[Depends(optional_project_for_recording)])
 
 
 @router.post("", response_model=ApiResponse[DemoOrderOut], status_code=201)

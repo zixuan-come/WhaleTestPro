@@ -3,6 +3,7 @@ from app.repositories import traffic_record as traffic_record_repo
 from app.repositories import environment as env_repo
 from app.core.response_diff import diff_response
 from app.core.config import settings
+from app.core.shadow_access import SHADOW_TOKEN_HEADER, create_shadow_credential, is_internal_replay_url
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"  # 不指定环境就打回本机（录的就是本机接口）
 
@@ -29,15 +30,22 @@ def s_replay(db, record_id, project_id, env_id=None, field_rules=None):
     if record is None:
         return None
 
-    url = _base_url(db, env_id, project_id).rstrip("/") + record.path
-    # 重放只带 X-Shadow:1（写操作落影子库零污染，复用 #17）；body 用 json= 让 requests
-    # 自动设 Content-Type/content-length。不原样带录制的 headers：host 是录制时的会错、
-    # content-length 跟新 body 不一定符、鉴权头已脱敏成 *** 带过去也没用
+    base_url = _base_url(db, env_id, project_id)
+    url = base_url.rstrip("/") + record.path
+    headers = {"X-Shadow": "1"}
+    internal = is_internal_replay_url(base_url)
+    if internal:
+        headers[SHADOW_TOKEN_HEADER] = create_shadow_credential(record.method, record.path)
+    # Internal demo replay requires a method/path-bound credential. External
+    # targets receive only the shadow hint, never our internal credential.
+    # Do not forward recorded Host, Content-Length or masked authentication.
     response = requests.request(
-        headers={"X-Shadow": "1"},
+        method=record.method,
+        headers=headers,
         url=url,
         timeout=settings.REQUEST_TIMEOUT_SECONDS,
         json=record.request_body,
+        allow_redirects=not internal,
     )
 
     replayed_body = _safe_json(response)

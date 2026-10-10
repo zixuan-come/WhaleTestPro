@@ -29,9 +29,13 @@ from app.core.bootstrap import (
     ensure_user_schema,
 )
 from app.core.migrations import run_all_migrations
+from app.core.recording_monitor import recording_failure_monitor
+from app.core.recording_publisher import publish_recording
+from app.core.recording_policy import RECORD_SKIP_PREFIXES
 from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from app.core.shadow_ctx import set_shadow
+from app.core.shadow_access import SHADOW_TOKEN_HEADER, shadow_request_allowed
 from app.core.health_checks import (
     celery_broker_is_ready,
     database_is_ready,
@@ -46,7 +50,7 @@ from app.core.exception_handlers import (
 )
 from app.schemas.traffic_record import TrafficRecordCreate
 from app.schemas.response import success_response
-from app.tasks.traffic import record_traffic
+from app.tasks.traffic import record_traffic, _mask
 import app.models.interface
 import app.models.case
 import app.models.user
@@ -79,7 +83,6 @@ with SessionLocal() as db:
 
 # 录制采样最简形式：不录这些"自身"接口（否则录制接口自己也被录、还会污染统计）
 # 多项目改造:公共接口(auth/projects)没有 pid 上下文,不录制反而更干净
-RECORD_SKIP_PREFIXES = ("/traffic", "/metrics", "/docs", "/openapi.json", "/static", "/health", "/auth", "/projects")
 
 
 def _safe_json(raw: bytes):
@@ -93,22 +96,8 @@ def _safe_json(raw: bytes):
 
 
 def _extract_project_id(request):
-    """
-    从请求提取 project_id 用于流量归属,优先级:
-    ① HTTP header X-Project-Id  —— 前端调业务接口时带
-    ② URL 前缀 /mock/{pid}/xxx —— 被测系统调挡板时(URL 里带)
-    ③ 兜底 pid=1(默认项目)—— 极少数漏网,不阻塞录制
-    """
-    pid = request.headers.get("X-Project-Id")
-    if pid:
-        try:
-            return int(pid)
-        except (ValueError, TypeError):
-            pass
-    parts = request.url.path.strip("/").split("/", 2)
-    if len(parts) >= 2 and parts[0] == "mock" and parts[1].isdigit():
-        return int(parts[1])
-    return 1
+    """Only the server-authorized route may assign recording ownership."""
+    return getattr(request.state, "recording_project_id", None)
 
 
 app = FastAPI(docs_url=None)
@@ -118,9 +107,18 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 
 @app.middleware("http")
 async def shadow_middleware(request: Request, call_next):
-    set_shadow(request.headers.get("X-Shadow") == "1")
-    response = await call_next(request)
-    return response
+    set_shadow(False)
+    if request.headers.get("X-Shadow") == "1":
+        if not shadow_request_allowed(request.method, request.url.path,
+                                      request.headers.get(SHADOW_TOKEN_HEADER)):
+            return JSONResponse(status_code=403, content={
+                "code": 403, "message": "不允许使用此影子请求凭证", "data": None,
+            })
+        set_shadow(True)
+    try:
+        return await call_next(request)
+    finally:
+        set_shadow(False)
 
 
 @app.middleware("http")
@@ -135,6 +133,10 @@ async def recording_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
+    project_id = _extract_project_id(request)
+    if project_id is None or request.headers.get("X-Shadow") == "1":
+        return response
+
     # —— 坑2：迭代响应体会耗尽流，读出来后必须重建 Response ——
     chunks = [chunk async for chunk in response.body_iterator]
     resp_body = b"".join(chunks)
@@ -144,16 +146,21 @@ async def recording_middleware(request: Request, call_next):
         record = TrafficRecordCreate(
             method=request.method,
             path=path,
-            request_headers=dict(request.headers),
-            request_body=_safe_json(req_body),
+            request_headers=_mask(dict(request.headers)),
+            request_body=_mask(_safe_json(req_body)),
             response_status=response.status_code,
-            response_body=_safe_json(resp_body),
-            project_id=_extract_project_id(request),   # ← 中间件从请求提取项目归属
+            response_body=_mask(_safe_json(resp_body)),
+            project_id=project_id,
         )
         # mode="json" 把 datetime 等转成可序列化的字符串，否则丢进 RabbitMQ 会序列化失败
-        record_traffic.delay(record.model_dump(mode="json"))
-    except Exception:
-        pass                                     # 录制失败绝不影响正常业务请求
+        await publish_recording(record_traffic, record.model_dump(mode="json"))
+    except Exception as exc:
+        # 录制失败仍不影响业务响应，但必须留下可告警的指标和限频日志。
+        recording_failure_monitor.report(
+            exc,
+            method=request.method,
+            path=path,
+        )
 
     # 用读出来的 body 重建响应返回（原 response 的流已被读光）
     return Response(

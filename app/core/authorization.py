@@ -3,12 +3,14 @@
 from dataclasses import dataclass
 from typing import Callable
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.authentication import get_current_user
 from app.core.permissions import Action, Resource, WRITE_PERMISSION_BY_RESOURCE
 from app.database import get_db
+from app.core.shadow_ctx import is_shadow
 from app.models.project import Project
 from app.models.team_member import TeamMember, TeamRole
 from app.models.team_permission import TeamPermission
@@ -124,6 +126,7 @@ def authorize(
     resolver = require_project_from_path if from_path else require_project
 
     def dependency(
+        request: Request,
         context: ProjectContext = Depends(resolver),
     ) -> ProjectContext:
         if not is_allowed(context, resource, action):
@@ -131,7 +134,25 @@ def authorize(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"无权执行 {resource.value}.{action.value} 操作",
             )
+        request.state.recording_project_id = context.project_id
         return context
 
     dependency.__name__ = f"authorize_{resource.value}_{action.value}"
     return dependency
+
+
+_optional_bearer = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
+
+
+def optional_project_for_recording(
+    request: Request,
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+    token: str | None = Depends(_optional_bearer),
+    db: Session = Depends(get_db),
+) -> None:
+    """Public demo traffic is recorded only with authenticated project context."""
+    if token is None or x_project_id is None or is_shadow():
+        return
+    user = get_current_user(token=token, db=db)
+    context = _context_or_404(db, x_project_id, user)
+    request.state.recording_project_id = context.project_id

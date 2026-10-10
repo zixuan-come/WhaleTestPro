@@ -11,3 +11,10 @@ perf_stale_tasks_recovered = Counter(
     "因排队或 Worker 心跳超时而回收的压测任务数",
     ["previous_status"],
 )
+
+# 录制失败不能中断业务请求，但也不能静默丢失。该计数器不使用 path 等高基数
+# label，避免大量动态 URL 让 Prometheus 时序数量失控。
+traffic_record_enqueue_failures = Counter(
+    "whale_traffic_record_enqueue_failures_total",
+    "流量录制事件投递失败次数",
+)
