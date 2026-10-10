@@ -71,10 +71,54 @@ def response(body):
 
 
 
+def test_delete_cannot_remove_task_queued_after_old_snapshot(perf_control, monkeypatch):
+    perf, db, (old, _), cache, _response = perf_control
+    delete = perf_repo.db_delete
+    task_id = old.id
+    def queue_before_delete(database, task_id, project_id):
+        # A second session commits between the delete request's read and DELETE.
+        with Session(database.get_bind()) as competing:
+            assert perf.s_mark_queued(competing, task_id, project_id, "queued-message") is not None
+        return delete(database, task_id, project_id)
+    monkeypatch.setattr(perf_repo, "db_delete", queue_before_delete)
+    assert perf.s_delete(db, task_id, 1) is None
+    db.expire_all()
+    assert perf_repo.db_get(db, task_id, 1).status == "queued"
+    assert cache.get(perf.RUN_LOCK_KEY) == f"1:{task_id}:queued-message"
 
 
+def test_queue_losing_race_to_delete_releases_its_reserved_lease(perf_control, monkeypatch):
+    perf, db, (old, _), cache, _response = perf_control
+    task_id = old.id
+    update = perf_repo.db_update_if_status
+    def delete_before_queue(database, task_id, project_id, expected_status, **fields):
+        with Session(database.get_bind()) as competing:
+            assert perf_repo.db_delete(competing, task_id, project_id) is not None
+        return update(database, task_id, project_id, expected_status, **fields)
+    monkeypatch.setattr(perf_repo, "db_update_if_status", delete_before_queue)
+    assert perf.s_mark_queued(db, task_id, 1, "losing-message") is None
+    assert cache.get(perf.RUN_LOCK_KEY) is None
+    assert perf_repo.db_get(db, task_id, 1) is None
 
 
+def test_old_pending_snapshot_cannot_delete_newly_cancelled_worker_lease(perf_control, monkeypatch):
+    perf, db, (old, _), cache, response = perf_control
+    delete = perf_repo.db_delete
+    task_id = old.id
+    def cancel_before_delete(database, task_id, project_id):
+        with Session(database.get_bind()) as competing:
+            perf.s_mark_queued(competing, task_id, project_id, "worker-message")
+            perf_repo.db_update_if_status(competing, task_id, project_id, "queued", status="running")
+            assert perf.s_cancel(competing, task_id, project_id).status == "cancelled"
+        return delete(database, task_id, project_id)
+    monkeypatch.setattr(perf_repo, "db_delete", cancel_before_delete)
+    assert perf.s_delete(db, task_id, 1) is None
+    db.expire_all()
+    assert perf_repo.db_get(db, task_id, 1).status == "cancelled"
+    assert cache.get(perf.RUN_LOCK_KEY) == f"1:{task_id}:worker-message"
+    monkeypatch.setattr(perf_repo, "db_delete", delete)
+    assert perf.s_delete(db, task_id, 1) is not None
+    assert cache.get(perf.RUN_LOCK_KEY) is None
 
 
 def test_missing_control_token_returns_503_before_reserving_or_publishing(perf_control, monkeypatch):
@@ -89,8 +133,37 @@ def test_missing_control_token_returns_503_before_reserving_or_publishing(perf_c
     assert old.status == "pending" and cache.values == {} and published == []
 
 
+def test_terminal_delete_waits_for_master_cleanup_before_removing_row(perf_control, monkeypatch):
+    perf, db, (old, _), cache, response = perf_control
+    task_id = old.id
+    run_id = f"1:{task_id}"
+    old.status = "cancelled"
+    db.commit()
+    cache.values.update({perf.RUN_LOCK_KEY: run_id + ":message", perf.ACTIVE_RUN_KEY: run_id})
+    def unavailable(*args, **kwargs):
+        raise requests.ConnectionError("isolated unavailable master")
+    monkeypatch.setattr(perf.requests, "get", unavailable)
+    assert perf.s_delete(db, task_id, 1) is None
+    assert perf_repo.db_get(db, task_id, 1) is not None
+    assert cache.get(perf.RUN_LOCK_KEY) == run_id + ":message"
+    monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: response)
+    assert perf.s_delete(db, task_id, 1) is not None
+    assert perf_repo.db_get(db, task_id, 1) is None
+    assert cache.get(perf.RUN_LOCK_KEY) is None
 
 
+def test_terminal_delete_with_unavailable_redis_returns_503_and_keeps_row(perf_control, monkeypatch):
+    from app.routers import perf as perf_router
+    perf, db, (old, _), cache, _response = perf_control
+    old.status = "failed"
+    db.commit()
+    def unavailable(_key):
+        raise perf.redis.ConnectionError("isolated unavailable cache")
+    monkeypatch.setattr(cache, "get", unavailable)
+    with pytest.raises(HTTPException) as caught:
+        perf_router.delete_task(old.id, db, SimpleNamespace(project_id=1))
+    assert caught.value.status_code == 503
+    assert perf_repo.db_get(db, old.id, 1) is not None
 
 
 def test_all_master_requests_include_the_control_header(perf_control, monkeypatch):
@@ -107,6 +180,22 @@ def test_all_master_requests_include_the_control_header(perf_control, monkeypatc
     assert all(headers == {"X-Locust-Control-Token": "isolated-control-token"} for _, headers in calls)
 
 
+@pytest.mark.parametrize("endpoint", ["/safe", "/safe?a=1&b=2", "/literal&amp;path"])
+def test_real_locust_error_occurrences_are_preserved(perf_control, monkeypatch, endpoint):
+    import html
+    from locust.stats import StatsError
+    perf, db, (old, _), cache, _response = perf_control
+    error = StatsError("GET", endpoint, "HTTP 500", occurrences=7).serialize()
+    error["name"] = html.escape(error["name"])
+    statistics = {"errors": [error], "stats": [{"method": "GET", "name": endpoint, "num_requests": 10, "num_failures": 7}]}
+    reply = SimpleNamespace(raise_for_status=lambda: None, json=lambda: statistics)
+    monkeypatch.setattr(perf.requests, "get", lambda *a, **k: reply)
+    monkeypatch.setattr(perf.requests, "post", lambda *a, **k: reply)
+    perf.s_mark_queued(db, old.id, 1, "message")
+    result = perf.s_run(db, old.id, 1, "message")
+    assert result.error_summary[0]["error_count"] == 7
+    assert result.error_summary[0]["error_rate"] == pytest.approx(0.7)
+    assert result.error_summary[0]["name"] == endpoint
 
 
 def test_compose_keeps_master_private_and_configures_app_recovery():

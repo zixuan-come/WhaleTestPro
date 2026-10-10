@@ -1,4 +1,5 @@
 import time
+from html import unescape
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -162,6 +163,16 @@ def s_delete(db: Session, task_id: int, project_id: int):
     task = perf_repo.db_get(db, task_id, project_id)
     if task is None or task.status in {"queued", "running"}:
         return None
+    if task.status in {"done", "failed", "cancelled"}:
+        redis_client = redis.from_url(settings.REDIS_URL)
+        run_id = _run_id(project_id, task_id)
+        try:
+            lease = _decode_redis_value(redis_client.get(RUN_LOCK_KEY))
+        except redis.RedisError as exc:
+            raise PerfControlUnavailableError("无法检查压测执行锁，请稍后重试") from exc
+        if lease and lease.startswith(f"{run_id}:"):
+            if not _cleanup_run(redis_client, run_id, lease, needs_stop=True):
+                return None
     return perf_repo.db_delete(db, task_id, project_id)
 
 
@@ -307,7 +318,19 @@ def s_run(
             {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": row.get("current_rps", row.get("rps")), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
             for row in stats.get("stats", []) if row.get("name") != "Aggregated"
         ]
-        error_summary = [{"name": row.get("name"), "method": row.get("method"), "error_count": row.get("num_failures", 0), "error_rate": (row.get("num_failures", 0) / row.get("num_requests", 1)) if row.get("num_requests", 0) else 0, "message": row.get("error") or row.get("last_error")} for row in stats.get("errors", [])]
+        requests_by_endpoint = {(row["method"], row["name"]): row["num_requests"] for row in request_stats}
+        error_summary = []
+        for row in stats.get("errors", []):
+            occurrences = row.get("occurrences", 0)
+            # Locust escapes errors.name for its Web UI, but not stats.name.
+            name = unescape(row["name"]) if row.get("name") is not None else None
+            count = requests_by_endpoint.get((row.get("method"), name), 0)
+            error_summary.append({
+                "name": name, "method": row.get("method"),
+                "error_count": occurrences,
+                "error_rate": occurrences / count if count else None,
+                "message": row.get("error") or row.get("last_error"),
+            })
         finished_at = _utcnow()
         return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="done", heartbeat_at=finished_at, finished_at=finished_at, failure_reason=None, rps=rps, avg_response_ms=avg, p95_response_ms=p95, p99_response_ms=p99, fail_ratio=fail_ratio, request_stats=request_stats or None, error_summary=error_summary or None, history_samples=history_samples or None)
     except Exception as exc:

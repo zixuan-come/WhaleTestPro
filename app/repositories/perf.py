@@ -29,9 +29,17 @@ def db_delete(db: Session, task_id: int, project_id: int):
         PerfTask.id == task_id,
         PerfTask.project_id == project_id,
     ).first()
-    if db_task is None:
+    if db_task is None or db_task.status not in {"pending", "done", "failed", "cancelled"}:
         return None
-    db.delete(db_task)
+    deleted = db.query(PerfTask).filter(
+        PerfTask.id == task_id,
+        PerfTask.project_id == project_id,
+        # The service checked/cleaned this exact state, not a later terminal state.
+        PerfTask.status == db_task.status,
+    ).delete(synchronize_session=False)
+    if not deleted:
+        db.rollback()
+        return None
     db.commit()
     return db_task
 

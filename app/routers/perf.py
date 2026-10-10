@@ -54,7 +54,10 @@ def delete_task(
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.PERF, Action.WRITE)),
 ):
-    result = perf_service.s_delete(db, task_id, context.project_id)
+    try:
+        result = perf_service.s_delete(db, task_id, context.project_id)
+    except perf_service.PerfControlUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail=f"压测任务 id={task_id} 不存在")
     return success_response(data=None, message="压测任务删除成功")
