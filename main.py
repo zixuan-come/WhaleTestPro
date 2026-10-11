@@ -44,6 +44,7 @@ from app.core.health_checks import (
 from app.core.redis_client import redis_client
 from app.core.celery_app import celery_app
 from app.core.exception_handlers import (
+    SafeErrorMiddleware,
     http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
@@ -192,6 +193,7 @@ app.include_router(suite_router.router)
 
 # Prometheus 埋点：自动统计每个路由的请求数/耗时/进行中数，并暴露 /metrics 供抓取
 Instrumentator().instrument(app).expose(app)
+app.add_middleware(SafeErrorMiddleware)
 
 
 # 自己重写 /docs：内容还是 Swagger UI，但 JS/CSS/图标都改指向本地 /static，不再走 CDN

@@ -3,8 +3,8 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from app.core.config import settings
 from app.core.shadow_ctx import is_shadow
 
-engine = create_engine(settings.DATABASE_URL)
-engine_shadow = create_engine(settings.SHADOW_DATABASE_URL)
+engine = create_engine(settings.DATABASE_URL, hide_parameters=True)
+engine_shadow = create_engine(settings.SHADOW_DATABASE_URL, hide_parameters=True)
 Base = declarative_base()
 
 class RoutingSession(Session):

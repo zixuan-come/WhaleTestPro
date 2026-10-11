@@ -181,3 +181,75 @@ def test_recording_producer_masks_aliases_before_publish():
     assert json.loads(returned.body) == {"echo": 13800000000}  # Never alter business response.
     assert len(captured) == 1
     assert captured[0]["request_body"]["echo"] == captured[0]["response_body"]["echo"] == "***"
+
+
+@pytest.mark.parametrize("error_type", [IntegrityError, OperationalError])
+def test_global_exception_log_never_contains_sql_params_orig_message_or_raw_url(caplog, error_type):
+    secret = "synthetic-db-and-url-secret"
+    request = Request({"type": "http", "method": "POST", "path": "/unknown/" + secret,
+                       "headers": [], "route": SimpleNamespace(path="/perf/tasks")})
+    try:
+        raise error_type("INSERT synthetic", {"token": secret}, Exception(secret))
+    except error_type as exc:
+        response = asyncio.run(unhandled_exception_handler(request, exc))
+    assert response.status_code == 500
+    assert secret not in caplog.text and secret not in response.body.decode()
+    assert error_type.__name__ in caplog.text and "/perf/tasks" in caplog.text
+
+
+def test_platform_engines_hide_sql_parameters():
+    from app.database import engine, engine_shadow
+    from app.core.sql_database import _engine
+    assert engine.hide_parameters and engine_shadow.hide_parameters
+    assert _engine("sqlite:///:memory:").hide_parameters
+
+
+def test_http_error_boundary_does_not_reraise_raw_sql_to_asgi_server(caplog):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.core import exception_handlers
+    application = FastAPI()
+    application.add_exception_handler(Exception, unhandled_exception_handler)
+    boundary = getattr(exception_handlers, "SafeErrorMiddleware", None)
+    if boundary is not None:
+        application.add_middleware(boundary)
+    @application.get("/synthetic/{row_id}")
+    def fail(row_id: str):
+        raise IntegrityError("synthetic", {"token": row_id}, Exception(row_id))
+    # A normal 500 handler still re-raises to Uvicorn, which logs raw SQL/orig.
+    with TestClient(application, raise_server_exceptions=True) as client:
+        reply = client.get("/synthetic/synthetic-server-private-token")
+    assert reply.status_code == 500
+    assert "synthetic-server-private-token" not in caplog.text + reply.text
+    assert "/synthetic/{row_id}" in caplog.text
+    source = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8-sig")
+    assert "app.add_middleware(SafeErrorMiddleware)" in source
+
+
+def test_streaming_error_aborts_without_second_response_or_sensitive_chain(caplog):
+    from app.core.exception_handlers import SafeErrorMiddleware
+    secret = "synthetic-stream-private-token"
+    messages = []
+    async def broken_stream(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"public", "more_body": True})
+        raise OperationalError("synthetic", {"token": secret}, Exception(secret))
+    async def receive():
+        return {"type": "http.request", "body": b""}
+    async def send(message):
+        messages.append(message)
+    scope = {"type": "http", "method": "GET", "path": "/synthetic/" + secret, "headers": []}
+    with pytest.raises(RuntimeError) as error:
+        asyncio.run(SafeErrorMiddleware(broken_stream)(scope, receive, send))
+    rendered = "".join(traceback.format_exception(type(error.value), error.value, error.value.__traceback__))
+    assert secret not in rendered + caplog.text
+    assert sum(message["type"] == "http.response.start" for message in messages) == 1
+
+
+def test_error_boundary_preserves_non_http_lifespan_events():
+    from app.core.exception_handlers import SafeErrorMiddleware
+    forwarded = []
+    async def app(scope, receive, send):
+        forwarded.append(scope["type"])
+    asyncio.run(SafeErrorMiddleware(app)({"type": "lifespan"}, None, None))
+    assert forwarded == ["lifespan"]

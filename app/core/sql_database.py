@@ -17,7 +17,7 @@ from app.core.config import settings
 
 @lru_cache(maxsize=4)
 def _engine(url: str):
-    engine = create_engine(url, pool_pre_ping=True)
+    engine = create_engine(url, pool_pre_ping=True, hide_parameters=True)
     if engine.dialect.name == "mysql":
         @event.listens_for(engine, "connect")
         def verify_account(dbapi_connection, _record):

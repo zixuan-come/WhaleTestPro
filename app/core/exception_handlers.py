@@ -1,4 +1,6 @@
 import logging
+import traceback
+from pathlib import Path
 
 from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -51,12 +53,46 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.exception(
-        "Unhandled exception while processing %s %s",
+    # Do not format exceptions: SQL parameters, driver errors and raw URLs can
+    # contain credentials. Stack locations retain actionable diagnostics.
+    route = getattr(request.scope.get("route"), "path", "<unmatched>")
+    locations = [f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                 for frame in traceback.extract_tb(exc.__traceback__)[-16:]]
+    logger.error(
+        "Unhandled %s while processing %s %s; stack=%s",
+        type(exc).__name__,
         request.method,
-        request.url.path,
+        route,
+        " -> ".join(locations),
     )
     return _error_response(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         "\u670d\u52a1\u5668\u5185\u90e8\u9519\u8bef",
     )
+
+
+class SafeErrorMiddleware:
+    """Prevent Starlette's 500 re-raise from leaking raw errors to server logs."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        response_started = False
+
+        async def track_send(message):
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, track_send)
+        except Exception as exc:
+            response = await unhandled_exception_handler(Request(scope), exc)
+            if response_started:
+                # Never send a second response. Abort with a sanitized error;
+                # "from None" prevents logging the original exception chain.
+                raise RuntimeError(f"HTTP response aborted: {type(exc).__name__}") from None
+            await response(scope, receive, send)
