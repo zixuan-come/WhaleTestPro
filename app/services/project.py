@@ -5,6 +5,7 @@ from app.models.team_member import TeamMember, TeamRole
 from app.models.schedule import Schedule
 from app.repositories import project as project_repo
 from app.services import schedule as schedule_service
+from app.services import perf as perf_service
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
@@ -46,7 +47,7 @@ def s_delete(db: Session, project_id: int):
             .all()
         )
     ]
-    deleted = project_repo.db_delete(db, project_id)
+    deleted = project_repo.db_delete(db, project_id, check_perf=perf_service.assert_project_idle)
     for schedule_id in schedule_ids:
         schedule_service.process_sync_event(db, schedule_id)
     return deleted

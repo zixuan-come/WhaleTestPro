@@ -215,6 +215,8 @@ def test_perf_run_marks_failed_on_worker_error(monkeypatch):
     updates = []
 
     monkeypatch.setattr(perf_service.perf_repo, "db_get", lambda db, task_id, project_id: task)
+    monkeypatch.setattr(perf_service.perf_repo, "db_get_for_update", lambda *_: task)
+    monkeypatch.setattr(perf_service.project_repo, "db_lock_project", lambda *_: object())
     def update_if_status(db, task_id, project_id, expected_status, **fields):
         updates.append(fields)
         task.status = fields.get("status", task.status)
@@ -388,10 +390,11 @@ def test_perf_mark_queued_rejects_second_run(monkeypatch):
         2: SimpleNamespace(id=2, status="pending", duration=60),
     }
     fake_redis = _FakeRedis()
+    monkeypatch.setattr(perf_service.project_repo, "db_lock_project", lambda *_: object())
     monkeypatch.setattr(perf_service.redis, "from_url", lambda url: fake_redis)
     monkeypatch.setattr(
         perf_service.perf_repo,
-        "db_get",
+        "db_get_for_update",
         lambda db, task_id, project_id: tasks[task_id],
     )
 
@@ -402,9 +405,10 @@ def test_perf_mark_queued_rejects_second_run(monkeypatch):
 
     monkeypatch.setattr(perf_service.perf_repo, "db_update_if_status", update)
 
-    assert perf_service.s_mark_queued(object(), 1, 10, "celery-1").status == "queued"
+    fake_db = SimpleNamespace(rollback=lambda: None)
+    assert perf_service.s_mark_queued(fake_db, 1, 10, "celery-1").status == "queued"
     with pytest.raises(perf_service.PerfRunBusyError):
-        perf_service.s_mark_queued(object(), 2, 20, "celery-2")
+        perf_service.s_mark_queued(fake_db, 2, 20, "celery-2")
 
     assert tasks[2].status == "pending"
     assert tasks[1].celery_task_id == "celery-1"
@@ -442,6 +446,8 @@ def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
 
     monkeypatch.setattr(perf_service.redis, "from_url", lambda url: fake_redis)
     monkeypatch.setattr(perf_service.perf_repo, "db_get", lambda db, task_id, project_id: task)
+    monkeypatch.setattr(perf_service.perf_repo, "db_get_for_update", lambda *_: task)
+    monkeypatch.setattr(perf_service.project_repo, "db_lock_project", lambda *_: object())
     monkeypatch.setattr(
         perf_service.perf_repo,
         "db_update_if_status",
@@ -546,10 +552,12 @@ def test_perf_run_does_not_restart_cancelled_task(monkeypatch):
     task = SimpleNamespace(id=9, status='cancelled')
     updates = []
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
+    monkeypatch.setattr(perf_service.perf_repo, 'db_get_for_update', lambda *_: task)
+    monkeypatch.setattr(perf_service.project_repo, 'db_lock_project', lambda *_: object())
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda *args, **kwargs: updates.append(kwargs))
     monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: _FakeRedis())
 
-    result = perf_service.s_run(object(), 9, 11)
+    result = perf_service.s_run(SimpleNamespace(rollback=lambda: None), 9, 11)
 
     assert result is task
     assert updates == []

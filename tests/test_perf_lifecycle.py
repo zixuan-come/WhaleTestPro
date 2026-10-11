@@ -236,6 +236,8 @@ def perf_control(monkeypatch):
                  users=1, spawn_rate=1, duration=1, project_id=1, status="pending")
         for name in ("old", "new")
     ]
+    app.models.project.Project.__table__.create(engine)
+    db.add(app.models.project.Project(id=1, name="isolated-perf-project", team_id=1))
     db.add_all(tasks)
     db.commit()
     cache = _ControlRedis()

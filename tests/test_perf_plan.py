@@ -215,7 +215,10 @@ def test_backend_publishes_owned_snapshot_and_saves_iteration_metrics(monkeypatc
     from sqlalchemy.orm import sessionmaker
     engine = create_engine("sqlite:///:memory:")
     PerfTask.__table__.create(engine)
+    app.models.project.Project.__table__.create(engine)
     db = sessionmaker(bind=engine)()
+    db.add(app.models.project.Project(id=1, name="isolated-snapshot-project", team_id=1))
+    db.commit()
     plan = PerfTaskCreate(name="snapshot", target_host="http://fixture", target_path="/login", users=2,
         spawn_rate=2, duration=2, load_config={"steps": [{"method": "POST", "path": "/login"}]})
     saved = perf.s_create(db, plan, 1)

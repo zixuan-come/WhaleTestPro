@@ -67,11 +67,28 @@ def db_update(db: Session, project_id: int, project) -> Project | None:
     return db_project
 
 
-def db_delete(db: Session, project_id: int) -> Project | None:
-    db_project = db.query(Project).filter(Project.id == project_id).first()
+class ProjectPerfBusyError(RuntimeError):
+    pass
+
+
+def db_lock_project(db: Session, project_id: int) -> Project | None:
+    # A locking current read avoids stale REPEATABLE READ/identity-map snapshots.
+    return (db.query(Project).filter(Project.id == project_id)
+            .populate_existing().with_for_update().first())
+
+
+def db_delete(db: Session, project_id: int, check_perf=None) -> Project | None:
+    db_project = db_lock_project(db, project_id)
     if db_project is None:
+        db.rollback()
         return None
     try:
+        perf_tasks = (db.query(PerfTask).filter(PerfTask.project_id == project_id)
+                      .populate_existing().with_for_update().all())
+        if any(task.status in {"queued", "running"} for task in perf_tasks):
+            raise ProjectPerfBusyError("项目仍有排队或运行中的压测，请先停止并清理后再删除")
+        if check_perf is not None:
+            check_perf(project_id)
         schedule_ids = [
             schedule_id
             for (schedule_id,) in (

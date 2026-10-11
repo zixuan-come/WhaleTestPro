@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core import metrics
 from app.repositories import perf as perf_repo
+from app.repositories import project as project_repo
 
 
 RUN_LOCK_KEY = "locust:run_lock"
@@ -25,6 +26,17 @@ class PerfRunBusyError(RuntimeError):
 
 class PerfControlUnavailableError(RuntimeError):
     pass
+
+
+def assert_project_idle(project_id: int) -> None:
+    """Called with the project admission row locked; never auto-stop a run."""
+    try:
+        cache = redis.from_url(settings.REDIS_URL)
+        owners = [_decode_redis_value(cache.get(key)) for key in (RUN_LOCK_KEY, ACTIVE_RUN_KEY)]
+    except redis.RedisError:
+        raise PerfControlUnavailableError("无法检查项目压测执行锁，项目已保留，请稍后重试") from None
+    if any(owner and owner.startswith(f"{project_id}:") for owner in owners):
+        raise PerfRunBusyError("项目压测执行租约尚未清理，请先停止并清理后再删除")
 
 
 def _control_headers() -> dict[str, str]:
@@ -192,8 +204,14 @@ def s_run(
     project_id: int,
     celery_task_id: str | None = None,
 ):
-    task = perf_repo.db_get(db, task_id, project_id)
+    # Worker adoption is admission too: it must not recreate a lease from an
+    # old queued snapshot after cancellation/project cascade has won the race.
+    if project_repo.db_lock_project(db, project_id) is None:
+        db.rollback()
+        return None
+    task = perf_repo.db_get_for_update(db, task_id, project_id)
     if task is None:
+        db.rollback()
         return None
     run_id = _run_id(project_id, task_id)
     message_id = celery_task_id or getattr(task, "celery_task_id", None) or "legacy"
@@ -202,8 +220,10 @@ def s_run(
 
     # 延迟到达或重复投递的 Worker 不能重启已经结束的任务。
     if getattr(task, "status", None) not in {"queued", "running"}:
+        db.rollback()
         return task
     if celery_task_id and getattr(task, "celery_task_id", None) != celery_task_id:
+        db.rollback()
         return task
 
     # 新任务只允许 queued -> running。started_at/heartbeat_at 都存在时说明另一个
@@ -213,6 +233,7 @@ def s_run(
         and getattr(task, "started_at", None) is not None
         and getattr(task, "heartbeat_at", None) is not None
     ):
+        db.rollback()
         return task
 
     if not _acquire_run_lock(redis_client, lease_id, task.duration):
@@ -398,18 +419,31 @@ def s_mark_queued(
     project_id: int,
     celery_task_id: str,
 ):
-    task = perf_repo.db_get(db, task_id, project_id)
-    if task is None or task.status != "pending":
+    # Same lock order as project cascade deletion, held until queue CAS commits.
+    if project_repo.db_lock_project(db, project_id) is None:
+        db.rollback()
         return None
-    _control_headers()  # Fail before reserving a lease or publishing any message.
+    task = perf_repo.db_get_for_update(db, task_id, project_id)
+    if task is None:
+        db.rollback()
+        return None
+    if task.status != "pending":
+        db.rollback()
+        raise PerfRunBusyError("压测任务已不再处于待执行状态，请刷新后重试")
+    try:
+        _control_headers()  # Fail before reserving a lease or publishing any message.
+    except Exception:
+        db.rollback()
+        raise
     redis_client = redis.from_url(settings.REDIS_URL)
     run_id = _run_id(project_id, task_id)
     lease_id = _lease_id(run_id, celery_task_id)
     # Admission is never reentrant, even if a caller retries the same Celery ID.
     # Only the Worker may adopt an already reserved execution lease.
-    if not redis_client.set(RUN_LOCK_KEY, lease_id, nx=True, ex=_run_ttl(task.duration)):
-        raise PerfRunBusyError("已有压测任务正在排队或运行")
     try:
+        if not redis_client.set(RUN_LOCK_KEY, lease_id, nx=True, ex=_run_ttl(task.duration)):
+            db.rollback()
+            raise PerfRunBusyError("已有压测任务正在排队或运行")
         updated = perf_repo.db_update_if_status(
             db,
             task_id,
@@ -426,7 +460,10 @@ def s_mark_queued(
         if updated is None:
             _release_run_lock(redis_client, run_id, lease_id)
         return updated
+    except PerfRunBusyError:
+        raise  # Never release another HTTP request's lease (even the same ID).
     except Exception:
+        db.rollback()
         _release_run_lock(redis_client, run_id, lease_id)
         raise
 
@@ -512,10 +549,10 @@ def s_reconcile_stale(
             if len(parts) == 3:
                 owner_project, owner_task = int(parts[0]), int(parts[1])
                 task = perf_repo.db_get(db, owner_task, owner_project)
-                if task is not None and task.status in {"failed", "cancelled"}:
+                if task is None or task.status in {"done", "failed", "cancelled"}:
                     active = _decode_redis_value(redis_client.get(ACTIVE_RUN_KEY))
                     run_id = _run_id(owner_project, owner_task)
-                    _cleanup_run(redis_client, run_id, lease, active == run_id)
+                    _cleanup_run(redis_client, run_id, lease, task is None or active == run_id)
     except Exception:
         pass
     return {"failed": len(failed)}

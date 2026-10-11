@@ -10,6 +10,8 @@ from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamMove, ProjectUpdate
 from app.schemas.response import ApiResponse, success_response
 from app.services import project as project_service
+from app.services.perf import PerfRunBusyError, PerfControlUnavailableError
+from app.repositories.project import ProjectPerfBusyError
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -72,6 +74,12 @@ def delete_project(
 ):
     try:
         result = project_service.s_delete(db, context.project_id)
+    except (ProjectPerfBusyError, PerfRunBusyError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except PerfControlUnavailableError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from None
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="项目仍有关联资源，暂时无法删除")

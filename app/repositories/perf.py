@@ -20,6 +20,11 @@ def db_get(db: Session, task_id: int, project_id: int):
     ).first()
 
 
+def db_get_for_update(db: Session, task_id: int, project_id: int):
+    return (db.query(PerfTask).filter(PerfTask.id == task_id, PerfTask.project_id == project_id)
+            .populate_existing().with_for_update().first())
+
+
 def db_list(db: Session, project_id: int):
     return db.query(PerfTask).filter(PerfTask.project_id == project_id).all()
 
