@@ -437,7 +437,8 @@ def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
             return None
 
         def json(self):
-            return {"stats": [], "errors": []}
+            return {"stats": [{"name": "Aggregated", "num_requests": 1}], "errors": [],
+                    "lease": run_id + ":legacy", "configuration_failures": 0}
 
     def post(url, data, timeout, headers):
         assert headers == {"X-Locust-Control-Token": perf_service.settings.LOCUST_CONTROL_TOKEN}

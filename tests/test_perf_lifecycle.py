@@ -243,7 +243,9 @@ def perf_control(monkeypatch):
     cache = _ControlRedis()
     monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
     monkeypatch.setattr(perf.time, "sleep", lambda _: None)
-    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"stats": []})
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+        "stats": [{"name": "Aggregated", "num_requests": 1}],
+        "lease": cache.get(perf.RUN_LOCK_KEY), "configuration_failures": 0})
     monkeypatch.setattr(perf.requests, "get", lambda *a, **k: response)
     try:
         yield perf, db, tasks, cache, response

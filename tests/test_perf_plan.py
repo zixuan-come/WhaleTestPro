@@ -255,7 +255,8 @@ def test_backend_publishes_owned_snapshot_and_saves_iteration_metrics(monkeypatc
     monkeypatch.setattr(perf.requests, "post", launch)
     summary = {"lease": lease, "iterations": 5, "failures": 0, "configuration_failures": configuration_failures}
     monkeypatch.setattr(perf.requests, "get", lambda url, **kwargs: SimpleNamespace(raise_for_status=lambda: None,
-        json=lambda: summary if url.endswith("/whale/iterations") else {"stats": [], "total_rps": 0, "fail_ratio": 0}))
+        json=lambda: summary if url.endswith("/whale/iterations") else {
+            "stats": [{"name": "Aggregated", "num_requests": 5}], "total_rps": 0, "fail_ratio": 0}))
     try:
         if configuration_failures:
             with pytest.raises(perf.PerfControlUnavailableError): perf.s_run(db, saved.id, 1, "message")

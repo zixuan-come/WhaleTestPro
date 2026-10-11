@@ -28,6 +28,12 @@ class PerfControlUnavailableError(RuntimeError):
     pass
 
 
+def _control_timeout() -> float:
+    # Leave headroom for connect + read timeout and the polling pause.
+    return max(0.01, min(settings.REQUEST_TIMEOUT_SECONDS,
+                         settings.PERF_HEARTBEAT_TIMEOUT_SECONDS / 4))
+
+
 def assert_project_idle(project_id: int) -> None:
     """Called with the project admission row locked; never auto-stop a run."""
     try:
@@ -132,7 +138,7 @@ def _stop_owned_run_unlocked(redis_client, lease_id: str) -> None:
     requests.get(
         f"{settings.LOCUST_MASTER_URL}/stop",
         headers=_control_headers(),
-        timeout=settings.REQUEST_TIMEOUT_SECONDS,
+        timeout=_control_timeout(),
     ).raise_for_status()
 
 
@@ -255,6 +261,11 @@ def s_run(
     started = False
     stopped = False
     claimed = False
+    def heartbeat():
+        if perf_repo.db_touch_heartbeat(db, task_id, project_id, _utcnow()) is None:
+            raise RuntimeError("压测任务已不再处于运行状态")
+        _refresh_run_keys(redis_client, run_id, task.duration)
+
     try:
         now = _utcnow()
         if task.status == "queued":
@@ -309,7 +320,7 @@ def s_run(
                 "spawn_rate": task.spawn_rate,
                 "host": task.target_host,
                 "run_time": f"{max(1, task.duration)}s",
-            }, headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS)
+            }, headers=_control_headers(), timeout=_control_timeout())
             response.raise_for_status()
             if response.json().get("success") is False:
                 raise PerfControlUnavailableError("Locust 未接受启动请求")
@@ -322,23 +333,22 @@ def s_run(
                 _stop_owned_run(redis_client, lease_id)
                 stopped = True
                 return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="cancelled") or perf_repo.db_get(db, task_id, project_id)
-            time.sleep(2)
-            elapsed += 2
-            heartbeat_at = _utcnow()
-            if perf_repo.db_touch_heartbeat(
-                db,
-                task_id,
-                project_id,
-                heartbeat_at,
-            ) is None:
-                raise RuntimeError("压测任务已不再处于运行状态")
-            _refresh_run_keys(redis_client, run_id, task.duration)
-            stats = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
+            pause = max(0.01, min(2, settings.PERF_HEARTBEAT_TIMEOUT_SECONDS / 4))
+            time.sleep(pause)
+            elapsed += pause
+            heartbeat()
+            stats_response = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=_control_timeout())
+            stats_response.raise_for_status()
+            stats = stats_response.json()
+            heartbeat()  # Do not stack two blocking control calls under one heartbeat.
+            iteration_response = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
+                                              timeout=_control_timeout())
+            iteration_response.raise_for_status()
+            iteration_stats = iteration_response.json()
+            heartbeat()
+            if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
+                raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
             if load_config:
-                iteration_stats = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
-                                               timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
-                if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
-                    raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
                 perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
             history_samples.append({"elapsed_s": elapsed, "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
@@ -349,24 +359,44 @@ def s_run(
                 if row.get("name") == "Aggregated":
                     metrics.perf_avg_response_ms.set(row.get("avg_response_time") or 0)
 
+        # Final counters include late worker reports, but stopped instantaneous
+        # RPS is not a replacement for the last live sample shown in history.
+        live_rps = stats.get("total_rps")
+        live_endpoint_rps = {(row.get("method"), row.get("name")): row.get("current_rps", row.get("rps"))
+                             for row in stats.get("stats", [])}
+        heartbeat()
         _stop_owned_run(redis_client, lease_id)
         stopped = True
+        heartbeat()
+        # Legacy tasks must also prove the master started THIS lease; old stats
+        # from a previous run are not evidence that a no-worker swarm started.
+        time.sleep(min(0.25, _control_timeout()))
+        iteration_response = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
+                                          timeout=_control_timeout())
+        iteration_response.raise_for_status()
+        iteration_stats = iteration_response.json()
+        heartbeat()
+        if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
+            raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
         if load_config:
-            # Allow the master's final worker messages to arrive, then take a final sample.
-            time.sleep(0.25)
-            iteration_stats = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
-                                           timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
-            if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
-                raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
             perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
-        rps = stats.get("total_rps")
+        final_stats = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=_control_timeout())
+        final_stats.raise_for_status()
+        stats = final_stats.json()
+        heartbeat()
+        rps = live_rps if live_rps is not None else stats.get("total_rps")
         fail_ratio = stats.get("fail_ratio")
         aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
+        request_count = max(aggregate.get("num_requests", 0) or 0,
+                            sum(row.get("num_requests", 0) or 0 for row in stats.get("stats", [])
+                                if row.get("name") != "Aggregated"))
+        if request_count <= 0:
+            raise PerfControlUnavailableError("Locust 未产生任何请求，压测未有效执行；请检查 Worker 和目标配置")
         avg = aggregate.get("avg_response_time")
         p95 = aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile"))
         p99 = aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))
         request_stats = [
-            {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": row.get("current_rps", row.get("rps")), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
+            {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": live_endpoint_rps.get((row.get("method"), row.get("name")), row.get("current_rps", row.get("rps"))), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
             for row in stats.get("stats", []) if row.get("name") != "Aggregated"
         ]
         requests_by_endpoint = {(row["method"], row["name"]): row["num_requests"] for row in request_stats}

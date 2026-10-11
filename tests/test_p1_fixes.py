@@ -225,7 +225,9 @@ def test_worker_supplies_locust_native_stop_deadline(db, monkeypatch):
     monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
     perf.s_mark_queued(db, task.id, 1, "run")
     requests = []
-    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"stats": []})
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+        "stats": [{"name": "Aggregated", "num_requests": 1}],
+        "lease": cache.get(perf.RUN_LOCK_KEY), "configuration_failures": 0})
     monkeypatch.setattr(perf.requests, "post", lambda *args, **kwargs: requests.append(kwargs) or response)
     monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: response)
     monkeypatch.setattr(perf.time, "sleep", lambda _: None)

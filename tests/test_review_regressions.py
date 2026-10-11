@@ -399,7 +399,7 @@ def test_all_master_requests_include_the_control_header(perf_control, monkeypatc
     monkeypatch.setattr(perf.requests, "post", reply)
     perf.s_mark_queued(db, old.id, 1, "message")
     assert perf.s_run(db, old.id, 1, "message").status == "done"
-    assert {url.rsplit("/", 1)[-1] for url, _ in calls} == {"swarm", "stop", "requests"}
+    assert {url.rsplit("/", 1)[-1] for url, _ in calls} == {"swarm", "stop", "requests", "iterations"}
     assert all(headers == {"X-Locust-Control-Token": "isolated-control-token"} for _, headers in calls)
 
 
@@ -410,7 +410,8 @@ def test_real_locust_error_occurrences_are_preserved(perf_control, monkeypatch, 
     perf, db, (old, _), cache, _response = perf_control
     error = StatsError("GET", endpoint, "HTTP 500", occurrences=7).serialize()
     error["name"] = html.escape(error["name"])
-    statistics = {"errors": [error], "stats": [{"method": "GET", "name": endpoint, "num_requests": 10, "num_failures": 7}]}
+    statistics = {"lease": f"1:{old.id}:message", "configuration_failures": 0,
+                  "errors": [error], "stats": [{"method": "GET", "name": endpoint, "num_requests": 10, "num_failures": 7}]}
     reply = SimpleNamespace(raise_for_status=lambda: None, json=lambda: statistics)
     monkeypatch.setattr(perf.requests, "get", lambda *a, **k: reply)
     monkeypatch.setattr(perf.requests, "post", lambda *a, **k: reply)

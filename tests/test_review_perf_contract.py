@@ -112,6 +112,19 @@ def test_delayed_worker_with_stale_queued_snapshot_cannot_recreate_cancelled_lea
         competing.close()
 
 
+def test_legacy_rejects_previous_run_stats_when_new_swarm_never_started(db, control, monkeypatch):
+    row = task(db)
+    perf.s_mark_queued(db, row.id, 1, "new-message")
+    payload = {"success": True, "lease": "1:old:previous-message", "configuration_failures": 0,
+               "stats": [{"name": "Aggregated", "num_requests": 100}], "workers": [], "state": "ready"}
+    reply = SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+    monkeypatch.setattr(perf.requests, "post", lambda *a, **k: reply)
+    monkeypatch.setattr(perf.requests, "get", lambda *a, **k: reply)
+    with pytest.raises(perf.PerfControlUnavailableError, match="配置"):
+        perf.s_run(db, row.id, 1, "new-message")
+    assert db.get(PerfTask, row.id).status == "failed" and not control.values
+
+
 def test_admission_and_cascade_use_current_locked_parent_then_task(db, control):
     row = task(db)
     locked = []
@@ -147,3 +160,71 @@ def test_reconciler_recovers_preexisting_orphan_only_after_stop_ack(db, control,
                         stops.append(url) or SimpleNamespace(raise_for_status=lambda: None))
     perf.s_reconcile_stale(db)
     assert stops == [perf.settings.LOCUST_MASTER_URL + "/stop"] and not control.values
+
+
+@pytest.mark.parametrize("plan", [None, {"steps": [{"method": "GET", "path": "/health"}]}])
+def test_zero_requests_never_becomes_success_even_when_swarm_accepts(db, control, monkeypatch, plan):
+    row = task(db, plan=plan)
+    perf.s_mark_queued(db, row.id, 1, "message")
+    lease = f"1:{row.id}:message"
+    payload = {"success": True, "stats": [{"name": "Aggregated", "num_requests": 0}],
+               "total_rps": 0, "fail_ratio": 0, "workers": [], "state": "ready"}
+    monkeypatch.setattr(perf.requests, "post", lambda *a, **k:
+                        SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload))
+    def response(url, **kwargs):
+        data = {"lease": lease, "configuration_failures": 0} if url.endswith("/whale/iterations") else payload
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+    monkeypatch.setattr(perf.requests, "get", response)
+    with pytest.raises(perf.PerfControlUnavailableError, match="请求"):
+        perf.s_run(db, row.id, 1, "message")
+    assert db.get(PerfTask, row.id).status == "failed"
+    assert "请求" in db.get(PerfTask, row.id).failure_reason and not control.values
+
+
+@pytest.mark.parametrize("heartbeat_timeout", [60, 12])
+def test_two_slow_successful_control_polls_do_not_make_alive_worker_stale(db, control, monkeypatch, heartbeat_timeout):
+    row = task(db, plan={"steps": [{"method": "GET", "path": "/health"}]})
+    now = [datetime(2026, 10, 11)]
+    monkeypatch.setattr(perf, "_utcnow", lambda: now[0])
+    monkeypatch.setattr(perf.settings, "PERF_HEARTBEAT_TIMEOUT_SECONDS", heartbeat_timeout)
+    monkeypatch.setattr(perf.settings, "REQUEST_TIMEOUT_SECONDS", 30)
+    perf.s_mark_queued(db, row.id, 1, "message")
+    lease = f"1:{row.id}:message"
+    recovered = []
+    def sleep(seconds):
+        now[0] += timedelta(seconds=seconds)
+        recovered.append(perf.s_reconcile_stale(db)["failed"])
+    monkeypatch.setattr(perf.time, "sleep", sleep)
+    def response(url, **kwargs):
+        now[0] += timedelta(seconds=kwargs["timeout"] * 0.993)
+        if url.endswith("/whale/iterations"):
+            data = {"lease": lease, "configuration_failures": 0, "iterations": 3}
+        else:
+            data = {"stats": [{"name": "Aggregated", "num_requests": 3}]}
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+    monkeypatch.setattr(perf.requests, "get", response)
+    monkeypatch.setattr(perf.requests, "post", lambda *a, **k:
+                        SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"success": True}))
+    assert perf.s_run(db, row.id, 1, "message").status == "done"
+    assert recovered and not any(recovered) and not control.values
+
+
+def test_final_request_counts_do_not_replace_last_live_rps_with_stopped_zero(db, control, monkeypatch):
+    row = task(db)
+    perf.s_mark_queued(db, row.id, 1, "message")
+    lease = f"1:{row.id}:message"
+    stopped = [False]
+    def response(url, **kwargs):
+        if url.endswith("/stop"):
+            stopped[0] = True
+        endpoint = {"name": "/health", "method": "GET", "num_requests": 4 if stopped[0] else 3,
+                    "current_rps": 0 if stopped[0] else 7}
+        data = {"lease": lease, "configuration_failures": 0, "total_rps": endpoint["current_rps"],
+                "stats": [endpoint, {"name": "Aggregated", "num_requests": endpoint["num_requests"]}]}
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+    monkeypatch.setattr(perf.requests, "get", response)
+    monkeypatch.setattr(perf.requests, "post", lambda *a, **k:
+                        SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"success": True}))
+    result = perf.s_run(db, row.id, 1, "message")
+    assert result.status == "done" and result.request_stats[0]["num_requests"] == 4
+    assert result.rps == result.request_stats[0]["rps"] == result.history_samples[-1]["rps"] == 7
