@@ -25,3 +25,8 @@ liaotian*.txt
 # 文档
 README.md
 LICENSE
+
+# 私有原始会话、数据库备份和本地验证产物不得被 COPY 到运行镜像。
+docs/历史交接/原始会话
+docs/历史交接/原始备份
+docs/testing/reports
