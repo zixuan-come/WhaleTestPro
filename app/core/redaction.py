@@ -1,5 +1,7 @@
 """Shared structured-data redaction for recordings and execution evidence."""
 import re
+import base64
+from http.cookies import SimpleCookie, CookieError
 from urllib.parse import quote, quote_plus
 
 
@@ -26,6 +28,8 @@ def sensitive_strings(value, *, sensitive=False):
     if isinstance(value, dict):
         for key, item in value.items():
             yield from sensitive_strings(item, sensitive=sensitive or is_sensitive_key(key))
+            if isinstance(item, str):
+                yield from _header_credentials(key, item)
     elif isinstance(value, list):
         for item in value:
             yield from sensitive_strings(item, sensitive=sensitive)
@@ -33,6 +37,39 @@ def sensitive_strings(value, *, sensitive=False):
         rendered = str(value)
         if rendered:
             yield rendered
+
+
+def _header_credentials(key, value):
+    """Track echoed credential components, not just the complete header."""
+    normalized = str(key).lower().replace("_", "-")
+    if normalized == "authorization":
+        parts = value.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() in {"bearer", "basic"}:
+            credential = parts[1].strip()
+            if credential:
+                yield credential
+            if parts[0].lower() == "basic":
+                try:
+                    decoded = base64.b64decode(credential, validate=True).decode("utf-8")
+                    username, password = decoded.split(":", 1)
+                    yield from (part for part in (decoded, username, password) if part)
+                except (ValueError, UnicodeError):
+                    pass  # The sensitive header itself is still masked.
+    elif normalized in {"cookie", "set-cookie"}:
+        try:
+            cookies = SimpleCookie()
+            cookies.load(value)
+            yield from (cookie.value for cookie in cookies.values() if cookie.value)
+        except CookieError:
+            pass
+
+
+def mask_record_payload(record):
+    """Collect raw sources across fields before masking; preserve routing metadata."""
+    fields = ("request_headers", "request_body", "response_body")
+    secrets = {secret for field in fields for secret in sensitive_strings(record.get(field))}
+    return {**record, **{field: mask_sensitive(record.get(field), secrets=secrets)
+                        for field in fields}}
 
 
 def _secret_patterns(secrets):

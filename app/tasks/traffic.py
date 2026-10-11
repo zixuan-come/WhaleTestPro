@@ -3,7 +3,7 @@ from app.database import SessionLocal
 from app.schemas.traffic_record import TrafficRecordCreate
 from app.services import traffic_record as traffic_record_service
 from app.core.recording_policy import is_recordable_path
-from app.core.redaction import mask_sensitive as _mask
+from app.core.redaction import mask_sensitive as _mask, mask_record_payload
 from app.core import metrics
 from celery.exceptions import Retry
 from sqlalchemy.exc import OperationalError
@@ -22,9 +22,7 @@ def record_traffic(self, record_dict):
     db, failure, rollback_ok = None, None, False
     safe_record = None
     try:
-        safe_record = dict(record_dict)
-        for field in ("request_headers", "request_body", "response_body"):
-            safe_record[field] = _mask(record_dict.get(field))
+        safe_record = mask_record_payload(dict(record_dict))
         record = TrafficRecordCreate(**safe_record)
         db = SessionLocal()
         # No post-COMMIT refresh: a SELECT deadlock after a successful write

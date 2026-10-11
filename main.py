@@ -50,7 +50,8 @@ from app.core.exception_handlers import (
 )
 from app.schemas.traffic_record import TrafficRecordCreate
 from app.schemas.response import success_response
-from app.tasks.traffic import record_traffic, _mask
+from app.tasks.traffic import record_traffic
+from app.core.redaction import mask_record_payload
 import app.models.interface
 import app.models.case
 import app.models.user
@@ -143,15 +144,15 @@ async def recording_middleware(request: Request, call_next):
 
     # 丢进 MQ（中间件只管抄一份扔进队列，立刻返回；落库/脱敏这些慢活由 worker 后台干）
     try:
-        record = TrafficRecordCreate(
+        record = TrafficRecordCreate(**mask_record_payload(dict(
             method=request.method,
             path=path,
-            request_headers=_mask(dict(request.headers)),
-            request_body=_mask(_safe_json(req_body)),
+            request_headers=dict(request.headers),
+            request_body=_safe_json(req_body),
             response_status=response.status_code,
-            response_body=_mask(_safe_json(resp_body)),
+            response_body=_safe_json(resp_body),
             project_id=project_id,
-        )
+        )))
         # mode="json" 把 datetime 等转成可序列化的字符串，否则丢进 RabbitMQ 会序列化失败
         await publish_recording(record_traffic, record.model_dump(mode="json"))
     except Exception as exc:
