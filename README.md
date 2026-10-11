@@ -215,6 +215,7 @@ curl -fsS http://127.0.0.1:8080/api/health/ready
 | [`docs/deployment.md`](docs/deployment.md) | Ubuntu 云服务器首次部署、日常更新、健康检查与排障 |
 | [`docs/bugs.md`](docs/bugs.md) | 缺陷总账(全局编号 + 交叉引用)|
 | [`docs/Review修复与验证-2026-10-10.md`](docs/Review修复与验证-2026-10-10.md) | 本轮 12 项 P1/P2 修复、隔离回归结果与部署验收边界 |
+| [`docs/testing/`](docs/testing/README.md) | 新版全量接口设计用例、覆盖清单与分范围验证记录；执行状态与设计覆盖分别说明 |
 | [`docs/测试缺陷/`](docs/测试缺陷/) | 缺陷按模块拆分归档(功能 / 接口)|
 | [`docs/testcases_api.xlsx`](docs/testcases_api.xlsx) | 接口测试用例(361 条)|
 | [`docs/testcases_func.xlsx`](docs/testcases_func.xlsx) | 功能测试用例(216 条)|
