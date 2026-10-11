@@ -161,8 +161,10 @@ def s_list(db: Session, project_id: int):
 
 def s_delete(db: Session, task_id: int, project_id: int):
     task = perf_repo.db_get(db, task_id, project_id)
-    if task is None or task.status in {"queued", "running"}:
+    if task is None:
         return None
+    if task.status in {"queued", "running"}:
+        raise PerfRunBusyError("压测任务正在排队或运行，请先停止后再删除")
     if task.status in {"done", "failed", "cancelled"}:
         redis_client = redis.from_url(settings.REDIS_URL)
         run_id = _run_id(project_id, task_id)
@@ -172,8 +174,15 @@ def s_delete(db: Session, task_id: int, project_id: int):
             raise PerfControlUnavailableError("无法检查压测执行锁，请稍后重试") from exc
         if lease and lease.startswith(f"{run_id}:"):
             if not _cleanup_run(redis_client, run_id, lease, needs_stop=True):
-                return None
-    return perf_repo.db_delete(db, task_id, project_id)
+                raise PerfControlUnavailableError("压测控制清理未完成，记录和执行锁已保留，请稍后重试")
+    result = perf_repo.db_delete(db, task_id, project_id)
+    if result is None:
+        # A failed conditional DELETE can mean a concurrent state transition,
+        # not a missing row. Refresh the session before distinguishing them.
+        db.expire_all()
+        if perf_repo.db_get(db, task_id, project_id) is not None:
+            raise PerfRunBusyError("压测任务状态已变化，请刷新后重试删除")
+    return result
 
 
 def s_run(

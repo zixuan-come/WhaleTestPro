@@ -301,7 +301,8 @@ def test_delete_cannot_remove_task_queued_after_old_snapshot(perf_control, monke
             assert perf.s_mark_queued(competing, task_id, project_id, "queued-message") is not None
         return delete(database, task_id, project_id)
     monkeypatch.setattr(perf_repo, "db_delete", queue_before_delete)
-    assert perf.s_delete(db, task_id, 1) is None
+    with pytest.raises(perf.PerfRunBusyError):
+        perf.s_delete(db, task_id, 1)
     db.expire_all()
     assert perf_repo.db_get(db, task_id, 1).status == "queued"
     assert cache.get(perf.RUN_LOCK_KEY) == f"1:{task_id}:queued-message"
@@ -332,7 +333,8 @@ def test_old_pending_snapshot_cannot_delete_newly_cancelled_worker_lease(perf_co
             assert perf.s_cancel(competing, task_id, project_id).status == "cancelled"
         return delete(database, task_id, project_id)
     monkeypatch.setattr(perf_repo, "db_delete", cancel_before_delete)
-    assert perf.s_delete(db, task_id, 1) is None
+    with pytest.raises(perf.PerfRunBusyError):
+        perf.s_delete(db, task_id, 1)
     db.expire_all()
     assert perf_repo.db_get(db, task_id, 1).status == "cancelled"
     assert cache.get(perf.RUN_LOCK_KEY) == f"1:{task_id}:worker-message"
@@ -363,7 +365,8 @@ def test_terminal_delete_waits_for_master_cleanup_before_removing_row(perf_contr
     def unavailable(*args, **kwargs):
         raise requests.ConnectionError("isolated unavailable master")
     monkeypatch.setattr(perf.requests, "get", unavailable)
-    assert perf.s_delete(db, task_id, 1) is None
+    with pytest.raises(perf.PerfControlUnavailableError):
+        perf.s_delete(db, task_id, 1)
     assert perf_repo.db_get(db, task_id, 1) is not None
     assert cache.get(perf.RUN_LOCK_KEY) == run_id + ":message"
     monkeypatch.setattr(perf.requests, "get", lambda *args, **kwargs: response)

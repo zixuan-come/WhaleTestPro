@@ -56,6 +56,8 @@ def delete_task(
 ):
     try:
         result = perf_service.s_delete(db, task_id, context.project_id)
+    except perf_service.PerfRunBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except perf_service.PerfControlUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if result is None:

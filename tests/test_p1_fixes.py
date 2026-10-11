@@ -344,7 +344,8 @@ def test_wrong_celery_message_cannot_run_existing_task(db, monkeypatch):
 @pytest.mark.parametrize("status", ["queued", "running"])
 def test_active_perf_task_cannot_be_deleted(db, status):
     task = _perf(db, status)
-    assert perf.s_delete(db, task.id, 1) is None
+    with pytest.raises(perf.PerfRunBusyError):
+        perf.s_delete(db, task.id, 1)
     assert db.get(PerfTask, task.id).status == status
 
 
