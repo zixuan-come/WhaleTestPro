@@ -21,7 +21,31 @@ MAX_RESPONSE_BODY_BYTES = 64 * 1024
 MAX_REDACTION_PARSE_BYTES = 256 * 1024
 
 
-def _response_detail(response):
+def _add_response_secrets(response, secrets):
+    secrets.update(sensitive_strings(dict(getattr(response, "headers", {}))))
+    if len(getattr(response, "content", b"") or b"") <= MAX_REDACTION_PARSE_BYTES:
+        try:
+            secrets.update(sensitive_strings(response.json()))
+        except (ValueError, AttributeError):
+            pass
+
+
+def _evidence_detail(detail, secrets):
+    if detail is None:
+        return None
+    return {key: _mask_sensitive(value, secrets=secrets)
+            if key in {"url", "headers", "params", "body"} else value
+            for key, value in detail.items()}
+
+
+def _assertion_evidence(rows, secrets):
+    return [{**row,
+             "expected": _mask_sensitive(row.get("expected"), secrets=secrets),
+             "actual": _mask_sensitive(row.get("actual"), secrets=secrets)}
+            for row in rows]
+
+
+def _response_detail(response, *, secrets=()):
     content = response.content or b""
     truncated = len(content) > MAX_RESPONSE_BODY_BYTES
     if not content or len(content) > MAX_REDACTION_PARSE_BYTES:
@@ -29,7 +53,7 @@ def _response_detail(response):
         body = None
     else:
         try:
-            body = _mask_sensitive(response.json())
+            body = _mask_sensitive(response.json(), secrets=secrets)
             if truncated:
                 # Truncate only the redacted representation, never raw bytes.
                 safe_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -39,8 +63,8 @@ def _response_detail(response):
 
     return {
         "status_code": response.status_code,
-        "headers": _mask_sensitive(dict(response.headers)),
-        "body": _mask_sensitive(body),
+        "headers": _mask_sensitive(dict(response.headers), secrets=secrets),
+        "body": _mask_sensitive(body, secrets=secrets),
         "body_truncated": truncated,
     }
 
@@ -88,20 +112,36 @@ def run_interface(db, interface_id, env_id, project_id):
     if interface is None:
         return None
     context = _env_context(db, env_id, project_id)
+    report_secrets = set(sensitive_strings(context))
     request_detail = None
     response_detail = None
+    error = None
+    passed = False
     started = perf_counter()
     try:
         rendered_url = _full_url(interface.url, context)
         rendered_headers = render_deep(interface.headers, context)
         rendered_params = render_deep(interface.params, context)
         rendered_body = render_deep(interface.body, context)
-        request_detail = {"method": interface.method, "url": rendered_url, "headers": _mask_sensitive(rendered_headers), "params": _mask_sensitive(rendered_params), "body": _mask_sensitive(rendered_body)}
+        for payload in (rendered_headers, rendered_params, rendered_body):
+            report_secrets.update(sensitive_strings(payload))
+        request_detail = {"method": interface.method, "url": rendered_url, "headers": rendered_headers, "params": rendered_params, "body": rendered_body}
         response = _request(interface, url=rendered_url, headers=rendered_headers, params=rendered_params, json=rendered_body)
-        response_detail = _response_detail(response)
-        return {"interface_id": interface.id, "interface_name": interface.name, "passed": response.ok, "request": request_detail, "response": response_detail, "duration_ms": round((perf_counter() - started) * 1000)}
+        _add_response_secrets(response, report_secrets)
+        response_detail = _response_detail(response, secrets=report_secrets)
+        passed = response.ok
     except Exception as exc:
-        return {"interface_id": interface.id, "interface_name": interface.name, "passed": False, "request": request_detail, "response": response_detail, "error": str(exc), "duration_ms": round((perf_counter() - started) * 1000)}
+        error = str(exc)
+    result = {"interface_id": interface.id,
+              "interface_name": _mask_sensitive(interface.name, secrets=report_secrets),
+              "passed": passed, "request": _evidence_detail(request_detail, report_secrets),
+              "response": _evidence_detail(response_detail, report_secrets),
+              "duration_ms": round((perf_counter() - started) * 1000)}
+    if error is not None:
+        result["error"] = _mask_sensitive(error, secrets=report_secrets)
+    return result
+
+
 def run_chain(
     db,
     case_ids,
@@ -165,6 +205,8 @@ def run_chain(
             rendered_headers = render_deep(interface.headers, context)
             rendered_params = render_deep(interface.params, context)
             rendered_body = render_deep(interface.body, context)
+            for payload in (rendered_headers, rendered_params, rendered_body):
+                report_secrets.update(sensitive_strings(payload))
             request_detail = {
                 "method": interface.method,
                 "url": rendered_url,
@@ -180,7 +222,8 @@ def run_chain(
                 json=rendered_body,
             )
             actual_status = response.status_code
-            response_detail = _response_detail(response)
+            _add_response_secrets(response, report_secrets)
+            response_detail = _response_detail(response, secrets=report_secrets)
             status_passed = response.status_code == case.expected_status
             rendered_assertions = render_deep(case.assertions, context)
             assertions_results = run_assertions(response, rendered_assertions, db)
@@ -309,15 +352,22 @@ def _request(interface, **kwargs):
 
 def _run_once(db, case, interface, context):
     result = None
+    report_secrets = set(sensitive_strings(context))
     try:
         run_sql(db, render_deep(case.setup_sql, context))
+        rendered_headers = render_deep(interface.headers, context)
+        rendered_params = render_deep(interface.params, context)
+        rendered_body = render_deep(interface.body, context)
+        for payload in (rendered_headers, rendered_params, rendered_body):
+            report_secrets.update(sensitive_strings(payload))
         response = _request(
             interface,
             url=_full_url(interface.url, context),
-            headers=render_deep(interface.headers, context),
-            params=render_deep(interface.params, context),
-            json=render_deep(interface.body, context),
+            headers=rendered_headers,
+            params=rendered_params,
+            json=rendered_body,
         )
+        _add_response_secrets(response, report_secrets)
         status_passed = response.status_code == case.expected_status
         assertions_results = run_assertions(response, render_deep(case.assertions, context), db)
         passed = status_passed and all(r["passed"] for r in assertions_results)
@@ -338,6 +388,13 @@ def _run_once(db, case, interface, context):
             result = result or {"passed": False}
             result["passed"] = False
             result["teardown_error"] = str(exc)
+    # Only returned/persisted evidence is changed. Requests, SQL, assertions,
+    # IDs, status codes, timing and verdicts retain their original values.
+    for field in ("error", "teardown_error"):
+        if field in result:
+            result[field] = _mask_sensitive(result[field], secrets=report_secrets)
+    if "assertions" in result:
+        result["assertions"] = _assertion_evidence(result["assertions"], report_secrets)
     return result
 
 
