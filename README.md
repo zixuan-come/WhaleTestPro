@@ -12,7 +12,7 @@
 - **Mock 挡板** — 按 path / method 匹配返回挡板响应,支持延时、自定义状态码。
 - **定时调度** — Celery Beat / RedBeat 按 cron 周期触发定时回归，MySQL Outbox 保证失败后可自动重试。
 - **测试报告** — 单用例报告分页统计;场景执行生成一份场景报告与多条步骤明细。
-- **压测** — Locust master / worker 驱动,实时指标进 Prometheus / Grafana。
+- **压测** — Locust master / worker 驱动，支持 7 种 HTTP 方法、JSON/表单/原始文本及有序链路，JSONPath 提取、变量传递、业务断言、独立用户会话；HTTP 指标与整轮链路吞吐分开展示。详见 [接口与链路压测](docs/Locust接口与链路压测.md)。
 - **流量录制 / 回放** — 中间件录制真实流量,可按环境回放。
 - **可观测性** — `/metrics` 暴露 Prometheus 指标,Grafana 看板。
 - **稳定性机制** — JWT `jti` 级登出隔离、限流、熔断器、影子库隔离与项目资产事务删除。
@@ -119,7 +119,7 @@ flowchart TB
 
 3. 打开浏览器访问 **http://localhost:8080** —— 即完整平台。前端由 Nginx 托管打包产物,`/api` 反代到后端容器,无需单独起前端。
 
-> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表，并按顺序幂等执行 005～011 迁移。007 会在 005 完成数据校验和团队成员迁移后永久删除旧项目成员归档表；008 将团队邀请约束升级为“仅 pending 唯一”，允许保留多次 accepted/rejected 历史；009 移除废弃的自动团队标记；010 增加压测任务队列状态、Worker 心跳与 Celery Task ID；011 增加定时任务执行环境。正式更新请使用 `bash scripts/deploy.sh`，脚本会在启动新应用前先运行 `python -m scripts.run_migrations`；初始化脚本只在空数据卷首次启动时执行。
+> MySQL 首次初始化会通过 `docker/mysql/init/01-create-shadow-db.sql` 创建影子库;后端随后通过 `create_all` 在主库和影子库建表，并按顺序幂等执行 005～012 迁移。007 会在 005 完成数据校验和团队成员迁移后永久删除旧项目成员归档表；008 将团队邀请约束升级为“仅 pending 唯一”，允许保留多次 accepted/rejected 历史；009 移除废弃的自动团队标记；010 增加压测任务队列状态、Worker 心跳与 Celery Task ID；011 增加定时任务执行环境；012 只为压测任务新增可空的配置快照和轮次统计，不改写旧 GET 任务。正式更新请使用 `bash scripts/deploy.sh`，脚本会在启动新应用前先运行 `python -m scripts.run_migrations`；初始化脚本只在空数据卷首次启动时执行。
 
 > 用户 SQL 默认关闭；启用需要独立受限账号的 `TEST_DATABASE_URL`，禁止使用平台或影子库连接。定时任务必须选择 Worker 可访问的环境。配置细节与验收限制见 [P1 修复与验证](docs/P1修复与验证-2026-10-07.md)。
 

@@ -446,6 +446,7 @@ def run_all_migrations(*binds) -> None:
         ensure_explicit_project_team_schema(bind)
         ensure_perf_task_lifecycle_schema(bind)
         ensure_schedule_environment_schema(bind)
+        ensure_perf_load_plan_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -465,3 +466,17 @@ def ensure_schedule_environment_schema(bind) -> None:
                     "FOREIGN KEY (env_id) REFERENCES environment(id) ON DELETE RESTRICT"
                 ))
             _record_migration(connection, "011_schedule_environment")
+
+
+def ensure_perf_load_plan_schema(bind) -> None:
+    """Add nullable snapshots; old tasks remain single-GET without backfilling."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("perf_tasks"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("perf_tasks")}
+        for name in ("load_config", "iteration_stats"):
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE perf_tasks ADD COLUMN {name} JSON NULL"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "012_perf_load_plan")

@@ -1,10 +1,74 @@
 import os
+import json
+import time
+from uuid import uuid4
 import redis
 from locust import HttpUser, task, between, events
 from locust.runners import MasterRunner, WorkerRunner
+from locust.exception import StopUser
+from app.core.perf_plan import execute_iteration
+from app.schemas.perf_plan import PerfLoadConfig
 
 TARGET_PATH = os.environ.get("TARGET_PATH", "/health/live")   # 兜底默认，运行时会被 set_path 覆盖
 ACTIVE_RUN_KEY = "locust:active_run"
+RUN_LOCK_KEY = "locust:run_lock"
+_iteration_stats = {"lease": None, "iterations": 0, "failures": 0, "configuration_failures": 0, "total_duration_ms": 0.0}
+_worker_iterations = {}
+_iteration_started = 0.0
+_iteration_finished = None
+_announced_lease = None
+
+
+def _on_set_lease(environment, msg, **kwargs):
+    global _announced_lease
+    _announced_lease = msg.data
+
+
+def _owned_plan(redis_client, default_host):
+    lease = _decode(redis_client.get(RUN_LOCK_KEY))
+    run_id = _decode(redis_client.get(ACTIVE_RUN_KEY))
+    if not lease or not run_id or not lease.startswith(run_id + ":"):
+        raise ValueError("没有有效压测租约")
+    raw = _decode(redis_client.get(f"locust:target_path:{run_id}"))
+    if not raw:
+        raise ValueError("压测配置缺失")
+    legacy = not raw.startswith("{")
+    if legacy:
+        host, deadline = default_host, None
+        plan = PerfLoadConfig(steps=[{"path": raw}], wait_seconds=2)
+    else:
+        payload = json.loads(raw)
+        if payload["lease"] != lease:
+            raise ValueError("压测配置租约不匹配")
+        host, deadline = payload["target_host"], payload["deadline"]
+        plan = PerfLoadConfig.model_validate(payload["load_config"])
+    if _decode(redis_client.get(RUN_LOCK_KEY)) != lease or _decode(redis_client.get(ACTIVE_RUN_KEY)) != run_id:
+        raise ValueError("读取配置时压测租约发生变化")
+    return lease, host, plan, deadline, legacy
+
+
+def _receive_iteration_report(environment, client_id, data, **kwargs):
+    report = data.get("whale_iterations")
+    if report and report.get("lease") == _iteration_stats["lease"]:
+        _worker_iterations[client_id] = dict(report)
+
+
+def _receive_final(environment, msg, **kwargs):
+    _receive_iteration_report(environment, msg.node_id, {"whale_iterations": msg.data})
+
+
+def _iteration_summary(environment):
+    rows = list(_worker_iterations.values()) if isinstance(environment.runner, MasterRunner) else [_iteration_stats]
+    count = sum(row["iterations"] for row in rows)
+    failures = sum(row["failures"] for row in rows)
+    total = sum(row["total_duration_ms"] for row in rows)
+    elapsed = max((_iteration_finished or time.monotonic()) - _iteration_started, 0.001)
+    return {"iterations": count, "failures": failures,
+            "configuration_failures": sum(row.get("configuration_failures", 0) for row in rows),
+            "lease": _iteration_stats["lease"],
+            "fail_ratio": failures / count if count else 0,
+            "avg_duration_ms": total / count if count else 0,
+            "iteration_rps": count / elapsed, "elapsed_seconds": elapsed}
 
 
 def _decode(value):
@@ -121,22 +185,90 @@ def _on_init(environment, **kwargs):
     _install_owned_deadlines(environment)
     if isinstance(environment.runner, WorkerRunner):
         environment.runner.register_message("set_path", _on_set_path)
+        environment.runner.register_message("set_lease", _on_set_lease)
+    elif isinstance(environment.runner, MasterRunner):
+        environment.runner.register_message("whale_final", _receive_final)
+    web = getattr(environment, "web_ui", None)
+    if web is not None and not getattr(web, "_whale_iteration_route", False):
+        from flask import jsonify
+        web.app.add_url_rule("/whale/iterations", "whale_iterations",
+                             lambda: jsonify(_iteration_summary(environment)))
+        web._whale_iteration_route = True
 
 
 @events.test_start.add_listener
 def _on_test_start(environment, **kwargs):
+    global _iteration_started, _iteration_finished
+    _iteration_stats.update(lease=_announced_lease if isinstance(environment.runner, WorkerRunner) else None,
+                            iterations=0, failures=0, configuration_failures=0, total_duration_ms=0.0)
+    _worker_iterations.clear()
+    _iteration_started = time.monotonic()
+    _iteration_finished = None
     if isinstance(environment.runner, MasterRunner):
         r = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         run_id = _decode(r.get(ACTIVE_RUN_KEY))
+        _iteration_stats["lease"] = _decode(r.get(RUN_LOCK_KEY))
+        if _iteration_stats["lease"]:
+            # Sent synchronously before the master dispatches its spawn messages.
+            environment.runner.send_message("set_lease", _iteration_stats["lease"])
         if run_id:
             path = _decode(r.get(f"locust:target_path:{run_id}"))
             if path:
+                if path.startswith("{"):
+                    path = json.loads(path)["load_config"]["steps"][0]["path"]
                 environment.runner.send_message("set_path", path)
 
 
+@events.report_to_master.add_listener
+def _report_iterations(client_id, data, **kwargs):
+    data["whale_iterations"] = dict(_iteration_stats)
+
+
+@events.worker_report.add_listener
+def _worker_report(client_id, data, **kwargs):
+    # The hook does not carry Environment; only the master receives this event.
+    report = data.get("whale_iterations")
+    if report and report.get("lease") == _iteration_stats["lease"]:
+        _worker_iterations[client_id] = dict(report)
+
+
+@events.test_stop.add_listener
+def _report_final_iterations(environment, **kwargs):
+    global _iteration_finished
+    _iteration_finished = time.monotonic()
+    if isinstance(environment.runner, WorkerRunner):
+        environment.runner.send_message("whale_final", dict(_iteration_stats))
+
+
 class WebsiteUser(HttpUser):
-    wait_time = between(1, 3)
+    def on_start(self):
+        try:
+            self._redis = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+                                         socket_timeout=5, socket_connect_timeout=5)
+            self._lease, self._host, self._plan, self._deadline, self._legacy = _owned_plan(self._redis, self.host)
+        except Exception:
+            # Fail closed: never turn a missing POST/chain plan into default GET.
+            _iteration_stats["configuration_failures"] += 1
+            raise StopUser() from None
+        if _iteration_stats["lease"] != self._lease:
+            _iteration_stats.update(lease=self._lease, iterations=0, failures=0, configuration_failures=0, total_duration_ms=0.0)
+        self._vu_id = uuid4().hex
+        self._iteration = 0
+
+    def wait_time(self):
+        return between(1, 3)(self) if self._legacy else self._plan.wait_seconds
 
     @task
     def hit(self):
-        self.client.get(TARGET_PATH)
+        try:
+            if _decode(self._redis.get(RUN_LOCK_KEY)) != self._lease:
+                raise StopUser()
+            if self._deadline is not None and time.time() >= self._deadline:
+                raise StopUser()
+        except redis.RedisError:
+            raise StopUser() from None
+        self._iteration += 1
+        result = execute_iteration(self.client, self._host, self._plan, self._vu_id, self._iteration)
+        _iteration_stats["iterations"] += 1
+        _iteration_stats["failures"] += int(not result["passed"])
+        _iteration_stats["total_duration_ms"] += result["duration_ms"]

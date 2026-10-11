@@ -12,6 +12,8 @@ class PerfTask(Base):
     users = Column(Integer, nullable=False)
     spawn_rate = Column(Integer, nullable=False)
     duration = Column(Integer, nullable=False)
+    load_config = Column(JSON, nullable=True)
+    iteration_stats = Column(JSON, nullable=True)
     status = Column(String(50), nullable=False, default="pending")
     celery_task_id = Column(String(255), nullable=True, index=True)
     queued_at = Column(DateTime, nullable=True)

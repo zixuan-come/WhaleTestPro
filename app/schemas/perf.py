@@ -1,7 +1,9 @@
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from pydantic import ConfigDict, Field, field_validator
 from app.schemas.base import NamedSchema
+from app.schemas.perf_plan import PerfLoadConfig
 
 class PerfTaskCreate(NamedSchema):
     target_host: str = Field(min_length=1, max_length=255)
@@ -9,6 +11,7 @@ class PerfTaskCreate(NamedSchema):
     users: int = Field(ge=1, le=100000)
     spawn_rate: int = Field(ge=1, le=100000)
     duration: int = Field(ge=1, le=86400)
+    load_config: PerfLoadConfig | None = None
 
     @field_validator("target_host")
     @classmethod
@@ -16,6 +19,9 @@ class PerfTaskCreate(NamedSchema):
         value = value.strip().rstrip("/")
         if not value.startswith(("http://", "https://")):
             raise ValueError("目标 Host 必须以 http:// 或 https:// 开头")
+        parsed = urlsplit(value)
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("目标 Host 必须包含主机名，不能包含凭证、查询参数或片段")
         return value
 
     @field_validator("target_path")
@@ -42,5 +48,6 @@ class PerfTaskOut(PerfTaskCreate):
     request_stats: list | None = None
     error_summary: list | None = None
     history_samples: list | None = None
+    iteration_stats: dict | None = None
     fail_ratio: float | None = None
     model_config = ConfigDict(from_attributes=True)

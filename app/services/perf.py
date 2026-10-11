@@ -1,4 +1,5 @@
 import time
+import json
 from html import unescape
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -272,7 +273,11 @@ def s_run(
             ) is None:
                 return perf_repo.db_get(db, task_id, project_id)
             ttl = _run_ttl(task.duration)
-            redis_client.set(_target_path_key(run_id), task.target_path, ex=ttl)
+            load_config = getattr(task, "load_config", None)
+            target = json.dumps({"lease": lease_id, "target_host": task.target_host,
+                                 "deadline": time.time() + task.duration,
+                                 "load_config": load_config}, ensure_ascii=False) if load_config else task.target_path
+            redis_client.set(_target_path_key(run_id), target, ex=ttl)
             redis_client.set(ACTIVE_RUN_KEY, run_id, ex=ttl)
             # Even a timeout may mean the master accepted the request. Keep both
             # locks until it returns so cancellation/recovery cannot admit a
@@ -285,6 +290,8 @@ def s_run(
                 "run_time": f"{max(1, task.duration)}s",
             }, headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
+            if response.json().get("success") is False:
+                raise PerfControlUnavailableError("Locust 未接受启动请求")
 
         elapsed = 0
         while elapsed < task.duration:
@@ -306,6 +313,12 @@ def s_run(
                 raise RuntimeError("压测任务已不再处于运行状态")
             _refresh_run_keys(redis_client, run_id, task.duration)
             stats = requests.get(f"{base}/stats/requests", headers=_control_headers(), timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
+            if load_config:
+                iteration_stats = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
+                                               timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
+                if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
+                    raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
+                perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
             history_samples.append({"elapsed_s": elapsed, "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
             metrics.perf_rps.set(stats.get("total_rps") or 0)
@@ -317,6 +330,14 @@ def s_run(
 
         _stop_owned_run(redis_client, lease_id)
         stopped = True
+        if load_config:
+            # Allow the master's final worker messages to arrive, then take a final sample.
+            time.sleep(0.25)
+            iteration_stats = requests.get(f"{base}/whale/iterations", headers=_control_headers(),
+                                           timeout=settings.REQUEST_TIMEOUT_SECONDS).json()
+            if iteration_stats.get("lease") != lease_id or iteration_stats.get("configuration_failures", 0):
+                raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
+            perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
         rps = stats.get("total_rps")
         fail_ratio = stats.get("fail_ratio")
         aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})

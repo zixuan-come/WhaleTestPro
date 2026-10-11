@@ -174,6 +174,9 @@ services:
     restart: unless-stopped
     # 连主控：主从走 5557，同 whale 网络内网互通，不用发布端口
     command: locust -f locustfile.py --worker --master-host locust-master
+    environment:
+      # Each virtual user loads the owned immutable plan before any HTTP traffic.
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       - locust-master
     networks: [whale]                         # 扩容用运行时命令：docker compose up -d --scale locust-worker=3

@@ -7,12 +7,18 @@ import {
 } from '../api/perf'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
+import { listCases } from '../api/case'
+import { listScenarios } from '../api/scenario'
+import { METHODS, newPerfStep, scenarioSteps, buildPerfPlan } from '../utils/perf-plan'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
 const interfaces = ref([])
 const envs = ref([])
+const cases = ref([])
+const scenarios = ref([])
+const steps = ref([newPerfStep()])
 const loading = ref(true)
 const error = ref('')
 
@@ -22,7 +28,8 @@ const detailTask = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const runningId = ref(null)      // 正在触发运行的任务 id
-const form = reactive({ name: '', interface_id: '', env_id: '', target_host: '', target_path: '', users: 10, spawn_rate: 2, duration: 30 })
+const form = reactive({ name: '', interface_id: '', scenario_id: '', env_id: '', target_host: '', users: 10, spawn_rate: 2, duration: 30,
+  mode: 'single', variables: '{}', datasets: '[]', stop_on_failure: true, timeout_seconds: 30, wait_seconds: 1 })
 
 const total = computed(() => items.value.length)
 const runningCount = computed(() => items.value.filter(t => ['queued', 'running'].includes(t.status)).length)
@@ -74,10 +81,12 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [tasks, ifs, es] = await Promise.all([listPerfTasks(), listInterfaces(), listEnvironments()])
+    const [tasks, ifs, es, cs, scs] = await Promise.all([listPerfTasks(), listInterfaces(), listEnvironments(), listCases(), listScenarios()])
     items.value = tasks
     interfaces.value = ifs
     envs.value = es
+    cases.value = cs
+    scenarios.value = scs
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -90,7 +99,14 @@ function openCreate() {
   form.interface_id = ''
   form.env_id = ''
   form.target_host = ''
-  form.target_path = ''
+  form.scenario_id = ''
+  form.mode = 'single'
+  form.variables = '{}'
+  form.datasets = '[]'
+  form.stop_on_failure = true
+  form.timeout_seconds = 30
+  form.wait_seconds = 1
+  steps.value = [newPerfStep()]
   form.users = 10
   form.spawn_rate = 2
   form.duration = 30
@@ -98,11 +114,11 @@ function openCreate() {
   showModal.value = true
 }
 
-// 选接口 → 自动带出目标路径(接口 url 只是路径,host 由环境补)
+// Import a snapshot, including method, headers, params and body.
 function onPickInterface() {
   const it = interfaces.value.find(i => i.id === form.interface_id)
   if (!it) return
-  form.target_path = it.url || ''
+  if (form.mode === 'single') steps.value = [newPerfStep(it)]
   if (!form.name.trim()) form.name = `${it.name} 压测`
 }
 
@@ -111,6 +127,39 @@ function onPickEnv() {
   const e = envs.value.find(x => x.id === form.env_id)
   if (!e) return
   form.target_host = e.base_url || ''
+  form.variables = JSON.stringify(e.variables || {}, null, 2)
+}
+
+function setMode() {
+  formErr.value = ''
+  if (form.mode === 'single' && steps.value.length > 1) {
+    form.mode = 'chain'
+    formErr.value = '请先删除多余步骤，再切换单接口模式（不会自动丢弃步骤）'
+  }
+}
+function addStep() {
+  const it = interfaces.value.find(item => item.id === form.interface_id)
+  steps.value.push(newPerfStep(it || {}))
+}
+function moveStep(index, delta) {
+  const target = index + delta
+  if (target < 0 || target >= steps.value.length) return
+  const [step] = steps.value.splice(index, 1)
+  steps.value.splice(target, 0, step)
+}
+function importScenario() {
+  try {
+    const sc = scenarios.value.find(item => item.id === form.scenario_id)
+    const imported = scenarioSteps(sc, cases.value, interfaces.value)
+    steps.value = imported
+    if (!form.name.trim()) form.name = `${sc.name} 链路压测`
+    formErr.value = ''
+  } catch (error) { formErr.value = error.message }
+}
+function statLabel(task, row) {
+  const index = /^step_(\d+)$/.exec(row.name || '')
+  const step = index && task.load_config?.steps?.[Number(index[1]) - 1]
+  return step ? `${step.name} · ${step.path.split('?')[0]}` : row.name
 }
 
 function closeModal() {
@@ -122,17 +171,18 @@ async function save() {
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写任务名称'; return }
   if (!form.target_host.trim()) { formErr.value = '请填写目标 Host'; return }
-  if (!form.target_path.trim()) { formErr.value = '请填写目标路径'; return }
   if (!(form.users > 0) || !(form.spawn_rate > 0) || !(form.duration > 0)) {
     formErr.value = '并发数 / 每秒启动 / 持续时长都要大于 0'; return
   }
 
   saving.value = true
   try {
+    const plan = buildPerfPlan(form, steps.value)
     await createPerfTask({
       name: form.name.trim(),
       target_host: form.target_host.trim(),
-      target_path: form.target_path.trim(),
+      target_path: plan.steps[0].path.slice(0, 255),
+      load_config: plan,
       users: Number(form.users),
       spawn_rate: Number(form.spawn_rate),
       duration: Number(form.duration),
@@ -271,6 +321,14 @@ onUnmounted(stopPoll)
     <div v-if="detailTask" class="perf-detail">
       <div class="detail-head"><div><strong>{{ detailTask.name }}</strong><small>{{ detailTask.target_host }}{{ detailTask.target_path }}</small></div><span class="badge" :class="statusClass(detailTask.status)"><span class="dot"></span>{{ statusText(detailTask.status) }}</span></div>
       <div v-if="detailTask.failure_reason" class="form-err">{{ detailTask.failure_reason }}</div>
+      <div class="plan-hint">{{ detailTask.load_config?.mode === 'chain' ? '有序链路' : '单接口' }} · RPS / P95 / P99 是 HTTP 请求统计，不是整轮链路指标。</div>
+      <div v-if="detailTask.iteration_stats" class="iteration-metrics">
+        <span>完成轮次 {{ detailTask.iteration_stats.iterations }}</span>
+        <span>失败轮次 {{ detailTask.iteration_stats.failures }}</span>
+        <span>轮次吞吐 {{ fmtRps(detailTask.iteration_stats.iteration_rps) }} /s</span>
+        <span>整轮平均 {{ fmtMs(detailTask.iteration_stats.avg_duration_ms) }}</span>
+      </div>
+      <ol v-if="detailTask.load_config" class="plan-summary"><li v-for="(step, index) in detailTask.load_config.steps" :key="index">step_{{ String(index + 1).padStart(2, '0') }} · {{ step.name }} · {{ step.method }} {{ step.path.split('?')[0] }}</li></ol>
       <div class="detail-metrics"><div><span>RPS</span><strong>{{ fmtRps(detailTask.rps) }}</strong></div><div><span>平均耗时</span><strong>{{ fmtMs(detailTask.avg_response_ms) }}</strong></div><div><span>P95</span><strong>{{ fmtMs(detailTask.p95_response_ms) }}</strong></div><div><span>P99</span><strong>{{ fmtMs(detailTask.p99_response_ms) }}</strong></div><div><span>失败率</span><strong>{{ fmtFail(detailTask.fail_ratio) }}</strong></div></div>
       <div class="detail-section"><div class="detail-title">接口维度统计</div><div v-if="detailTask.request_stats?.length" class="detail-table detail-table-wide"><div class="detail-row detail-row-head"><span>接口</span><span>请求数</span><span>失败数</span><span>失败率</span><span>RPS</span><span>平均耗时</span><span>P95</span><span>P99</span></div><div v-for="row in detailTask.request_stats" :key="`${row.method}-${row.name}`" class="detail-row detail-row-wide"><span>{{ row.method }} {{ row.name }}</span><span>{{ row.num_requests ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ row.num_failures ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ fmtFail(row.num_requests ? row.num_failures / row.num_requests : 0) }}</span><span>{{ fmtRps(row.rps) }}</span><span>{{ fmtMs(row.avg_response_ms) }}</span><span>{{ fmtMs(row.p95_response_ms) }}</span><span>{{ fmtMs(row.p99_response_ms) }}</span></div></div><div v-else class="state">暂无按接口统计。</div></div>
       <div class="detail-section"><div class="detail-title">历史趋势</div><div v-if="historyChart" class="history-chart"><div class="history-chart-head"><span>压测趋势</span><small>RPS 左轴 · 平均耗时右轴 · 最近 {{ historyChart.lastElapsed }}s</small></div><svg viewBox="0 0 640 190" role="img" aria-label="压测历史趋势图" preserveAspectRatio="none"><line x1="42" y1="18" x2="42" y2="158" /><line x1="598" y1="18" x2="598" y2="158" /><line x1="42" y1="158" x2="598" y2="158" /><line class="grid-line" x1="42" y1="88" x2="598" y2="88" /><text x="6" y="22">{{ fmtRps(historyChart.maxRps) }}</text><text x="10" y="162">0</text><text x="602" y="22">{{ fmtMs(historyChart.maxLatency) }}</text><text x="612" y="162">0 ms</text><polyline class="trend-rps" :points="historyChart.rpsPoints" /><polyline class="trend-latency" :points="historyChart.latencyPoints" /></svg><div class="history-legend"><span><i class="legend-rps"></i>RPS（峰值 {{ fmtRps(historyChart.maxRps) }}）</span><span><i class="legend-latency"></i>平均耗时（峰值 {{ fmtMs(historyChart.maxLatency) }}）</span></div></div><div v-else class="state">采样点不足，完成一次压测后显示趋势。</div></div><div class="detail-section"><div class="detail-title">历史采样明细</div><div v-if="detailTask.history_samples?.length" class="history-list"><div v-for="sample in detailTask.history_samples" :key="sample.elapsed_s" class="history-row"><span>{{ sample.elapsed_s }}s</span><span>RPS {{ fmtRps(sample.rps) }}</span><span>平均 {{ fmtMs(sample.avg_response_ms) }}</span><span>P95 {{ fmtMs(sample.p95_response_ms) }}</span><span>失败 {{ fmtFail(sample.fail_ratio) }}</span></div></div><div v-else class="state">暂无历史采样。</div></div>
@@ -279,16 +337,16 @@ onUnmounted(stopPoll)
     <template #foot><button class="btn btn-primary" @click="showDetail = false">关闭</button></template>
   </Modal>
   <!-- 新建压测弹层 -->
-  <Modal v-if="showModal" title="新建压测任务" :busy="saving" @close="closeModal">
+  <Modal v-if="showModal" title="新建压测任务" :max-width="820" :busy="saving" @close="closeModal">
     <div class="field">
       <label>任务名称</label>
       <input v-model="form.name" placeholder="如:下单接口 200 并发" />
     </div>
     <div class="grid2 pick">
       <div class="field">
-        <label>从接口选择 <span class="opt">(可选,自动填路径)</span></label>
+        <label>从接口导入 <span class="opt">(方法、请求头、参数、请求体快照)</span></label>
         <select v-model.number="form.interface_id" @change="onPickInterface">
-          <option value="">— 手动填写 —</option>
+          <option value="">— 手动配置 —</option>
           <option v-for="it in interfaces" :key="it.id" :value="it.id">{{ it.name }} · {{ it.method }} {{ it.url }}</option>
         </select>
       </div>
@@ -303,10 +361,41 @@ onUnmounted(stopPoll)
         <input v-model="form.target_host" placeholder="https://api.example.com" />
       </div>
       <div class="field">
-        <label>目标路径</label>
-        <input v-model="form.target_path" placeholder="/orders" />
+        <label>压测模式</label>
+        <select v-model="form.mode" aria-label="压测模式" @change="setMode"><option value="single">单接口</option><option value="chain">有序链路</option></select>
       </div>
     </div>
+    <div v-if="form.mode === 'chain'" class="pick grid2">
+      <div class="field"><label>导入已有 HTTP 场景</label><select v-model.number="form.scenario_id" aria-label="场景"><option value="">— 选择场景 —</option><option v-for="sc in scenarios" :key="sc.id" :value="sc.id">{{ sc.name }} · {{ sc.case_ids?.length || 0 }} 步</option></select></div>
+      <div class="step-actions"><button class="btn btn-ghost" :disabled="!form.scenario_id" @click="importScenario">导入场景快照</button><button class="btn btn-ghost" :disabled="steps.length >= 100" @click="addStep">添加接口步骤</button></div>
+    </div>
+    <div v-for="(step, index) in steps" :key="index" class="perf-step">
+      <div class="step-head"><strong>步骤 {{ index + 1 }} · {{ step.name }}</strong><div v-if="form.mode === 'chain'" class="step-actions"><button class="btn btn-ghost btn-sm" :disabled="index === 0" :aria-label="`步骤 ${index + 1} 上移`" @click="moveStep(index, -1)">上移</button><button class="btn btn-ghost btn-sm" :disabled="index === steps.length - 1" :aria-label="`步骤 ${index + 1} 下移`" @click="moveStep(index, 1)">下移</button><button class="btn btn-ghost btn-sm" :disabled="steps.length === 1" :aria-label="`删除步骤 ${index + 1}`" @click="steps.splice(index, 1)">删除</button></div></div>
+      <div class="grid3">
+        <div class="field"><label>步骤名称</label><input v-model="step.name" :aria-label="`步骤 ${index + 1} 名称`" /></div>
+        <div class="field"><label>请求方法</label><select v-model="step.method" :aria-label="`步骤 ${index + 1} 方法`"><option v-for="method in METHODS" :key="method">{{ method }}</option></select></div>
+        <div class="field"><label>预期状态码（空为 2xx/3xx）</label><input v-model="step.expected_status" type="number" min="100" max="599" :aria-label="`步骤 ${index + 1} 状态码`" /></div>
+      </div>
+      <div class="field"><label>相对路径（支持 ${变量名}）</label><input v-model="step.path" :aria-label="`步骤 ${index + 1} 路径`" placeholder="/orders/${order_id}" /></div>
+      <div class="grid2">
+        <div class="field"><label>Headers · JSON 对象</label><textarea v-model="step.headers" :aria-label="`步骤 ${index + 1} Headers`" rows="3" /></div>
+        <div class="field"><label>Query 参数 · JSON 对象</label><textarea v-model="step.params" :aria-label="`步骤 ${index + 1} Query`" rows="3" /></div>
+      </div>
+      <div class="field"><label>请求体类型</label><select v-model="step.body_type" :aria-label="`步骤 ${index + 1} 请求体类型`"><option value="none">无请求体</option><option value="json">JSON</option><option value="form">表单（urlencoded）</option><option value="raw">原始文本（Content-Type 在 Headers 配置）</option></select></div>
+      <div v-if="step.body_type !== 'none'" class="field"><label>请求体</label><textarea v-model="step.body" :aria-label="`步骤 ${index + 1} Body`" rows="4" /></div>
+      <details><summary>变量提取与业务断言</summary><div class="grid2">
+        <div class="field"><label>提取规则 · JSONPath 映射</label><textarea v-model="step.extract_rules" :aria-label="`步骤 ${index + 1} 提取规则`" rows="3" placeholder='{"token":"$.data.token"}' /></div>
+        <div class="field"><label>断言 · JSON 数组</label><textarea v-model="step.assertions" :aria-label="`步骤 ${index + 1} 断言`" rows="3" placeholder='[{"type":"json_eq","path":"$.code","expected":0}]' /></div>
+      </div></details>
+      <label class="check-option"><input v-model="step.allow_redirects" type="checkbox" />允许重定向（可能访问其他 Host，请确认目标可信）</label>
+    </div>
+    <details class="pick"><summary>初始变量与数据集</summary><div class="grid2">
+      <div class="field"><label>初始变量 · JSON 对象</label><textarea v-model="form.variables" aria-label="初始变量" rows="4" /></div>
+      <div class="field"><label>数据集 · JSON 对象数组</label><textarea v-model="form.datasets" aria-label="数据集" rows="4" /></div>
+    </div><p class="plan-hint">每个用户每轮独立变量/会话；数据集按轮次循环，不保证账号独占。可用 ${_vu_id} 和 ${_iteration} 生成隔离业务标识。配置可能含凭证，请使用测试账号。</p></details>
+    <div class="grid2"><div class="field"><label>请求超时 s</label><input v-model.number="form.timeout_seconds" type="number" min="0.1" max="120" step="0.1" /></div><div class="field"><label>每轮结束等待 s</label><input v-model.number="form.wait_seconds" type="number" min="0" max="60" step="0.1" /></div></div>
+    <label class="check-option"><input v-model="form.stop_on_failure" type="checkbox" />步骤失败立即结束本轮（不继续执行依赖步骤）</label>
+    <p class="plan-hint">创建仅保存快照，点击运行才发流量。场景导入不支持 SQL、用例级数据集或自动重试；当前不支持文件上传、WebSocket 或 JMeter 插件。</p>
     <div class="grid3">
       <div class="field">
         <label>并发用户 VU</label>
@@ -331,6 +420,7 @@ onUnmounted(stopPoll)
 </template>
 
 <style scoped>
+.perf-step{padding:16px;border:1px solid var(--border);border-radius:10px;margin-bottom:16px;background:var(--surface-2)}.step-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px}.step-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.field textarea{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:12px ui-monospace,Consolas,monospace;resize:vertical}.field textarea:focus{outline:2px solid var(--primary);outline-offset:1px}.check-option{display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:14px}.plan-hint{font-size:12px;color:var(--text-muted);line-height:1.7}.perf-step summary,.pick summary{cursor:pointer;font-size:12px;font-weight:600;margin-bottom:12px}.iteration-metrics{display:flex;gap:14px;flex-wrap:wrap;padding:12px;background:var(--surface-2);border-radius:8px;font-size:12px}.plan-summary{font:12px ui-monospace,Consolas,monospace;color:var(--text-muted);overflow-wrap:anywhere}.plan-summary li{padding:4px 0}@media(max-width:640px){.step-head{align-items:flex-start;flex-direction:column}}
 .history-chart{padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px}.history-chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--text-muted);font-size:11.5px}.history-chart-head small{font:11px ui-monospace,Consolas,monospace}.history-chart svg{display:block;width:100%;height:190px;background:linear-gradient(to bottom,transparent 49.5%,var(--border) 50%,transparent 50.5%);border-radius:6px}.history-chart line{stroke:var(--border);stroke-width:1}.history-chart .grid-line{stroke-dasharray:3 4}.history-chart text{fill:var(--text-muted);font:10px ui-monospace,Consolas,monospace}.history-chart polyline{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.history-chart .trend-rps{stroke:var(--primary)}.history-chart .trend-latency{stroke:var(--warn-fg);stroke-dasharray:6 5}.history-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;color:var(--text-muted);font-size:11px}.history-legend span{display:inline-flex;align-items:center;gap:5px}.history-legend i{display:inline-block;width:18px;height:3px;border-radius:3px}.legend-rps{background:var(--primary)}.legend-latency{background:var(--warn-fg)}.history-list{display:flex;flex-direction:column;gap:5px;max-height:210px;overflow:auto}.history-row{display:grid;grid-template-columns:55px 1fr 1fr 1fr 1fr;gap:8px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-muted);font:11.5px ui-monospace,Consolas,monospace}.history-row span:first-child{color:var(--text);font-weight:600}@media (max-width:640px){.history-row{grid-template-columns:55px 1fr 1fr}.history-row span:nth-child(n+4){display:none}}
 .icon-btn.detail:hover{color:var(--primary);background:var(--surface-2)}.perf-detail{display:flex;flex-direction:column;gap:16px}.detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}.detail-head strong{display:block;font-size:14px}.detail-head small{display:block;margin-top:4px;color:var(--text-muted);font:11.5px ui-monospace,Consolas,monospace;overflow-wrap:anywhere}.detail-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.detail-metrics>div{padding:10px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}.detail-metrics span{display:block;color:var(--text-muted);font-size:11px}.detail-metrics strong{display:block;margin-top:5px;font:700 15px ui-monospace,Consolas,monospace}.detail-section{display:flex;flex-direction:column;gap:8px}.detail-title{font-size:12px;font-weight:700;color:var(--text-muted)}.detail-table{border:1px solid var(--border);border-radius:8px;overflow:hidden}.detail-row{display:grid;grid-template-columns:2fr .7fr .7fr .8fr .8fr;gap:8px;padding:9px 11px;border-bottom:1px solid var(--border);font-size:12px}.detail-row:last-child{border-bottom:0}.detail-row-wide{grid-template-columns:2fr .7fr .7fr .8fr .7fr .9fr .8fr .8fr;}.detail-table-wide{overflow-x:auto}.detail-table-wide .detail-row{min-width:700px}.detail-row-head{background:var(--surface-2);color:var(--text-muted);font-weight:600}.detail-row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail-row .bad{color:var(--fail-fg)}.error-list{display:flex;flex-direction:column;gap:6px}.error-row{display:grid;grid-template-columns:1.2fr 60px 2fr;gap:8px;align-items:center;padding:9px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px}.error-row strong{color:var(--fail-fg)}.error-row small{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media (max-width:640px){.detail-metrics{grid-template-columns:repeat(2,1fr)}.error-row{grid-template-columns:1fr 44px}.error-row small{grid-column:1/-1}.detail-row{grid-template-columns:1.6fr .6fr .6fr}}
 .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }

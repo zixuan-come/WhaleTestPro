@@ -490,7 +490,8 @@ def test_locust_master_reads_task_scoped_target_path(monkeypatch):
     fake_locust.HttpUser = type("HttpUser", (), {})
     fake_locust.task = lambda function: function
     fake_locust.between = lambda start, end: (start, end)
-    fake_locust.events = SimpleNamespace(init=EventHook(), test_start=EventHook())
+    fake_locust.events = SimpleNamespace(init=EventHook(), test_start=EventHook(),
+                                        report_to_master=EventHook(), worker_report=EventHook(), test_stop=EventHook())
     fake_runners = ModuleType("locust.runners")
     fake_runners.MasterRunner = type("MasterRunner", (), {})
     fake_runners.WorkerRunner = type("WorkerRunner", (), {})
