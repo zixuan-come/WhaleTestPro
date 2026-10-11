@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from app.core.authorization import ProjectContext, authorize
 from app.core.permissions import Action, Resource
 from app.database import get_db
-from app.schemas.interface import CategoryRename, InterfaceCreate, InterfaceMigrate, InterfaceOut
+from app.schemas.interface import (
+    CategoryRename, InterfaceCreate, InterfaceMigrate, InterfaceOut, InterfaceReferencesOut,
+)
 from app.schemas.response import ApiResponse, success_response
 from app.services import execution
 from app.services import interface as api_service
@@ -47,7 +49,7 @@ def create_interface(
     )
 
 
-@router.get("/{interface_id}/references", response_model=ApiResponse[dict])
+@router.get("/{interface_id}/references", response_model=ApiResponse[InterfaceReferencesOut])
 def interface_references(
     interface_id: int,
     db: Session = Depends(get_db),

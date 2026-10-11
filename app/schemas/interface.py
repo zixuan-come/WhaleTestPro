@@ -44,6 +44,20 @@ class InterfaceOut(InterfaceCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class InterfaceReferenceCaseOut(BaseModel):
+    id: int
+    name: str
+    scenario_ids: list[int]
+    last_passed: bool | None
+
+
+class InterfaceReferencesOut(BaseModel):
+    # Nested ORM values must be validated by InterfaceOut before JSON encoding.
+    interface: InterfaceOut
+    case_count: int
+    cases: list[InterfaceReferenceCaseOut]
+
+
 class CategoryRename(BaseModel):
     old_name: str
     new_name: str
