@@ -12,12 +12,13 @@ def _visible_records(db):
     )))
 
 
-def db_create(db: Session, record):
+def db_create(db: Session, record, *, refresh=True):
     # record 自带 project_id(schema 里必填,由 middleware 塞入)—— 不额外传参
     db_record = TrafficRecord(**record.model_dump())
     db.add(db_record)
     db.commit()
-    db.refresh(db_record)
+    if refresh:
+        db.refresh(db_record)
     return db_record
 
 

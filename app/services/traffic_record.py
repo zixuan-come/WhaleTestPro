@@ -2,9 +2,9 @@ from sqlalchemy.orm import Session
 from app.repositories import traffic_record as traffic_record_repo
 
 
-def s_create(db: Session, record):
+def s_create(db: Session, record, *, refresh=True):
     # record.project_id 由 middleware 塞入,repo 直接 dump 即可
-    return traffic_record_repo.db_create(db, record)
+    return traffic_record_repo.db_create(db, record, refresh=refresh)
 
 
 def s_get(db: Session, record_id: int, project_id: int):

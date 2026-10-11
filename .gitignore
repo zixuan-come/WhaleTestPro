@@ -31,6 +31,10 @@ htmlcov/
 allure-results/
 allure-report/
 reports/
+# 仅允许经人工整理的本次验证报告，不开放运行产物目录。
+!docs/testing/reports/
+docs/testing/reports/*
+!docs/testing/reports/已知尾项修复与验证-2026-10-11.md
 
 # --- 日志/临时 ---
 *.log

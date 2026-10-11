@@ -18,3 +18,15 @@ traffic_record_enqueue_failures = Counter(
     "whale_traffic_record_enqueue_failures_total",
     "流量录制事件投递失败次数",
 )
+
+# Consumer metrics count failed attempts and messages, not confirmed lost rows:
+# a disconnected COMMIT can have an unknown outcome and must not be retried.
+traffic_record_persist_failures = Counter(
+    "whale_traffic_record_persist_failures_total", "流量录制消费保存失败尝试次数",
+)
+traffic_record_persist_retries = Counter(
+    "whale_traffic_record_persist_retries_total", "流量录制回滚后发起有限重试次数",
+)
+traffic_record_persist_terminal_failures = Counter(
+    "whale_traffic_record_persist_terminal_failures_total", "流量录制未确认保存且不再重试的消息数",
+)
