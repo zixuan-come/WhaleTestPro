@@ -53,6 +53,16 @@ class SuiteUpdate(BaseModel):
     case_ids: list[int] | None = None
     tags: list[str] | None = None
 
+    @field_validator("scenario_ids", "case_ids")
+    @classmethod
+    def validate_ids(cls, value):
+        return SuiteCreate.validate_ids(value)
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, value):
+        return SuiteCreate.validate_tags(value)
+
     @field_validator("name", "type", mode="before")
     @classmethod
     def reject_explicit_null(cls, value):

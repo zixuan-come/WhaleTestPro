@@ -94,7 +94,11 @@ def run_case(db, case_id, env_id, project_id):
         return {"error": "用例关联的接口不存在"}
 
     base_ctx = _env_context(db, env_id, project_id)
-    if case.datasets:
+    if case.datasets is not None and (not isinstance(case.datasets, list)
+                                     or any(not isinstance(row, dict) for row in case.datasets)):
+        result = {"passed": False, "error": "用例数据集必须为对象数组，未发送请求", "attempts": 0}
+        passed = False
+    elif case.datasets:
         result = [_run_with_retry(db, case, interface, {**base_ctx, **row}) for row in case.datasets]
         passed = all(r["passed"] for r in result)
     else:
