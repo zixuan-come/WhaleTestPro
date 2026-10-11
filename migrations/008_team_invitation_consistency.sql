@@ -25,11 +25,12 @@ BEGIN
           AND COLUMN_NAME = 'pending_invitee_id';
 
         IF column_exists = 0 THEN
+            -- VIRTUAL 兼容 invitee_id 外键的 ON DELETE CASCADE；不改动外键。
             ALTER TABLE team_invitation
                 ADD COLUMN pending_invitee_id INT
                 GENERATED ALWAYS AS (
                     CASE WHEN status = 'pending' THEN invitee_id ELSE NULL END
-                ) STORED;
+                ) VIRTUAL;
         END IF;
 
         SELECT COUNT(*) INTO duplicate_pending

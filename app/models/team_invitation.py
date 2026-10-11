@@ -29,11 +29,12 @@ class TeamInvitation(Base):
     status = Column(String(20), nullable=False, default='pending', server_default='pending', index=True)
     # 只有 pending 行会生成 invitee_id；已处理记录生成 NULL。唯一约束允许保留
     # 多条 accepted/rejected 历史，同时从数据库层阻止并发创建重复待处理邀请。
+    # MySQL 使用 VIRTUAL，兼容 invitee_id 外键现有的 ON DELETE CASCADE。
     pending_invitee_id = Column(
         Integer,
         Computed(
             "CASE WHEN status = 'pending' THEN invitee_id ELSE NULL END",
-            persisted=True,
+            persisted=False,
         ),
         nullable=True,
     )

@@ -101,11 +101,24 @@ def test_team_invitation_migration_replaces_history_blocking_constraint():
     ).read_text(encoding="utf-8")
 
     assert "GENERATED ALWAYS AS" in migration
+    assert ") VIRTUAL;" in migration
     assert "CASE WHEN status = 'pending' THEN invitee_id ELSE NULL END" in migration
     assert "CREATE UNIQUE INDEX uq_team_invitation_pending" in migration
     assert migration.index("CREATE UNIQUE INDEX uq_team_invitation_pending") < migration.index(
         "ALTER TABLE team_invitation DROP INDEX uq_team_invite_active"
     )
+
+
+def test_team_invitation_model_uses_virtual_generation_and_keeps_cascades():
+    from sqlalchemy.dialects.mysql import dialect
+    from sqlalchemy.schema import CreateTable
+    from app.models.team_invitation import TeamInvitation
+
+    table = TeamInvitation.__table__
+    assert table.c.pending_invitee_id.computed.persisted is False
+    assert ") VIRTUAL" in str(CreateTable(table).compile(dialect=dialect()))
+    assert len(table.foreign_keys) == 3
+    assert all(foreign_key.ondelete == "CASCADE" for foreign_key in table.foreign_keys)
 
 
 def test_explicit_project_team_migration_only_drops_obsolete_marker():

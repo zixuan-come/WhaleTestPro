@@ -321,12 +321,14 @@ def ensure_team_invitation_consistency_schema(bind) -> None:
             for column in inspector.get_columns("team_invitation")
         }
         if "pending_invitee_id" not in columns:
+            # A STORED generated column cannot use an ON DELETE CASCADE FK
+            # base column in MySQL. VIRTUAL keeps the existing FKs intact.
             connection.execute(
                 text(
                     "ALTER TABLE `team_invitation` ADD COLUMN "
                     "`pending_invitee_id` INT GENERATED ALWAYS AS ("
                     "CASE WHEN `status` = 'pending' THEN `invitee_id` ELSE NULL END"
-                    ") STORED"
+                    ") VIRTUAL"
                 )
             )
 
