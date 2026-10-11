@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test:perf": "node --test tests/perf-plan.test.mjs",
+    "test:perf": "node --test tests/perf-plan.test.mjs tests/perf-grid.test.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
