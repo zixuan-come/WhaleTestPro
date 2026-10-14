@@ -216,7 +216,10 @@ def _validate_iterations(iteration_stats, lease_id: str):
         raise PerfControlUnavailableError("Locust 压测配置未正常加载，已停止任务")
 
 
-def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples):
+MAX_LIVE_HISTORY_SAMPLES = 600
+
+
+def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples, *, allow_empty=False):
     """Pure final-stat mapping; stopped counters must not replace live RPS."""
     rps = live_rps if live_rps is not None else stats.get("total_rps")
     fail_ratio = stats.get("fail_ratio")
@@ -224,7 +227,7 @@ def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples):
     request_count = max(aggregate.get("num_requests", 0) or 0,
                         sum(row.get("num_requests", 0) or 0 for row in stats.get("stats", [])
                             if row.get("name") != "Aggregated"))
-    if request_count <= 0:
+    if request_count <= 0 and not allow_empty:
         raise PerfControlUnavailableError("Locust 未产生任何请求，压测未有效执行；请检查 Worker 和目标配置")
     avg = aggregate.get("avg_response_time")
     p95 = aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile"))
@@ -392,10 +395,19 @@ def s_run(
             iteration_stats = _control_get_json(base, "/whale/iterations")
             heartbeat()
             _validate_iterations(iteration_stats, lease_id)
-            if load_config:
-                perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
-            history_samples.append({"elapsed_s": elapsed, "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
+            history_samples.append({"elapsed_s": elapsed, "sampled_at": _utcnow().isoformat() + "Z", "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
+            # Bound repeated JSON writes on long runs; request counters remain cumulative.
+            del history_samples[:-MAX_LIVE_HISTORY_SAMPLES]
+            live = _result_statistics(stats, None, {}, history_samples, allow_empty=True)
+            if load_config:
+                live["iteration_stats"] = iteration_stats
+            # One conditional commit makes the complete sample visible to API readers.
+            # A concurrent stop must never be overwritten or revived by a late sample.
+            if perf_repo.db_update_if_status(db, task_id, project_id, "running", **live) is None:
+                _stop_owned_run(redis_client, lease_id)
+                stopped = True
+                return perf_repo.db_get(db, task_id, project_id)
             metrics.perf_rps.set(stats.get("total_rps") or 0)
             metrics.perf_fail_ratio.set(stats.get("fail_ratio") or 0)
             metrics.perf_user_count.set(stats.get("user_count") or 0)
