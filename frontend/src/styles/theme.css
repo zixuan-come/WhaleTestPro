@@ -1,15 +1,5 @@
 /* ===== WhaleTestPro 设计变量 · 亮=L4 蓝紫海(白天蓝) / 暗=P3 靛蓝紫 ===== */
-/* 中文字体:OPPO Sans 自托管,现代清爽有质感,未加载完前退回系统字体 */
-@font-face {
-  font-family:"OPPO Sans";
-  src:url("/fonts/OPPOSans-Regular.ttf") format("truetype");
-  font-weight:400; font-style:normal; font-display:swap;
-}
-@font-face {
-  font-family:"OPPO Sans";
-  src:url("/fonts/OPPOSans-Bold.ttf") format("truetype");
-  font-weight:700; font-style:normal; font-display:swap;
-}
+/* 使用系统字体，避免不完整的自托管字体下载失败。 */
 :root, [data-theme="light"] {
   --primary:      #4F6BED;
   --primary-2:    #6D5BF0;
@@ -65,7 +55,7 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body, #app { height:100%; }
 body {
-  font-family:"OPPO Sans",-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
   background:var(--bg); color:var(--text);
   -webkit-font-smoothing:antialiased;
   transition:background .3s ease, color .3s ease;
