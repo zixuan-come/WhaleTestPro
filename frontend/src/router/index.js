@@ -35,9 +35,23 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && !auth.token) return { name: 'login' }
   if (to.name === 'login' && auth.token) return { name: 'interfaces' }
 
+  // 包括项目/团队管理页：显示缓存名称前，先校验当前账号的团队与项目。
+  const initializingContext = auth.token && !to.meta.public && auth.teamStatus !== 'ready'
+  if (initializingContext) {
+    try {
+      await auth.initTeam()
+    } catch {
+      // Store 已清除失效选择，页面保留加载失败状态供重试。
+    }
+    if (!auth.token) return { name: 'login' }
+    if (auth.teamStatus === 'ready' && auth.currentTeamId) await auth.initProject()
+    if (!auth.token) return { name: 'login' }
+  }
+
   // 已登录 + 走业务页 + 还没选项目 → 尝试自动选一个,选不到就跳项目管理页
   if (auth.token && !to.meta.public && !to.meta.noProjectRequired && !auth.currentProjectId) {
-    await auth.initProject()
+    if (!initializingContext && auth.currentTeamId) await auth.initProject()
+    if (!auth.token) return { name: 'login' }
     if (!auth.currentProjectId) return { name: 'projects' }
   }
 })

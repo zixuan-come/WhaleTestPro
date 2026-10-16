@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useThemeStore } from '../stores/theme'
 import { useAuthStore } from '../stores/auth'
 import { listProjects, createProject } from '../api/project'
-import { listTeams, createTeam } from '../api/team'
+import { createTeam } from '../api/team'
 import Modal from '../components/Modal.vue'
 
 const route = useRoute()
@@ -52,6 +52,11 @@ const navGroups = [
 const projectDropdownOpen = ref(false)
 const teamDropdownOpen = ref(false)
 const teams = ref([])
+const teamLabel = computed(() => {
+  if (auth.teamStatus === 'error') return '团队加载失败'
+  if (auth.teamStatus !== 'ready') return '加载团队中…'
+  return auth.currentTeamName || '暂无团队'
+})
 const showCreateTeamModal = ref(false)
 const teamForm = ref({ name: '', description: '' })
 const teamFormErr = ref('')
@@ -78,7 +83,21 @@ function navigateTo(path) {
   router.push(path)
 }
 
-async function toggleTeamDropdown() { teamDropdownOpen.value = !teamDropdownOpen.value; if (teamDropdownOpen.value) { try { teams.value = await listTeams() } catch { teams.value = [] } } }
+async function loadTeams() {
+  try {
+    const result = await auth.initTeam()
+    teams.value = result.teams
+  } catch {
+    teams.value = []
+  }
+  if (auth.token && !auth.currentProjectId && !route.meta.noProjectRequired) {
+    router.push({ name: 'projects' })
+  }
+}
+async function toggleTeamDropdown() {
+  teamDropdownOpen.value = !teamDropdownOpen.value
+  if (teamDropdownOpen.value) await loadTeams()
+}
 function switchTeam(team) { auth.setTeam(team.id, team.name, team.role || ''); auth.setProject(null, ''); teamDropdownOpen.value = false; router.go(0) }
 function openCreateTeam() { teamForm.value = { name: '', description: '' }; teamFormErr.value = ''; showCreateTeamModal.value = true; teamDropdownOpen.value = false }
 async function saveTeam() { teamFormErr.value = ''; if (!teamForm.value.name.trim()) { teamFormErr.value = '请填写团队名称'; return }; savingTeam.value = true; try { const team = await createTeam({ name: teamForm.value.name.trim(), description: teamForm.value.description.trim() || null }); auth.setTeam(team.id, team.name, 'owner'); showCreateTeamModal.value = false; router.go(0) } catch (e) { teamFormErr.value = e.message || '创建失败' } finally { savingTeam.value = false } }
@@ -221,7 +240,22 @@ function onLogout() {
           <div class="crumb">工作台 / {{ crumb }}</div>
         </div>
         <div class="actions">
-          <div class="project-switcher" :class="{ open: teamDropdownOpen }"><button class="switcher-btn" @click.stop="toggleTeamDropdown"><span class="pname">{{ auth.currentTeamName || '选择团队' }}</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg></button><div v-if="teamDropdownOpen" class="dropdown" @click.stop><div class="dd-head">切换团队</div><div v-if="!teams.length" class="dd-state">还没有团队</div><button v-for="team in teams" :key="team.id" class="dd-item" @click="switchTeam(team)"><span class="dd-name">{{ team.name }}</span><span>{{ team.role }}</span></button><div class="dd-foot"><button class="dd-action" @click="openCreateTeam">＋ 新建团队</button></div></div></div>
+          <div class="project-switcher" :class="{ open: teamDropdownOpen }">
+            <button class="switcher-btn" @click.stop="toggleTeamDropdown">
+              <span class="pname">{{ teamLabel }}</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+            <div v-if="teamDropdownOpen" class="dropdown" @click.stop>
+              <div class="dd-head">切换团队</div>
+              <div v-if="auth.teamStatus === 'loading'" class="dd-state">加载中…</div>
+              <div v-else-if="auth.teamStatus === 'error'" class="dd-state">
+                加载失败 <button class="dd-action" @click="loadTeams">重试</button>
+              </div>
+              <div v-else-if="!teams.length" class="dd-state">暂无团队</div>
+              <button v-for="team in teams" :key="team.id" class="dd-item" @click="switchTeam(team)"><span class="dd-name">{{ team.name }}</span><span>{{ team.role }}</span></button>
+              <div class="dd-foot"><button class="dd-action" @click="openCreateTeam">＋ 新建团队</button></div>
+            </div>
+          </div>
 
           <!-- 项目切换器 -->
           <div class="project-switcher" :class="{ open: projectDropdownOpen }">

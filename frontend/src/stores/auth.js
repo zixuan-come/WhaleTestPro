@@ -14,6 +14,8 @@ export const useAuthStore = defineStore('auth', () => {
   const currentTeamId = ref(Number(localStorage.getItem('wtp_tid')) || null)
   const currentTeamName = ref(localStorage.getItem('wtp_tname') || '')
   const currentTeamRole = ref(localStorage.getItem('wtp_trole') || '')
+  const teamStatus = ref('idle')
+  let teamRequestVersion = 0
 
   function setTeam(id, name, role) {
     currentTeamId.value = id || null; currentTeamName.value = name || ''; currentTeamRole.value = role || ''
@@ -22,8 +24,32 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function initTeam() {
-    const teams = await listTeams(); if (!teams.length) { setTeam(null, '', ''); setProject(null, ''); return { teams, activeId: null } }
-    const active = (currentTeamId.value && teams.find(t => t.id === currentTeamId.value)) || teams[0]; setTeam(active.id, active.name, active.role || ''); return { teams, activeId: active.id }
+    const requestVersion = ++teamRequestVersion
+    const sessionToken = token.value
+    const isCurrent = () => requestVersion === teamRequestVersion && sessionToken === token.value
+    teamStatus.value = 'loading'
+    try {
+      const teams = await listTeams()
+      if (!isCurrent()) return { teams: [], activeId: null }
+      const active = teams.find(t => t.id === currentTeamId.value) || teams[0]
+      if (!active || active.id !== currentTeamId.value) setProject(null, '')
+      setTeam(active?.id, active?.name, active?.role)
+      teamStatus.value = 'ready'
+      return { teams, activeId: active?.id || null }
+    } catch (error) {
+      if (!isCurrent()) return { teams: [], activeId: null }
+      setTeam(null, '', '')
+      setProject(null, '')
+      teamStatus.value = 'error'
+      throw error
+    }
+  }
+
+  function clearContext() {
+    teamRequestVersion += 1
+    teamStatus.value = 'idle'
+    setTeam(null, '', '')
+    setProject(null, '')
   }
 
   // 每个项目记住上次选的环境,跨会话保留("这个用例上次是在哪个环境跑的")
@@ -45,6 +71,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function setAuth(tk, name) {
+    if (tk !== token.value) clearContext()
     token.value = tk
     username.value = name || ''
     localStorage.setItem('wtp_token', tk)
@@ -67,8 +94,17 @@ export const useAuthStore = defineStore('auth', () => {
   // 逻辑:拉列表 → 若当前 pid 还在列表里就保留;否则选列表第一个;列表空则清空(触发跳到管理页)
   // 返回 { projects, activeId } 供调用方判断
   async function initProject() {
+    const sessionToken = token.value
+    const teamId = currentTeamId.value
+    if (!teamId) {
+      setProject(null, '')
+      return { projects: [], activeId: null }
+    }
     try {
-      const projects = await listProjects()
+      const projects = await listProjects({ team_id: teamId })
+      if (sessionToken !== token.value || teamId !== currentTeamId.value) {
+        return { projects: [], activeId: null }
+      }
       if (!projects.length) {
         setProject(null, '')
         return { projects: [], activeId: null }
@@ -78,18 +114,19 @@ export const useAuthStore = defineStore('auth', () => {
       setProject(active.id, active.name)
       return { projects, activeId: active.id }
     } catch (e) {
+      if (sessionToken === token.value && teamId === currentTeamId.value) setProject(null, '')
       // 拉不到就先算了,不阻塞路由(登录才会触发,401 会被 http 拦截器带回 login)
       return { projects: [], activeId: null }
     }
   }
 
   function logout() {
+    clearContext()
     token.value = ''
     username.value = ''
-    setProject(null, '')
     localStorage.removeItem('wtp_token')
     localStorage.removeItem('wtp_user')
   }
 
-  return { token, username, currentProjectId, currentProjectName, currentTeamId, currentTeamName, currentTeamRole, setAuth, setProject, setTeam, initProject, initTeam, logout, getPreferredEnv, setPreferredEnv }
+  return { token, username, currentProjectId, currentProjectName, currentTeamId, currentTeamName, currentTeamRole, teamStatus, setAuth, setProject, setTeam, initProject, initTeam, logout, getPreferredEnv, setPreferredEnv }
 })
