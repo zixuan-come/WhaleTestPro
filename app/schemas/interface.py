@@ -1,5 +1,8 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
 from app.schemas.base import NamedSchema
+
+
+PathParameterValues = dict[str, StrictStr | StrictInt | StrictFloat | StrictBool | None]
 
 
 class InterfaceCreate(NamedSchema):
@@ -7,6 +10,7 @@ class InterfaceCreate(NamedSchema):
     url: str
     headers: dict | None = None
     params: dict | None = None
+    path_params: PathParameterValues | None = None
     body: dict | None = None
     category: str | None = Field(default=None, max_length=50)
 
@@ -42,6 +46,11 @@ class InterfaceCreate(NamedSchema):
 class InterfaceOut(InterfaceCreate):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+class InterfaceRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path_params: PathParameterValues | None = None
 
 
 class InterfaceReferenceCaseOut(BaseModel):

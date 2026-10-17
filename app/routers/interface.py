@@ -6,7 +6,7 @@ from app.core.authorization import ProjectContext, authorize
 from app.core.permissions import Action, Resource
 from app.database import get_db
 from app.schemas.interface import (
-    CategoryRename, InterfaceCreate, InterfaceMigrate, InterfaceOut, InterfaceReferencesOut,
+    CategoryRename, InterfaceCreate, InterfaceMigrate, InterfaceOut, InterfaceReferencesOut, InterfaceRun,
 )
 from app.schemas.response import ApiResponse, success_response
 from app.services import execution
@@ -81,12 +81,14 @@ def migrate_interface_cases(
 @router.post("/{interface_id}/run", response_model=ApiResponse[dict])
 def run_interface(
     interface_id: int,
+    body: InterfaceRun | None = None,
     env_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.INTERFACE, Action.EXECUTE)),
 ):
     try:
-        result = execution.run_interface(db, interface_id, env_id, context.project_id)
+        options = {"path_params": body.path_params} if body and body.path_params is not None else {}
+        result = execution.run_interface(db, interface_id, env_id, context.project_id, **options)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:

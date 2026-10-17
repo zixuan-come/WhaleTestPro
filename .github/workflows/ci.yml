@@ -12,7 +12,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: pip install pytest
+      - run: pip install pytest httpx httpx2
 
       - run: python -m scripts.run_offline_tests
 

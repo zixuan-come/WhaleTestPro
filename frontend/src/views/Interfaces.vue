@@ -1,11 +1,13 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { listInterfaces, createInterface, updateInterface, deleteInterface, runInterface, renameCategory, deleteCategory, getInterfaceReferences, migrateInterfaceCases } from '../api/interface'
 import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
+import PathParameterEditor from '../components/PathParameterEditor.vue'
+import { pathParameterNames, pathParameterValues } from '../utils/pathParameters'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
 
 const items = ref([])
@@ -15,6 +17,11 @@ const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const runningId = ref(null)
 const showRunResult = ref(false)
 const runResult = ref(null)
+const runTarget = ref(null)
+const runPathParams = ref({})
+const runError = ref('')
+const showRunConfig = ref(false)
+watch(runPathParams, () => { runError.value = '' }, { deep: true, flush: 'sync' })
 
 const showModal = ref(false)
 const saving = ref(false)
@@ -23,7 +30,7 @@ const editingId = ref(null)   // null=新建,数字=编辑该 id
 const requestTab = ref('params')
 const form = reactive({
   name: '', method: 'GET', url: '', category: '',
-  headers: [], params: [], bodyType: 'none', body: '',
+  headers: [], params: [], pathParams: {}, bodyType: 'none', body: '',
 })
 
 // 分类管理面板
@@ -55,7 +62,12 @@ const getCount = computed(() => items.value.filter(i => (i.method || '').toUpper
 const writeCount = computed(() => items.value.filter(i => ['POST','PUT','PATCH','DELETE'].includes((i.method || '').toUpperCase())).length)
 const headerCount = computed(() => countEnabledRows(form.headers))
 const paramCount = computed(() => countEnabledRows(form.params))
+const pathParamCount = computed(() => pathParameterNames(form.url).length)
 const bodyConfigured = computed(() => form.bodyType === 'json' && Boolean(form.body.trim()))
+
+watch(() => pathParameterNames(form.url).join(','), names => {
+  if (showModal.value && names) requestTab.value = 'path'
+})
 
 // 现存分类(datalist 自动补全用),不含"未分类"占位
 const existingCategories = computed(() => {
@@ -258,6 +270,7 @@ function openCreate() {
   form.url = ''
   form.headers = []
   form.params = [newKeyValueRow()]
+  form.pathParams = {}
   form.bodyType = 'none'
   form.body = ''
   form.category = ''
@@ -279,10 +292,11 @@ function openEdit(item) {
   form.url = item.url || ''
   form.headers = rowsFromDict(item.headers)
   form.params = rowsFromDict(item.params)
+  form.pathParams = pathParameterValues(item.url, item.path_params)
   form.bodyType = item.body == null ? 'none' : 'json'
   form.body = jsonToText(item.body)
   form.category = item.category || ''
-  requestTab.value = item.body != null
+  requestTab.value = pathParameterNames(item.url).length ? 'path' : item.body != null
     ? 'body'
     : (form.params.length ? 'params' : (form.headers.length ? 'headers' : defaultRequestTab(form.method)))
   formErr.value = ''
@@ -318,6 +332,7 @@ async function save() {
       method: form.method,
       url: form.url.trim(),
       headers, params, body,
+      path_params: pathParamCount.value ? pathParameterValues(form.url, form.pathParams) : null,
       category: form.category.trim() || null,
     }
     if (editingId.value) {
@@ -401,8 +416,44 @@ async function migrateCases() {
   }
 }
 async function onRun(item) {
+  if (runningId.value !== null) return
+  if (pathParameterNames(item.url).length) {
+    runTarget.value = item
+    runPathParams.value = pathParameterValues(item.url, item.path_params)
+    runError.value = ''
+    showRunConfig.value = true
+    return
+  }
+  await executeInterface(item)
+}
+
+function closeRunConfig() {
+  if (runningId.value !== null) return
+  showRunConfig.value = false
+}
+
+async function submitRun() {
+  if (runningId.value !== null || !runTarget.value) return
+  const values = pathParameterValues(runTarget.value.url, runPathParams.value)
+  const missing = Object.entries(values).filter(([, value]) => !String(value).trim()).map(([name]) => name)
+  if (missing.length) {
+    runError.value = '请填写路径参数：' + missing.join('、')
+    return
+  }
+  runError.value = ''
+  await executeInterface(runTarget.value, values)
+}
+
+async function executeInterface(item, pathParams) {
   runningId.value = item.id
-  try { runResult.value = await runInterface(item.id, selectedEnv.value || undefined); showRunResult.value = true } catch (e) { showMessage(e.message || '执行失败', 'error') } finally { runningId.value = null }
+  try {
+    runResult.value = await runInterface(item.id, selectedEnv.value || undefined, pathParams)
+    showRunConfig.value = false
+    showRunResult.value = true
+  } catch (e) {
+    if (showRunConfig.value) runError.value = e.message || '执行失败'
+    else showMessage(e.message || '执行失败', 'error')
+  } finally { runningId.value = null }
 }
 
 async function onDelete(id) {
@@ -509,6 +560,19 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
   </Modal>
 
 
+  <Modal v-if="showRunConfig && runTarget" :title="'调试接口 · ' + runTarget.name" :max-width="620" :busy="runningId !== null" @close="closeRunConfig">
+    <div class="run-config">
+      <div class="run-path"><span class="tag-method" :class="methodClass(runTarget.method)">{{ runTarget.method }}</span><code>{{ runTarget.url }}</code></div>
+      <div class="run-environment"><span>执行环境</span><EnvironmentSelect v-model="selectedEnv" :environments="envs" /></div>
+      <PathParameterEditor v-model="runPathParams" :url="runTarget.url" :disabled="runningId !== null" id-prefix="run-path-param" />
+      <p class="config-hint">本次填写仅用于调试；默认参数值可在编辑接口时保存。</p>
+      <div v-if="runError" class="form-err" role="alert">{{ runError }}</div>
+    </div>
+    <template #foot>
+      <button class="btn btn-ghost" :disabled="runningId !== null" @click="closeRunConfig">取消</button>
+      <button class="btn btn-primary" :disabled="runningId !== null" @click="submitRun">{{ runningId !== null ? '执行中…' : '发送请求' }}</button>
+    </template>
+  </Modal>
   <Modal v-if="showRunResult" title="接口执行结果" :max-width="680" @close="showRunResult = false">
     <div v-if="runResult" class="run-result-panel">
       <div class="run-verdict"><span class="badge" :class="runResult.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ runResult.passed ? '通过' : '失败' }}</span><span class="muted">{{ runResult.interface_name }}</span><span class="muted">{{ runResult.duration_ms }} ms</span></div>
@@ -542,11 +606,20 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
       </div>
       <div class="field">
         <label>请求 URL <span class="opt">(只填路径,环境前缀由所选环境的 base_url 自动补)</span></label>
-        <input v-model="form.url" placeholder="/orders" />
+        <input v-model="form.url" placeholder="/orders 或 /orders/{id}" />
       </div>
     </div>
     <div class="request-config">
       <div class="request-tabs" role="tablist" aria-label="请求配置">
+        <button
+          id="request-tab-path"
+          type="button"
+          role="tab"
+          :aria-selected="requestTab === 'path'"
+          aria-controls="request-panel-path"
+          :class="{ active: requestTab === 'path' }"
+          @click="requestTab = 'path'"
+        >Path 参数 <span class="tab-count">{{ pathParamCount }}</span></button>
         <button
           id="request-tab-headers"
           type="button"
@@ -567,7 +640,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
           :class="{ active: requestTab === 'params' }"
           @click="requestTab = 'params'"
         >
-          Params <span class="tab-count">{{ paramCount }}</span>
+          Query 参数 <span class="tab-count">{{ paramCount }}</span>
         </button>
         <button
           id="request-tab-body"
@@ -582,6 +655,10 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
         </button>
       </div>
 
+      <div v-show="requestTab === 'path'" id="request-panel-path" class="request-panel" role="tabpanel" aria-labelledby="request-tab-path">
+        <PathParameterEditor v-model="form.pathParams" :url="form.url" :disabled="saving" id-prefix="edit-path-param" />
+        <p v-if="pathParamCount" class="config-hint">保存的参数值将作为默认值，执行接口时可临时修改。</p>
+      </div>
       <div
         v-show="requestTab === 'headers'"
         id="request-panel-headers"
@@ -710,6 +787,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 </template>
 
 <style scoped>
+.run-config{display:flex;flex-direction:column;gap:14px}.run-path{display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}.run-path code{min-width:0;overflow-wrap:anywhere;color:var(--text);font:12.5px ui-monospace,Consolas,monospace}.run-environment{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--text-muted)}.run-config .config-hint{margin:0}
 .interface-search{position:relative;display:flex;align-items:center;width:260px;height:34px;margin-right:4px}.search-icon{position:absolute;left:10px;color:var(--text-muted);font-size:18px;line-height:1;pointer-events:none}.interface-search input{width:100%;height:100%;padding:0 30px 0 30px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font:12px inherit}.interface-search input:focus{outline:none;border-color:var(--primary)}.search-clear{position:absolute;right:6px;width:22px;height:22px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text-muted);font-size:18px;line-height:18px;cursor:pointer}.search-clear:hover{background:var(--border);color:var(--text)}
 .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);

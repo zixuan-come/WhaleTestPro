@@ -4,6 +4,7 @@ from app.repositories import report as report_repo
 from app.repositories import environment as env_repo
 from app.repositories import scenario_report as scenario_report_repo
 from app.core.variables import render, extract_match, render_deep
+from app.core.path_parameters import render_request_path
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
 from app.core.notifier import send_feishu
@@ -78,8 +79,8 @@ def _env_context(db, env_id, project_id):
     return {**(env.variables or {}), "base_url": env.base_url}
 
 
-def _full_url(interface_url, context):
-    path = render_deep(interface_url, context)
+def _full_url(interface_url, context, path_params=None):
+    path = render_request_path(interface_url, context, path_params)
     base = context.get("base_url", "")
     return base.rstrip("/") + "/" + path.lstrip("/")
 
@@ -122,7 +123,7 @@ def run_case(db, case_id, env_id, project_id):
 
 
 
-def run_interface(db, interface_id, env_id, project_id):
+def run_interface(db, interface_id, env_id, project_id, *, path_params=None):
     """直接执行接口定义，不创建测试用例或测试报告。"""
     interface = interface_repo.db_get(db, interface_id, project_id)
     if interface is None:
@@ -135,7 +136,9 @@ def run_interface(db, interface_id, env_id, project_id):
     passed = False
     started = perf_counter()
     try:
-        rendered_url = _full_url(interface.url, context)
+        values = {**(getattr(interface, "path_params", None) or {}), **(path_params or {})}
+        report_secrets.update(sensitive_strings(render_deep(values, context)))
+        rendered_url = _full_url(interface.url, context, values)
         fields = _render_request_fields(interface, context, report_secrets)
         request_detail = {"method": interface.method, "url": rendered_url,
                           "headers": fields["headers"], "params": fields["params"], "body": fields["json"]}
@@ -214,7 +217,9 @@ def run_chain(
         error = None
         actual_status = None
         try:
-            rendered_url = _full_url(interface.url, context)
+            path_params = getattr(interface, "path_params", None)
+            report_secrets.update(sensitive_strings(render_deep(path_params, context)))
+            rendered_url = _full_url(interface.url, context, path_params)
             fields = _render_request_fields(interface, context, report_secrets)
             request_detail = {
                 "method": interface.method,
@@ -361,11 +366,12 @@ def _run_once(db, case, interface, context):
     result = None
     report_secrets = set(sensitive_strings(context))
     try:
+        report_secrets.update(sensitive_strings(render_deep(getattr(interface, "path_params", None), context)))
         run_sql(db, render_deep(case.setup_sql, context))
         fields = _render_request_fields(interface, context, report_secrets)
         response = _request(
             interface,
-            url=_full_url(interface.url, context),
+            url=_full_url(interface.url, context, getattr(interface, "path_params", None)),
             **fields,
         )
         _add_response_secrets(response, report_secrets)

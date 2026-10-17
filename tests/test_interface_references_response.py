@@ -61,7 +61,7 @@ def test_references_serializes_orm_and_filters_internal_fields(reference_api):
                 "id": 7, "name": "引用查询回归",
                 "method": "GET", "url": "/health/live",
                 "headers": {"Accept": "application/json"},
-                "params": None, "body": None, "category": "core",
+                "params": None, "path_params": None, "body": None, "category": "core",
             },
             "case_count": 2,
             "cases": [

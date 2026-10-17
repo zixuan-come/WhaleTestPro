@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import * as Vue from 'vue'
 import { parse, compileScript } from '@vue/compiler-sfc'
+import { pathParameterNames, pathParameterValues } from '../src/utils/pathParameters.js'
 
 const authSource = readFileSync(new URL('../src/stores/auth.js', import.meta.url), 'utf8')
   .replace(/^import .+$/gm, '').replace('export const useAuthStore', 'const useAuthStore')
@@ -193,7 +194,7 @@ for (const view of ['Interfaces', 'Cases', 'Orchestration', 'Regression']) {
       t.after(() => scope.stop())
       const mocks = { ...Vue, onMounted() {}, onUnmounted() {},
         useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), useRouter: () => ({ push() {} }),
-        useExecutionEnvironment: () => environmentPage(t, auth),
+        useExecutionEnvironment: () => environmentPage(t, auth), pathParameterNames, pathParameterValues,
       }
       const component = Function(...names, code)(...names.map(name => mocks[name] || (script.imports[name].source.includes('/api/') ? async () => [] : {})))
       const state = scope.run(() => component.setup({}, { expose() {} }))

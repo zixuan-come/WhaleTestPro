@@ -447,6 +447,7 @@ def run_all_migrations(*binds) -> None:
         ensure_perf_task_lifecycle_schema(bind)
         ensure_schedule_environment_schema(bind)
         ensure_perf_load_plan_schema(bind)
+        ensure_interface_path_parameters_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -480,3 +481,16 @@ def ensure_perf_load_plan_schema(bind) -> None:
                 connection.execute(text(f"ALTER TABLE perf_tasks ADD COLUMN {name} JSON NULL"))
         if bind.dialect.name == "mysql":
             _record_migration(connection, "012_perf_load_plan")
+
+
+def ensure_interface_path_parameters_schema(bind) -> None:
+    """Add optional default Path parameter values without changing old URLs."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("interface"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("interface")}
+        if "path_params" not in columns:
+            connection.execute(text("ALTER TABLE interface ADD COLUMN path_params JSON NULL"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "013_interface_path_parameters")
