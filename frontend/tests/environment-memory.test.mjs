@@ -193,7 +193,7 @@ for (const view of ['Interfaces', 'Cases', 'Orchestration', 'Regression']) {
     async function mount() {
       const scope = Vue.effectScope()
       t.after(() => scope.stop())
-      const mocks = { ...Vue, onMounted() {}, onUnmounted() {},
+      const mocks = { ...Vue, onMounted() {}, onUnmounted() {}, onBeforeRouteLeave() {},
         useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), useRouter: () => ({ push() {} }),
         useExecutionEnvironment: () => environmentPage(t, auth), pathParameterNames, pathParameterValues,
         requestConfig, requestDraft, serializeRequest,

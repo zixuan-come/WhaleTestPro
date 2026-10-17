@@ -38,7 +38,7 @@ function page(t, { run } = {}) {
     return name === 'listInterfaces' ? [] : (name === 'runInterface' ? (run ? run(...args) : { passed: true }) : {})
   }]))
   const component = buildPage({
-    ...Vue, onMounted() {}, onUnmounted() {}, ...api, Modal: modal,
+    ...Vue, onMounted() {}, onUnmounted() {}, onBeforeRouteLeave() {}, listCases: async () => [], ...api, Modal: modal,
     KeyValueEditor: { render: () => null }, EnvironmentSelect: { render: () => null },
     InterfaceResourceTree: { render: () => null }, InterfaceWorkspace: { render: () => null },
     PathParameterEditor: editor, pathParameterNames, pathParameterValues,
@@ -76,7 +76,7 @@ test('Path editor renders identified names, supports variables, and tracks URL c
 
 test('new interfaces automatically reveal Path parameters when entering a URL', async t => {
   const { state, html } = page(t)
-  state.openCreate()
+  await state.openCreate()
   state.form.url = '/orders/{id}'
   await Vue.nextTick()
   assert.equal(state.requestTab.value, 'path')
@@ -99,10 +99,10 @@ test('editing saves defaults separately from Query parameters and drops removed 
 test('interface execution and case entry open the unified workspace', async t => {
   const { state, calls } = page(t)
   state.items.value = [order]
-  state.onRun(order)
+  await state.onRun(order)
   assert.equal(state.workspaceItem.value.id, 81)
   assert.equal(state.workspaceTab.value, 'debug')
-  state.openWorkspace(order, 'cases')
+  await state.openWorkspace(order, 'cases')
   assert.equal(state.workspaceTab.value, 'cases')
   assert.deepEqual(calls, [])
 })

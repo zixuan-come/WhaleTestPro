@@ -2,10 +2,13 @@
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
+import { listCases } from '../api/case'
+import InterfaceResourceTree from '../components/InterfaceResourceTree.vue'
+import Cases from './Cases.vue'
 import { listInterfaces, createInterface, updateInterface, deleteInterface, renameCategory, deleteCategory, getInterfaceReferences, migrateInterfaceCases } from '../api/interface'
 import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
-import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import InterfaceWorkspace from '../components/InterfaceWorkspace.vue'
 import PathParameterEditor from '../components/PathParameterEditor.vue'
 import { pathParameterNames, pathParameterValues } from '../utils/pathParameters'
@@ -15,7 +18,10 @@ const items = ref([])
 const loading = ref(true)
 const error = ref('')
 const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
-const workspaceId = ref(null)
+const caseItems = ref([]), caseError = ref('')
+const selection = ref(null), selectionDirty = ref(false), selectionBusy = ref(false), selectionVersion = ref(0)
+const selectedCase = computed(() => selection.value?.type === 'case' ? caseItems.value.find(c => c.id === selection.value.id) : null)
+const workspaceId = computed(() => selection.value?.interfaceId ?? (selection.value?.type === 'interface' ? selection.value.id : null))
 const workspaceTab = ref('debug')
 const workspaceItem = computed(() => items.value.find(item => item.id === workspaceId.value) || null)
 
@@ -45,17 +51,10 @@ const migrationBusy = ref(false)
 const targetMenuOpen = ref(false)
 const pickerTriggerEl = ref(null)
 const targetMenuStyle = ref({})
-const searchKeyword = ref('')
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const UNCATEGORIZED = '未分类'
 
-// 折叠状态: {分类名: true=折叠}
-const collapsed = reactive({})
-
-const total = computed(() => items.value.length)
-const getCount = computed(() => items.value.filter(i => (i.method || '').toUpperCase() === 'GET').length)
-const writeCount = computed(() => items.value.filter(i => ['POST','PUT','PATCH','DELETE'].includes((i.method || '').toUpperCase())).length)
 const headerCount = computed(() => countEnabledRows(form.headers))
 const paramCount = computed(() => countEnabledRows(form.params))
 const pathParamCount = computed(() => pathParameterNames(form.url).length)
@@ -77,7 +76,7 @@ const existingCategories = computed(() => {
 // 按分类分组,"未分类"永远排最后
 const groups = computed(() => {
   const map = new Map()
-  for (const it of filteredItems.value) {
+  for (const it of items.value) {
     const key = (it.category && it.category.trim()) || UNCATEGORIZED
     if (!map.has(key)) map.set(key, [])
     map.get(key).push(it)
@@ -91,25 +90,7 @@ const groups = computed(() => {
   return entries.map(([name, list]) => ({ name, items: list }))
 })
 
-const filteredItems = computed(() => {
-  const keyword = searchKeyword.value.trim().toLowerCase()
-  if (!keyword) return items.value
-  return items.value.filter((item) => {
-    const haystack = [item.name, item.url, item.method, item.category]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-    return haystack.includes(keyword)
-  })
-})
-
-function methodClass(m) {
-  return 'm-' + (m || 'get').toLowerCase()
-}
-
-function toggleGroup(name) {
-  collapsed[name] = !collapsed[name]
-}
+function methodClass(method) { return 'm-' + (method || 'GET').toLowerCase() }
 
 function newKeyValueRow() {
   return { enabled: true, key: '', value: '' }
@@ -247,7 +228,9 @@ async function onDeleteCategory(name, count) {
 async function load() {
   loading.value = true
   error.value = ""
-  const [interfacesResult, environmentsResult] = await Promise.allSettled([listInterfaces(), loadEnvironments()])
+  const [interfacesResult, environmentsResult, casesResult] = await Promise.allSettled([listInterfaces(), loadEnvironments(), listCases()])
+  if (casesResult.status === 'fulfilled') { caseItems.value = casesResult.value; caseError.value = '' }
+  else caseError.value = casesResult.reason?.message || '用例加载失败'
   if (interfacesResult.status === "fulfilled") {
     items.value = interfacesResult.value
   } else {
@@ -256,10 +239,12 @@ async function load() {
   if (interfacesResult.status === "rejected" && environmentsResult.status === "rejected") {
     error.value = interfacesResult.reason?.message || "加载失败"
   }
+  if (!selection.value && items.value.length) selection.value = { type: 'interface', id: items.value[0].id }
   loading.value = false
 }
 
-function openCreate() {
+async function openCreate() {
+  if (!await canLeaveSelection()) return
   editingId.value = null
   form.name = ''
   form.method = 'GET'
@@ -334,7 +319,8 @@ async function save() {
     if (editingId.value) {
       await updateInterface(editingId.value, payload)
     } else {
-      await createInterface(payload)
+      const created = await createInterface(payload)
+      selection.value = { type: 'interface', id: created.id }
     }
     showModal.value = false
     await load()
@@ -411,18 +397,56 @@ async function migrateCases() {
     migrationBusy.value = false
   }
 }
-function openWorkspace(item, tab = 'debug') {
-  workspaceId.value = item.id
+async function canLeaveSelection() {
+  if (selectionBusy.value) return false
+  return !selectionDirty.value || await confirmAction('当前用例有未保存的修改，确认放弃修改并离开？')
+}
+
+async function selectResource(next) {
+  if (selection.value?.type === next.type && selection.value?.id === next.id && next.type !== 'new-case') return
+  if (!await canLeaveSelection()) return
+  selectionDirty.value = false
+  selectionBusy.value = false
+  selectionVersion.value += 1
+  selection.value = next
+}
+
+async function openWorkspace(item, tab = 'debug') {
+  await selectResource({ type: 'interface', id: item.id })
   workspaceTab.value = tab
 }
 
-function onRun(item) { openWorkspace(item, 'debug') }
+function selectCase(testCase) { return selectResource({ type: 'case', id: testCase.id, interfaceId: testCase.interface_id }) }
+function createCaseFor(item, request = null, expectedStatus = 200) {
+  return selectResource({ type: 'new-case', interfaceId: item.id, request, expectedStatus })
+}
+function caseSaved(testCase) {
+  const index = caseItems.value.findIndex(c => c.id === testCase.id)
+  if (index === -1) caseItems.value.push(testCase)
+  else caseItems.value[index] = testCase
+  selectionDirty.value = false
+  // Keep the editor mounted after creation so results and the draft remain available.
+  selection.value = { type: 'case', id: testCase.id, interfaceId: testCase.interface_id }
+}
+function caseDeleted(testCase) {
+  caseItems.value = caseItems.value.filter(c => c.id !== testCase.id)
+  selectionDirty.value = false
+  selection.value = { type: 'interface', id: testCase.interface_id }
+}
+function beforeUnload(event) {
+  if (!selectionDirty.value && !selectionBusy.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onBeforeRouteLeave(canLeaveSelection)
+function onRun(item) { return openWorkspace(item, 'debug') }
 
 async function onDelete(id) {
   if (!(await confirmAction('确认删除该接口?'))) return
   try {
     await deleteInterface(id)
     items.value = items.value.filter(i => i.id !== id)
+    if (workspaceId.value === id) selection.value = items.value.length ? { type: 'interface', id: items.value[0].id } : null
   } catch (e) {
     const item = items.value.find(i => i.id === id)
     if (item && (e.status === 409 || e.code === 409 || e.data?.interface_id === id)) await openReferences(item)
@@ -433,87 +457,25 @@ async function onDelete(id) {
 onMounted(() => {
   load()
   document.addEventListener('pointerdown', handleDocumentPointerDown)
+  window.addEventListener('beforeunload', beforeUnload)
 })
-onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPointerDown))
+onUnmounted(() => { document.removeEventListener('pointerdown', handleDocumentPointerDown); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 
 <template>
-  <InterfaceWorkspace v-if="workspaceItem" :key="workspaceItem.id" v-model="selectedEnv" :interface-data="workspaceItem" :environments="envs" :initial-tab="workspaceTab" @close="workspaceId = null" @edit="openEdit" />
-  <template v-else>
-  <div class="cards">
-    <div class="card"><div class="k">接口总数</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">查询类 GET</div><div class="v pass">{{ getCount }}</div></div>
-    <div class="card"><div class="k">写操作类</div><div class="v fail">{{ writeCount }}</div></div>
-    <div class="card"><div class="k">覆盖率</div><div class="v">—</div></div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      <span>接口列表</span>
-      <div class="head-actions">
-        <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="执行接口时使用的环境" />
-        <label class="interface-search" aria-label="搜索接口"><span class="search-icon">⌕</span><input v-model="searchKeyword" placeholder="搜索名称、URL、方法或分类"/><button v-if="searchKeyword" type="button" class="search-clear" aria-label="清空搜索" @click="searchKeyword=''">×</button></label>
-        <button class="btn btn-ghost" @click="openCategoryManage">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h4l2-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
-          分类管理
-        </button>
-        <button class="btn btn-primary" @click="openCreate">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-          新建接口
-        </button>
-      </div>
-    </div>
-
-    <div v-if="loading" class="state">加载中…</div>
-    <div v-else-if="error" class="state err">
-      {{ error }}
-      <button class="btn btn-ghost retry" @click="load">重试</button>
-    </div>
-    <div v-else-if="!items.length" class="state">暂无接口,点右上角「新建接口」添加</div>
-    <div v-else-if="!filteredItems.length" class="state">没有匹配的接口，请尝试其他关键词。</div>
-
-    <template v-else>
-      <div class="row head">
-        <span class="c-method">方法</span>
-        <span class="c-name">名称</span>
-        <span class="c-url">URL</span>
-        <span class="c-act">操作</span>
-      </div>
-      <template v-for="g in groups" :key="g.name">
-        <div class="group-head" @click="toggleGroup(g.name)">
-          <span class="chevron" :class="{ collapsed: collapsed[g.name] }">▾</span>
-          <span class="group-name">{{ g.name }}</span>
-          <span class="group-count">{{ g.items.length }}</span>
-        </div>
-        <template v-if="!collapsed[g.name]">
-          <div v-for="(it, i) in g.items" :key="it.id" class="row">
-            <span class="c-method"><span class="tag-method" :class="methodClass(it.method)">{{ (it.method || 'GET').toUpperCase() }}</span></span>
-            <span class="c-name">
-              <span class="id">#{{ i + 1 }}</span><button type="button" class="interface-name" @click="openWorkspace(it)">{{ it.name }}</button>
-            </span>
-            <span class="c-url" :title="it.url">{{ it.url }}</span>
-            <span class="c-act">
-<button class="icon-btn run" title="执行" @click="onRun(it)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg></button>
-              <button class="icon-btn" title="编辑" @click="openEdit(it)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-                </svg>
-              </button>
-              <button class="icon-btn" title="测试用例" @click="openWorkspace(it, 'cases')">例</button>
-              <button class="icon-btn" title="查看引用" @click="openReferences(it)">引</button>
-              <button class="icon-btn danger" title="删除" @click="onDelete(it.id)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
-                </svg>
-              </button>
-            </span>
-          </div>
-        </template>
+  <div class="interface-testing">
+    <InterfaceResourceTree :interfaces="items" :cases="caseItems" :selected="selection?.type === 'new-case' && selection.id ? { ...selection, type: 'case' } : selection" :loading="loading" :error="error" :case-error="caseError" :disabled="selectionBusy" @select-interface="openWorkspace" @select-case="selectCase" @create-case="createCaseFor" @create-interface="openCreate" @manage-categories="openCategoryManage" @retry="load" />
+    <section class="resource-content" aria-label="接口测试工作区">
+      <template v-if="workspaceItem && (selection?.type === 'case' || selection?.type === 'new-case')">
+        <Cases :key="selectionVersion" v-model:env-id="selectedEnv" :environments="envs" :interface-id="workspaceItem.id" :interface-data="workspaceItem" :case-data="selectedCase" :initial-request="selection.request" :expected-status="selection.expectedStatus || 200" embedded detail-mode @saved="caseSaved" @deleted="caseDeleted" @dirty="selectionDirty = $event" @busy="selectionBusy = $event" @close="openWorkspace(workspaceItem)" />
       </template>
-    </template>
+      <template v-else-if="workspaceItem">
+        <div class="resource-actions"><button type="button" class="btn btn-ghost" :disabled="selectionBusy" @click="openReferences(workspaceItem)">查看引用</button><button type="button" class="btn btn-ghost delete-interface" :disabled="selectionBusy" @click="onDelete(workspaceItem.id)">删除接口</button><button type="button" class="btn btn-primary" :disabled="selectionBusy || Boolean(caseError)" @click="createCaseFor(workspaceItem)">新建用例</button></div>
+        <InterfaceWorkspace :key="workspaceItem.id" v-model="selectedEnv" :interface-data="workspaceItem" :environments="envs" :initial-tab="workspaceTab" :case-items="caseItems.filter(c => c.interface_id === workspaceItem.id)" unified @edit="openEdit" @create-case="(request, status) => createCaseFor(workspaceItem, request, status)" @select-case="selectCase" @busy="selectionBusy = $event" />
+      </template>
+      <div v-else class="resource-empty panel"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 10h12l4 6h16v24H8zM17 27h14M24 20v14"/></svg><h2>{{ loading ? '正在加载接口与用例' : '在这里管理接口和测试用例' }}</h2><p>从左侧选择接口或用例，或创建你的第一个接口。</p><button v-if="!loading" class="btn btn-primary" @click="openCreate">新建接口</button></div>
+    </section>
   </div>
-
-  </template>
 
   <Modal v-if="showReferencesModal" title="接口引用" :max-width="680" :busy="migrationBusy" @close="showReferencesModal=false">
     <div v-if="referenceLoading" class="state">加载引用中…</div>
@@ -525,7 +487,6 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
       <p v-else class="state">暂无引用，可以直接删除接口。</p>
     </template>
   </Modal>
-
 
   <!-- 新建/编辑接口弹层 -->
   <Modal v-if="showModal" :title="editingId ? '编辑接口' : '新建接口'" :max-width="760" :busy="saving" @close="closeModal">
@@ -730,31 +691,8 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 </template>
 
 <style scoped>
-.interface-name{min-width:0;padding:0;border:0;background:none;color:var(--text);font:inherit;font-weight:550;text-align:left;cursor:pointer;overflow-wrap:anywhere}.interface-name:hover{color:var(--primary)}.interface-name:focus-visible{outline:2px solid var(--primary);outline-offset:3px}.c-name{min-width:0}
-.interface-search{position:relative;display:flex;align-items:center;width:260px;height:34px;margin-right:4px}.search-icon{position:absolute;left:10px;color:var(--text-muted);font-size:18px;line-height:1;pointer-events:none}.interface-search input{width:100%;height:100%;padding:0 30px 0 30px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font:12px inherit}.interface-search input:focus{outline:none;border-color:var(--primary)}.search-clear{position:absolute;right:6px;width:22px;height:22px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text-muted);font-size:18px;line-height:18px;cursor:pointer}.search-clear:hover{background:var(--border);color:var(--text)}
-.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
-.card { background:var(--surface); border:1px solid var(--border);
-  border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm);
-  transition:border-color .15s; }
-.card:hover { border-color:var(--primary); }
-.card .k { font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:550; }
-.card .v { font-size:27px; font-weight:780; letter-spacing:-.5px; }
-.card .v.pass { color:var(--pass-fg); }
-.card .v.fail { color:var(--fail-fg); }
-.card .v.pri { color:var(--primary); }
+.interface-testing{display:grid;grid-template-columns:288px minmax(0,1fr);gap:20px;align-items:start}.resource-content{min-width:0;display:flex;flex-direction:column;gap:16px}.resource-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.delete-interface{color:var(--fail-fg)}.resource-empty{padding:72px 24px;text-align:center}.resource-empty svg{width:52px;height:52px;color:var(--primary);margin-bottom:12px}.resource-empty h2{font-size:18px;margin:0 0 12px}.resource-empty p{font-size:13px;color:var(--text-muted);line-height:1.7;margin:0 0 22px}@media(max-width:1100px){.interface-testing{grid-template-columns:250px minmax(0,1fr);gap:14px}}@media(max-width:760px){.interface-testing{grid-template-columns:minmax(0,1fr)}.resource-empty{padding:36px 16px}}
 
-.row { display:grid; grid-template-columns:80px 1.4fr 2fr 168px; align-items:center; gap:12px;
-  padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
-.row:last-child { border-bottom:none; }
-.row:not(.head):hover { background:var(--surface-2); }
-.row.head { font-size:11.5px; font-weight:600; color:var(--text-muted);
-  text-transform:uppercase; letter-spacing:.5px; background:var(--surface-2); }
-.c-name { display:flex; align-items:center; gap:10px; font-weight:550; }
-.c-name .id { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px;
-  background:var(--surface-2); padding:2px 8px; border-radius:6px; }
-.c-url { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.c-act { text-align:right; display:flex; justify-content:flex-end; gap:2px; }
 .icon-btn { display:inline-flex; align-items:center; justify-content:center;
   width:32px; height:32px; padding:0; background:none; border:none; color:var(--text-muted);
   cursor:pointer; border-radius:4px; transition:color .15s,background .15s; }
@@ -765,19 +703,6 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 .state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
 .state.err { color:var(--fail-fg); }
 .retry { margin-left:12px; }
-
-/* ===== 分组头 ===== */
-.group-head { display:flex; align-items:center; gap:10px;
-  padding:11px 20px; background:var(--surface-2); border-bottom:1px solid var(--border);
-  font-size:12.5px; font-weight:600; cursor:pointer; user-select:none;
-  transition:background .15s; }
-.group-head:hover { background:var(--border); }
-.group-head .chevron { display:inline-block; width:12px; color:var(--text-muted);
-  transition:transform .15s; font-size:10px; }
-.group-head .chevron.collapsed { transform:rotate(-90deg); }
-.group-head .group-name { color:var(--text); flex:1; }
-.group-head .group-count { color:var(--text-muted); font-weight:500;
-  background:var(--surface); padding:1px 9px; border-radius:10px; font-size:11.5px; }
 
 /* ===== 弹层 ===== */
 .grid-mu { display:grid; grid-template-columns:120px 1fr; gap:14px; }
@@ -842,13 +767,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', handleDocumentPoin
 .btn-sm { height:32px; padding:0 12px; font-size:12.5px; }
 
 /* ===== 响应式 ===== */
-@media (max-width:1100px) {
-  .cards { grid-template-columns:repeat(2,1fr); }
-}
 @media (max-width:560px) {
-  .cards { grid-template-columns:1fr; gap:12px; }
-  .row { grid-template-columns:54px minmax(0,1fr) 168px; gap:8px; padding:12px 14px; }
-  .c-url { display:none; }
   .grid-mu { grid-template-columns:1fr; }
   .request-tabs { overflow-x:auto; }
   .request-tabs button { flex:0 0 auto; }

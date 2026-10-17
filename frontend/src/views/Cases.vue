@@ -8,6 +8,7 @@ import { listInterfaces } from '../api/interface'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
+import InlineCasePanel from '../components/InlineCasePanel.vue'
 import RequestEditor from '../components/RequestEditor.vue'
 import { requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
 
@@ -15,7 +16,15 @@ const props = defineProps({
   interfaceId: { type: [Number, String], default: null },
   interfaceData: { type: Object, default: null },
   embedded: { type: Boolean, default: false },
+  detailMode: { type: Boolean, default: false },
+  caseData: { type: Object, default: null },
+  initialRequest: { type: Object, default: null },
+  expectedStatus: { type: Number, default: 200 },
+  environments: { type: Array, default: () => [] },
+  envId: { type: [String, Number], default: '' },
 })
+const emit = defineEmits(['saved', 'deleted', 'dirty', 'busy', 'close', 'update:envId'])
+
 
 const router = useRouter()
 
@@ -26,6 +35,14 @@ const loading = ref(true)
 const error = ref('')
 
 const runningId = ref(null)        // 正在跑的用例 id
+const executionEnv = computed({
+  get: () => props.detailMode ? props.envId : selectedEnv.value,
+  set: value => {
+    if (saving.value || runningId.value != null) return
+    if (props.detailMode) emit('update:envId', value)
+    else selectedEnv.value = value
+  },
+})
 
 // 结果弹层
 const showResult = ref(false)
@@ -45,6 +62,14 @@ const form = reactive({
   name: '', interface_id: '', expected_status: 200, retries: 0, tags: '',
   extract_rules: '', assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
 })
+
+const baseline = ref('')
+const formSnapshot = computed(() => JSON.stringify({ form, independent: independentRequest.value, request: requestForm.value }))
+const dirty = computed(() => Boolean(baseline.value) && baseline.value !== formSnapshot.value)
+watch(dirty, value => emit('dirty', value), { flush: 'sync' })
+watch(() => saving.value || runningId.value != null, value => emit('busy', value), { flush: 'sync' })
+function markClean() { baseline.value = formSnapshot.value }
+
 
 const total = computed(() => items.value.length)
 
@@ -135,6 +160,7 @@ function openCreate(initialRequest = null, expectedStatus = 200) {
   showAdvanced.value = false
   formErr.value = ''
   showModal.value = true
+  markClean()
 }
 
 function formatJsonField(value) {
@@ -155,13 +181,15 @@ function openEdit(testCase) {
   form.datasets = formatJsonField(testCase.datasets)
   independentRequest.value = testCase.request_overrides != null
   requestForm.value = requestDraft(requestConfig(selectedInterface.value || {}, testCase.request_overrides))
-  showAdvanced.value = hasAdvancedConfig(testCase)
+  showAdvanced.value = props.detailMode || hasAdvancedConfig(testCase)
   formErr.value = ''
   showModal.value = true
+  markClean()
 }
 
 function closeModal() {
   if (saving.value) return
+  if (props.detailMode) { emit('close'); return }
   showModal.value = false
 }
 
@@ -215,13 +243,16 @@ async function save() {
       extract_rules, assertions, setup_sql, teardown_sql, datasets, request_overrides,
     }
 
-    if (editingId.value == null) {
-      await createCase(payload)
+    const saved = editingId.value == null ? await createCase(payload) : await updateCase(editingId.value, payload)
+    editingId.value = saved.id
+    markClean()
+    if (props.detailMode) {
+      emit('saved', saved)
+      showMessage('用例已保存', 'success')
     } else {
-      await updateCase(editingId.value, payload)
+      showModal.value = false
+      await load()
     }
-    showModal.value = false
-    await load()
   } catch (e) {
     formErr.value = e.message || '保存失败'
   } finally {
@@ -230,9 +261,11 @@ async function save() {
 }
 
 async function onRun(c) {
+  if (runningId.value != null || saving.value) return
+  if (props.detailMode && dirty.value) { showMessage('请先保存修改，再运行用例', 'error'); return }
   runningId.value = c.id
   try {
-    const data = await runCase(c.id, selectedEnv.value || undefined)
+    const data = await runCase(c.id, executionEnv.value || undefined)
     resultCase.value = c
     resultData.value = data
     showResult.value = true
@@ -244,10 +277,12 @@ async function onRun(c) {
 }
 
 async function onDelete(c) {
+  if (saving.value || runningId.value != null) return
   if (!(await confirmAction(`确认删除用例「${c.name}」?`))) return
   try {
     await deleteCase(c.id)
     items.value = items.value.filter(i => i.id !== c.id)
+    emit('deleted', c)
   } catch (e) {
     showMessage(e.message || '删除失败', 'error')
   }
@@ -263,18 +298,25 @@ const overallPassed = computed(() => runs.value.length > 0 && runs.value.every(r
 
 function fmtJson(v) { return JSON.stringify(v, null, 2) }
 
-onMounted(load)
+onMounted(() => {
+  if (props.detailMode) {
+    interfaces.value = props.interfaceData ? [props.interfaceData] : []
+    loading.value = false
+    if (props.caseData) openEdit(props.caseData)
+    else openCreate(props.initialRequest, props.expectedStatus)
+  } else load()
+})
 defineExpose({ openCreate, load })
 </script>
 
 <template>
-  <div v-if="!embedded" class="cards">
+  <div v-if="!embedded && !detailMode" class="cards">
     <div class="card"><div class="k">用例总数</div><div class="v pri">{{ total }}</div></div>
     <div class="card"><div class="k">关联接口</div><div class="v">{{ interfaces.length }}</div></div>
     <div class="card"><div class="k">可用环境</div><div class="v">{{ envs.length }}</div></div>
   </div>
 
-  <div class="panel">
+  <div v-if="!detailMode" class="panel">
     <div class="panel-head">
       <div class="case-heading">{{ embedded ? '当前接口的测试用例' : '全部测试用例' }} <span class="case-total">{{ total }}</span></div>
       <div class="head-actions">
@@ -330,12 +372,18 @@ defineExpose({ openCreate, load })
   </div>
 
   <!-- 新建/编辑用例弹层 -->
-  <Modal v-if="showModal" :title="editingId == null ? '新建测试用例' : '编辑测试用例'" :max-width="820" :busy="saving" @close="closeModal">
+  <component :is="detailMode ? InlineCasePanel : Modal" v-if="showModal" :title="detailMode ? (editingId == null ? '新建测试用例' : form.name || '测试用例') : (editingId == null ? '新建测试用例' : '编辑测试用例')" :max-width="820" :busy="saving" @close="closeModal">
+    <template v-if="detailMode" #actions>
+      <div class="case-detail-actions"><span class="save-state">{{ dirty ? '有未保存的修改' : editingId == null ? '尚未保存' : '已保存' }}</span><button v-if="caseData" type="button" class="btn btn-ghost" :disabled="saving || runningId != null" @click="onDelete(caseData)">删除用例</button><button type="button" class="btn btn-primary" :disabled="saving || runningId != null || !interfaces.length" @click="save">{{ saving ? '保存中…' : editingId == null ? '创建用例' : '保存用例' }}</button></div>
+    </template>
+    <div v-if="detailMode" class="case-context"><span>{{ interfaceData?.method }}</span><code>{{ interfaceData?.url }}</code><strong>{{ interfaceData?.name }}</strong></div>
+    <div v-if="detailMode" class="case-environment"><span>执行环境</span><EnvironmentSelect v-model="executionEnv" :environments="environments" /></div>
+    <fieldset class="case-form-fields" :disabled="saving || runningId != null">
     <div class="field">
-      <label>用例名称</label>
-      <input v-model="form.name" placeholder="如:下单成功返回 200" />
+      <label for="case-name">用例名称</label>
+      <input id="case-name" v-model="form.name" placeholder="如:下单成功返回 200" />
     </div>
-    <div class="field interface-field">
+    <div v-if="!detailMode" class="field interface-field">
       <label for="case-interface">关联接口 <span class="opt">(必选，复用接口请求配置)</span></label>
       <template v-if="interfaces.length">
         <select id="case-interface" v-model="form.interface_id" :disabled="embedded || saving">
@@ -380,7 +428,7 @@ defineExpose({ openCreate, load })
     <section v-if="selectedInterface" class="case-request">
       <div class="case-request-head"><strong>请求参数</strong><label><input v-model="independentRequest" type="checkbox" :disabled="saving" />使用用例独立参数</label></div>
       <p class="case-request-hint">{{ independentRequest ? '本用例单独保存参数值；请求方法和 URL 使用关联接口的配置。' : '执行时使用关联接口的当前默认参数值。' }}</p>
-      <RequestEditor v-if="independentRequest" ref="requestEditor" v-model="requestForm" :url="selectedInterface.url" :disabled="saving" id-prefix="case-request" />
+      <RequestEditor v-if="independentRequest || detailMode" ref="requestEditor" v-model="requestForm" :url="selectedInterface.url" :disabled="saving || runningId != null || !independentRequest" id-prefix="case-request" />
     </section>
     <button
       type="button"
@@ -422,16 +470,19 @@ defineExpose({ openCreate, load })
         <textarea id="case-datasets" v-model="form.datasets" rows="2" placeholder='[{"uid":1},{"uid":2}]'></textarea>
       </div>
     </div>
+    </fieldset>
     <div v-if="formErr" class="form-err" role="alert">{{ formErr }}</div>
 
     <template #foot>
-      <button class="btn btn-ghost" @click="closeModal" :disabled="saving">取消</button>
-      <button class="btn btn-primary" @click="save" :disabled="saving || !interfaces.length">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
+      <button v-if="detailMode && editingId != null" type="button" class="btn btn-ghost" :disabled="dirty || saving || runningId != null" :title="dirty ? '请先保存修改，再运行用例' : '运行已保存的用例'" @click="onRun({ id: editingId, name: form.name })">{{ runningId != null ? '运行中…' : '运行用例' }}</button>
+      <button class="btn btn-ghost" @click="closeModal" :disabled="saving || runningId != null">{{ detailMode ? '返回接口' : '取消' }}</button>
+      <button class="btn btn-primary" @click="save" :disabled="saving || runningId != null || !interfaces.length">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>
-  </Modal>
+  </component>
+  <p v-if="detailMode && dirty && editingId != null" class="case-save-hint">保存修改后即可运行用例。</p>
 
   <!-- 执行结果弹层 -->
-  <Modal v-if="showResult" :title="`执行结果 · ${resultCase?.name}`" :max-width="620" @close="showResult = false">
+  <component :is="detailMode ? InlineCasePanel : Modal" v-if="showResult" :title="`执行结果 · ${resultCase?.name}`" :max-width="620" @close="showResult = false">
     <div class="verdict">
       <span class="badge" :class="overallPassed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ overallPassed ? '通过' : '失败' }}</span>
       <span v-if="runs.length > 1" class="muted">共 {{ runs.length }} 组数据驱动</span>
@@ -463,10 +514,14 @@ defineExpose({ openCreate, load })
     <template #foot>
       <button class="btn btn-primary" @click="showResult = false">关闭</button>
     </template>
-  </Modal>
+  </component>
 </template>
 
 <style scoped>
+.case-environment{display:flex;align-items:center;gap:12px;margin-bottom:20px;font-size:12px;color:var(--text-muted)}.case-environment>span{flex:none;white-space:nowrap}
+
+.case-form-fields{margin:0;padding:0;min-width:0;border:0}.case-detail-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.save-state,.case-save-hint{font-size:12px;color:var(--text-muted)}.case-context{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px;padding:10px 12px;border-radius:8px;background:var(--surface-2);font-size:12px;color:var(--text-muted)}.case-context>span{color:var(--primary);font-weight:700}.case-context code{overflow-wrap:anywhere;min-width:0}.case-context strong{font-weight:500}.case-save-hint{margin:10px 0}
+
 .case-heading{display:flex;align-items:center;gap:9px}.case-total{padding:2px 8px;border-radius:12px;background:var(--surface-2);font-size:12px;font-weight:500;color:var(--text-muted)}.case-request{margin:0 0 20px}.case-request-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px}.case-request-head label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}.case-request-head input{accent-color:var(--primary)}.case-request-hint{margin:8px 0 12px;color:var(--text-muted);font-size:12px;line-height:1.6}
 .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);
