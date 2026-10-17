@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { listTeams, listTeamMembers, searchTeamMemberCandidates, updateTeamMemberRole, removeTeamMember, updateTeam, transferTeamOwnership, leaveTeam, deleteTeam, inviteTeamMember, listTeamInvitations, respondTeamInvitation, listTeamPermissions, setTeamPermission } from '../api/team'
 import { useFeedback } from '../composables/feedback'
@@ -25,6 +25,10 @@ const permissionSaving = ref('')
 const transferTargetId = ref(null)
 const editName = ref('')
 const editDescription = ref('')
+const editingTeamId = ref(null)
+const savingTeamInfo = ref(false)
+const teamNameInput = ref(null)
+const editTeamButton = ref(null)
 const descriptionLength = computed(() => Array.from(editDescription.value).length)
 
 const permissionOptions = [
@@ -40,6 +44,29 @@ const permissionOptions = [
 
 const currentTeam = computed(() => teams.value.find(t => t.id === auth.currentTeamId) || teams.value[0] || null)
 const canManage = computed(() => ['owner', 'admin'].includes(auth.currentTeamRole))
+const editingTeamInfo = computed(() => Boolean(currentTeam.value && editingTeamId.value === currentTeam.value.id))
+
+function resetTeamEdit(team = currentTeam.value) {
+  editingTeamId.value = null
+  editName.value = team?.name || ''
+  editDescription.value = team?.description || ''
+}
+
+function startTeamEdit() {
+  if (!currentTeam.value || !canManage.value || savingTeamInfo.value) return
+  editName.value = currentTeam.value.name
+  editDescription.value = currentTeam.value.description || ''
+  editingTeamId.value = currentTeam.value.id
+  nextTick(() => teamNameInput.value?.focus())
+}
+
+function cancelTeamEdit() {
+  if (savingTeamInfo.value) return
+  resetTeamEdit()
+  nextTick(() => editTeamButton.value?.focus())
+}
+
+watch(() => [auth.currentTeamId, auth.currentTeamRole], () => resetTeamEdit())
 
 function applyPermissionRows(rows = []) {
   const next = Object.fromEntries(permissionOptions.map(option => [option.key, false]))
@@ -73,6 +100,7 @@ async function respondInvitation(invite, accept) {
 }
 
 async function loadTeamDetails(team) {
+  resetTeamEdit(team)
   if (!team) {
     members.value = []
     applyPermissionRows()
@@ -130,18 +158,25 @@ async function addMember() {
 }
 
 async function saveTeamInfo() {
-  if (!currentTeam.value || !canManage.value) return
+  if (!editingTeamInfo.value || !canManage.value || savingTeamInfo.value) return
   if (descriptionLength.value > 500) {
     showMessage('团队简介不能超过 500 个字符', 'error')
     return
   }
+  const teamId = editingTeamId.value
+  savingTeamInfo.value = true
   try {
-    const updated = await updateTeam(currentTeam.value.id, { name: editName.value.trim(), description: editDescription.value.trim() || null })
+    const updated = await updateTeam(teamId, { name: editName.value.trim(), description: editDescription.value.trim() || null })
     const index = teams.value.findIndex(team => team.id === updated.id)
     if (index >= 0) teams.value[index] = { ...teams.value[index], ...updated }
-    auth.setTeam(updated.id, updated.name, auth.currentTeamRole)
+    if (auth.currentTeamId === teamId) auth.setTeam(updated.id, updated.name, auth.currentTeamRole)
+    if (editingTeamId.value === teamId) {
+      resetTeamEdit(updated)
+      nextTick(() => editTeamButton.value?.focus())
+    }
     showMessage('团队信息已更新')
   } catch (e) { showMessage(e.message || '更新失败', 'error') }
+  finally { savingTeamInfo.value = false }
 }
 
 async function transferOwner() {
@@ -243,27 +278,36 @@ onMounted(() => { load(); loadInvitations() })
       </section>
       <div class="team-main">
         <section class="panel member-panel">
-          <template v-if="currentTeam && canManage">
-            <form class="team-edit" @submit.prevent="saveTeamInfo">
+          <section v-if="currentTeam" class="team-info">
+            <div class="team-info-head">
+              <h3>团队信息</h3>
+              <button v-if="canManage && !editingTeamInfo" ref="editTeamButton" type="button" class="btn btn-ghost" :disabled="savingTeamInfo" @click="startTeamEdit">编辑</button>
+            </div>
+            <form v-if="editingTeamInfo && canManage" class="team-edit" @submit.prevent="saveTeamInfo">
               <div class="team-field">
                 <label for="team-name">团队名称</label>
-                <input id="team-name" v-model="editName" :placeholder="currentTeam.name" required />
+                <input id="team-name" ref="teamNameInput" v-model="editName" :placeholder="currentTeam.name" :disabled="savingTeamInfo" required />
               </div>
               <div class="team-field">
                 <label for="team-description">团队简介</label>
-                <textarea id="team-description" v-model="editDescription" rows="4" placeholder="介绍团队的用途、分工或协作方式" aria-describedby="team-description-count" :aria-invalid="descriptionLength > 500"></textarea>
+                <textarea id="team-description" v-model="editDescription" rows="4" placeholder="介绍团队的用途、分工或协作方式" aria-describedby="team-description-count" :aria-invalid="descriptionLength > 500" :disabled="savingTeamInfo"></textarea>
                 <div class="team-edit-actions">
                   <span id="team-description-count" class="description-count" :class="{ err: descriptionLength > 500 }">{{ descriptionLength }} / 500</span>
-                  <button type="submit" class="btn btn-ghost">保存</button>
+                  <button type="button" class="btn btn-ghost" :disabled="savingTeamInfo" @click="cancelTeamEdit">取消</button>
+                  <button type="submit" class="btn btn-ghost" :disabled="savingTeamInfo">{{ savingTeamInfo ? '保存中…' : '保存' }}</button>
                 </div>
               </div>
             </form>
-            <div v-if="auth.currentTeamRole === 'owner'" class="team-transfer">
-              <label for="team-transfer-owner">转让所有权</label>
-              <select id="team-transfer-owner" v-model="transferTargetId" class="transfer-select"><option :value="null">选择新所有者</option><option v-for="member in members.filter(item => item.role !== 'owner')" :key="member.id" :value="member.user_id">{{ member.user.username }}</option></select>
-              <button type="button" class="btn btn-ghost" :disabled="!transferTargetId" @click="transferOwner">转让所有权</button>
-            </div>
-          </template>
+            <dl v-else class="team-details">
+              <div><dt>团队名称</dt><dd>{{ currentTeam.name }}</dd></div>
+              <div><dt>团队简介</dt><dd :class="{ 'detail-empty': !currentTeam.description }">{{ currentTeam.description || '暂无简介' }}</dd></div>
+            </dl>
+          </section>
+          <div v-if="currentTeam && auth.currentTeamRole === 'owner'" class="team-transfer">
+            <label for="team-transfer-owner">转让所有权</label>
+            <select id="team-transfer-owner" v-model="transferTargetId" class="transfer-select"><option :value="null">选择新所有者</option><option v-for="member in members.filter(item => item.role !== 'owner')" :key="member.id" :value="member.user_id">{{ member.user.username }}</option></select>
+            <button type="button" class="btn btn-ghost" :disabled="!transferTargetId" @click="transferOwner">转让所有权</button>
+          </div>
           <div class="panel-head"><span>{{ currentTeam ? currentTeam.name : '团队成员' }} · 成员</span><span class="count">{{ members.length }} 位</span></div>
           <div v-if="!currentTeam" class="state">请选择一个团队。</div>
           <template v-else>
@@ -328,7 +372,14 @@ onMounted(() => { load(); loadInvitations() })
 .icon-btn:disabled { opacity:.35; cursor:not-allowed; }
 .state { padding:34px 18px; text-align:center; color:var(--text-muted); font-size:12px; }
 .err { color:var(--fail-fg); }
-.team-edit { display:grid; gap:14px; padding:16px 18px; border-bottom:1px solid var(--border); }
+.team-info { padding:16px 18px; border-bottom:1px solid var(--border); }
+.team-info-head { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:32px; margin-bottom:14px; }
+.team-info-head h3 { margin:0; font-size:13px; }
+.team-details { display:grid; gap:14px; margin:0; }
+.team-details dt { margin-bottom:5px; color:var(--text-muted); font-size:12px; }
+.team-details dd { margin:0; font-size:13px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.team-details .detail-empty { color:var(--text-muted); }
+.team-edit { display:grid; gap:14px; }
 .team-field { display:grid; gap:7px; min-width:0; }
 .team-field label, .team-transfer label { font-size:12px; font-weight:600; }
 .team-edit input, .team-edit textarea { width:100%; min-width:0; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text); font:inherit; font-size:13px; }
