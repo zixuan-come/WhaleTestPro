@@ -3,6 +3,7 @@ import { computed, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { runInterface } from '../api/interface'
 import { useFeedback } from '../composables/feedback'
 import { cloneRequest, requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
+import { pathParameterNames } from '../utils/pathParameters'
 import EnvironmentSelect from './EnvironmentSelect.vue'
 import RequestEditor from './RequestEditor.vue'
 import Cases from '../views/Cases.vue'
@@ -22,7 +23,32 @@ watch(running, value => emit('busy', value), { flush: 'sync' })
 let version = 0
 const environment = computed({ get: () => props.modelValue, set: value => { if (!running.value) emit('update:modelValue', value) } })
 const methodClass = computed(() => 'm-' + props.interfaceData.method.toLowerCase())
-const configFields = [ ['path_params', 'Path 参数'], ['params', 'Query 参数'], ['headers', 'Headers'], ['body', 'Body'] ]
+const defaultTables = computed(() => {
+  const paths = props.interfaceData.path_params || {}
+  const pathRows = pathParameterNames(props.interfaceData.url).map(name => {
+    const value = paths[name]
+    const unset = !Object.hasOwn(paths, name) || value == null || (typeof value === 'string' && !value.trim())
+    return { name, value: unset ? '未设置默认值' : formatConfigValue(value), unset }
+  })
+  return [
+    { key: 'path_params', label: 'Path 参数', rows: pathRows },
+    ...[['params', 'Query 参数'], ['headers', 'Headers']].map(([key, label]) => ({
+      key, label, rows: Object.entries(props.interfaceData[key] || {}).map(([name, value]) => ({ name, value: formatConfigValue(value) })),
+    })),
+  ].filter(section => section.rows.length)
+})
+const hasBody = computed(() => props.interfaceData.body != null)
+const hasRequestConfig = computed(() => defaultTables.value.length > 0 || hasBody.value)
+const emptyConfigLabels = computed(() => [
+  !Object.keys(props.interfaceData.params || {}).length && 'Query：未配置',
+  !Object.keys(props.interfaceData.headers || {}).length && 'Headers：未配置',
+  !hasBody.value && 'Body：无请求体',
+].filter(Boolean))
+
+function formatConfigValue(value) {
+  if (value === '') return '（空字符串）'
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
 watch(() => JSON.stringify(props.interfaceData), () => reset())
 watch(draft, () => { error.value = '' }, { deep: true, flush: 'sync' })
 onScopeDispose(() => { version += 1 })
@@ -95,7 +121,17 @@ async function saveAsCase(fromResult = false) {
     <section v-if="tab === 'config'" id="workspace-panel-config" class="workspace-config panel" role="tabpanel" aria-labelledby="workspace-tab-config">
       <div class="panel-head">接口默认配置</div>
       <dl class="config-summary"><div><dt>接口名称</dt><dd>{{ interfaceData.name }}</dd></div><div><dt>分类</dt><dd>{{ interfaceData.category || '未分类' }}</dd></div><div><dt>请求方法</dt><dd>{{ interfaceData.method }}</dd></div><div><dt>请求 URL</dt><dd><code>{{ interfaceData.url }}</code></dd></div></dl>
-      <div class="config-values"><section v-for="[key, label] in configFields" :key="key"><h3>{{ label }}</h3><pre>{{ interfaceData[key] == null ? '未配置' : JSON.stringify(interfaceData[key], null, 2) }}</pre></section></div>
+      <div class="config-values">
+        <template v-if="hasRequestConfig">
+          <section v-for="section in defaultTables" :key="section.key" :data-config="section.key">
+            <h3>{{ section.label }}</h3>
+            <div class="config-table-wrap"><table class="config-table" :aria-label="section.label + '默认配置'"><thead><tr><th scope="col">名称</th><th scope="col">值</th></tr></thead><tbody><tr v-for="row in section.rows" :key="row.name"><td><code>{{ row.name }}</code></td><td :class="{ 'unset-default': row.unset }"><span v-if="row.unset">{{ row.value }}</span><code v-else>{{ row.value }}</code></td></tr></tbody></table></div>
+          </section>
+          <section v-if="hasBody" data-config="body"><h3>Body</h3><pre>{{ JSON.stringify(interfaceData.body, null, 2) }}</pre></section>
+          <p v-if="emptyConfigLabels.length" class="config-empty-summary"><span v-for="label in emptyConfigLabels" :key="label">{{ label }}</span></p>
+        </template>
+        <section v-else class="config-empty"><h3>默认请求参数</h3><p>暂无默认请求参数</p></section>
+      </div>
     </section>
 
     <section v-show="tab === 'debug'" id="workspace-panel-debug" class="debug-panel panel" role="tabpanel" aria-labelledby="workspace-tab-debug">
@@ -122,7 +158,8 @@ async function saveAsCase(fromResult = false) {
 .empty-case-list{padding:28px 20px;color:var(--text-muted);font-size:13px;text-align:center}.interface-case-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;width:100%;padding:16px 20px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);text-align:left;font:13px inherit;cursor:pointer}.interface-case-row:hover{background:var(--surface-2)}.interface-case-row strong{flex:1;min-width:0;overflow-wrap:anywhere}.interface-case-row span{font-size:12px;color:var(--text-muted)}.interface-case-row:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
 
 .interface-workspace{display:flex;flex-direction:column;gap:18px;min-width:0}.workspace-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}.workspace-title{min-width:0}.workspace-title h2{margin:12px 0 10px;font-size:22px;line-height:1.4;overflow-wrap:anywhere;color:var(--text)}.workspace-back{border:0;padding:0;background:none;color:var(--text-muted);font:12px inherit;cursor:pointer}.workspace-back:hover{color:var(--primary)}.workspace-url{display:flex;align-items:center;gap:10px}.workspace-url code{min-width:0;overflow-wrap:anywhere;color:var(--text-muted);font:13px ui-monospace,Consolas,monospace}.workspace-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border)}.workspace-tabs button{position:relative;padding:12px 18px;background:transparent;border:0;color:var(--text-muted);font:13px inherit;cursor:pointer}.workspace-tabs button.active{color:var(--primary);font-weight:650}.workspace-tabs button.active:after{content:'';position:absolute;height:3px;bottom:-1px;left:12px;right:12px;background:var(--primary);border-radius:3px}.workspace-tabs button:focus-visible,.workspace-back:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.config-summary{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0;padding:20px}.config-summary dt{font-size:12px;color:var(--text-muted);margin-bottom:7px}.config-summary dd{margin:0;color:var(--text);font-size:13px;overflow-wrap:anywhere}.config-values{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 20px 20px}.config-values section{min-width:0}.config-values h3{font-size:12px;margin:0 0 8px}.config-values pre{min-height:60px;margin:0;padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--text-muted)}
+.config-summary{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0;padding:20px}.config-summary dt{font-size:12px;color:var(--text-muted);margin-bottom:7px}.config-summary dd{margin:0;color:var(--text);font-size:13px;overflow-wrap:anywhere}
+.config-values{display:flex;flex-direction:column;gap:18px;margin:0 20px 20px;padding-top:20px;border-top:1px solid var(--border)}.config-values section{min-width:0}.config-values h3{font-size:13px;margin:0 0 10px;color:var(--text)}.config-values pre{margin:0;padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--text)}.config-table-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden}.config-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left;font-size:13px;color:var(--text)}.config-table th{padding:10px 14px;background:var(--surface-2);font-size:12px;font-weight:500;color:var(--text-muted)}.config-table th:first-child{width:44%}.config-table td{padding:11px 14px;border-top:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}.config-table code{font:12px/1.6 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.config-table .unset-default{color:var(--text-muted);font-size:12px}.config-empty-summary{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0;color:var(--text-muted);font-size:12px;line-height:1.6}.config-empty-summary span+span:before{content:'·';margin-right:10px}.config-empty p{margin:0;color:var(--text-muted);font-size:13px;line-height:1.6}
 .debug-panel{padding:20px}.debug-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.debug-environment{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-muted)}.debug-actions{display:flex;gap:8px;flex-wrap:wrap}.debug-hint{margin:14px 0;color:var(--text-muted);font-size:12px;line-height:1.6}.workspace-error{margin:14px 0 0;padding:10px 12px;background:var(--fail-bg);color:var(--fail-fg);border-radius:8px;font-size:12px;line-height:1.6}.debug-result{margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}.result-heading{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.result-heading h3{margin:0;font-size:14px}.result-heading .btn{margin-left:auto}.result-meta{display:flex;gap:12px;align-items:center;font-size:12px;color:var(--text-muted)}.passed{color:var(--pass-fg)}.failed{color:var(--fail-fg)}.actual-request{display:block;margin:14px 0 8px;overflow-wrap:anywhere;font:12px ui-monospace,Consolas,monospace;color:var(--text-muted)}.debug-result pre{padding:14px;margin:0;max-height:400px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;font:12.5px/1.6 ui-monospace,Consolas,monospace;color:var(--text)}
 @media(max-width:700px){.workspace-heading{align-items:flex-start}.workspace-title h2{font-size:19px}.workspace-heading>.btn{flex:none}.debug-panel{padding:14px}.debug-toolbar,.debug-environment{align-items:stretch;flex-direction:column;width:100%}.debug-actions{display:grid;grid-template-columns:1fr 1fr}.debug-actions .btn-primary{grid-column:1/-1}.config-summary,.config-values{grid-template-columns:1fr}.result-heading .btn{margin-left:0}.workspace-tabs button{padding:12px}}
 </style>
