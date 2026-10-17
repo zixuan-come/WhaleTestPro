@@ -252,9 +252,11 @@ onMounted(() => { load(); loadInvitations() })
               <div class="team-field">
                 <label for="team-description">团队简介</label>
                 <textarea id="team-description" v-model="editDescription" rows="4" placeholder="介绍团队的用途、分工或协作方式" aria-describedby="team-description-count" :aria-invalid="descriptionLength > 500"></textarea>
-                <span id="team-description-count" class="description-count" :class="{ err: descriptionLength > 500 }">{{ descriptionLength }} / 500</span>
+                <div class="team-edit-actions">
+                  <span id="team-description-count" class="description-count" :class="{ err: descriptionLength > 500 }">{{ descriptionLength }} / 500</span>
+                  <button type="submit" class="btn btn-ghost">保存</button>
+                </div>
               </div>
-              <div class="team-edit-actions"><button type="submit" class="btn btn-ghost">保存</button></div>
             </form>
             <div v-if="auth.currentTeamRole === 'owner'" class="team-transfer">
               <label for="team-transfer-owner">转让所有权</label>
@@ -334,9 +336,9 @@ onMounted(() => { load(); loadInvitations() })
 .team-edit textarea { min-height:112px; padding:8px 9px; line-height:1.6; resize:vertical; }
 .team-edit input:focus-visible, .team-edit textarea:focus-visible, .transfer-select:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 .team-edit textarea[aria-invalid="true"] { border-color:var(--fail-fg); }
-.description-count { justify-self:end; color:var(--text-muted); font-size:12px; }
+.description-count { color:var(--text-muted); font-size:12px; }
 .description-count.err { color:var(--fail-fg); }
-.team-edit-actions { display:flex; justify-content:flex-end; }
+.team-edit-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
 .team-transfer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:14px 18px; border-bottom:1px solid var(--border); }
 .team-transfer label { flex-basis:100%; }
 .transfer-select { flex:1; min-width:0; max-width:320px; height:32px; border:1px solid var(--border); border-radius:6px; padding:0 8px; background:var(--surface-2); color:var(--text); font:inherit; font-size:12px; }
