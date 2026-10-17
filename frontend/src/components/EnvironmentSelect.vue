@@ -27,7 +27,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onOutside))
 <template>
   <div ref="root" class="env-select" :class="{ open }">
     <button type="button" class="env-trigger" :title="title" @click.stop="open = !open">
-      <span class="env-icon">⌁</span>
+      <span class="env-icon" aria-hidden="true"><span class="env-dot" :class="{ muted: !selected }"></span></span>
       <span class="env-copy">
         <span class="env-label">{{ selected ? selected.name : placeholder }}</span>
         <span v-if="selected?.base_url" class="env-url">{{ selected.base_url }}</span>
@@ -51,7 +51,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onOutside))
 .env-select { position:relative; min-width:190px; }
 .env-trigger { width:100%; min-height:38px; display:flex; align-items:center; gap:9px; padding:6px 10px; border:1px solid var(--border); border-radius:9px; background:var(--surface-2); color:var(--text); cursor:pointer; text-align:left; transition:border-color .18s, box-shadow .18s, background .18s; }
 .env-trigger:hover, .env-select.open .env-trigger { border-color:var(--primary); box-shadow:0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent); background:var(--surface); }
-.env-icon { width:22px; height:22px; display:grid; place-items:center; border-radius:7px; color:var(--primary); background:color-mix(in srgb, var(--primary) 15%, transparent); font-size:17px; line-height:1; }
+.env-icon { width:22px; height:22px; flex:none; display:grid; place-items:center; }
 .env-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
 .env-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; font-weight:650; }
 .env-url { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-muted); font-size:10.5px; }
