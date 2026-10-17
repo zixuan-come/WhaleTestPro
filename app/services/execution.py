@@ -5,6 +5,7 @@ from app.repositories import environment as env_repo
 from app.repositories import scenario_report as scenario_report_repo
 from app.core.variables import render, extract_match, render_deep
 from app.core.path_parameters import render_request_path
+from app.core.request_config import with_request_overrides
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
 from app.core.notifier import send_feishu
@@ -123,7 +124,7 @@ def run_case(db, case_id, env_id, project_id):
 
 
 
-def run_interface(db, interface_id, env_id, project_id, *, path_params=None):
+def run_interface(db, interface_id, env_id, project_id, *, path_params=None, request_overrides=None):
     """直接执行接口定义，不创建测试用例或测试报告。"""
     interface = interface_repo.db_get(db, interface_id, project_id)
     if interface is None:
@@ -136,6 +137,7 @@ def run_interface(db, interface_id, env_id, project_id, *, path_params=None):
     passed = False
     started = perf_counter()
     try:
+        interface = with_request_overrides(interface, request_overrides)
         values = {**(getattr(interface, "path_params", None) or {}), **(path_params or {})}
         report_secrets.update(sensitive_strings(render_deep(values, context)))
         rendered_url = _full_url(interface.url, context, values)
@@ -217,6 +219,7 @@ def run_chain(
         error = None
         actual_status = None
         try:
+            interface = with_request_overrides(interface, getattr(case, "request_overrides", None))
             path_params = getattr(interface, "path_params", None)
             report_secrets.update(sensitive_strings(render_deep(path_params, context)))
             rendered_url = _full_url(interface.url, context, path_params)
@@ -366,6 +369,7 @@ def _run_once(db, case, interface, context):
     result = None
     report_secrets = set(sensitive_strings(context))
     try:
+        interface = with_request_overrides(interface, getattr(case, "request_overrides", None))
         report_secrets.update(sensitive_strings(render_deep(getattr(interface, "path_params", None), context)))
         run_sql(db, render_deep(case.setup_sql, context))
         fields = _render_request_fields(interface, context, report_secrets)

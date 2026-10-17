@@ -1,8 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.base import NamedSchema
-
-
-PathParameterValues = dict[str, StrictStr | StrictInt | StrictFloat | StrictBool | None]
+from app.schemas.request_config import PathParameterValues, RequestOverrides
 
 
 class InterfaceCreate(NamedSchema):
@@ -51,6 +49,7 @@ class InterfaceOut(InterfaceCreate):
 class InterfaceRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path_params: PathParameterValues | None = None
+    request_overrides: RequestOverrides | None = None
 
 
 class InterfaceReferenceCaseOut(BaseModel):

@@ -1,13 +1,21 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
+import RequestEditor from '../components/RequestEditor.vue'
+import { requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
+
+const props = defineProps({
+  interfaceId: { type: [Number, String], default: null },
+  interfaceData: { type: Object, default: null },
+  embedded: { type: Boolean, default: false },
+})
 
 const router = useRouter()
 
@@ -30,6 +38,9 @@ const editingId = ref(null)
 const saving = ref(false)
 const formErr = ref('')
 const showAdvanced = ref(false)
+const independentRequest = ref(false)
+const requestForm = ref(requestDraft())
+const requestEditor = ref(null)
 const form = reactive({
   name: '', interface_id: '', expected_status: 200, retries: 0, tags: '',
   extract_rules: '', assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
@@ -43,7 +54,13 @@ const ifaceMap = computed(() => {
   for (const it of interfaces.value) m[it.id] = it
   return m
 })
-const selectedInterface = computed(() => ifaceMap.value[form.interface_id] || null)
+const selectedInterface = computed(() => {
+  if (props.interfaceData && String(props.interfaceData.id) === String(form.interface_id)) return props.interfaceData
+  return ifaceMap.value[form.interface_id] || null
+})
+watch(() => form.interface_id, () => {
+  requestForm.value = requestDraft(requestConfig(selectedInterface.value || {}))
+}, { flush: 'sync' })
 
 function jsonFieldHasValue(text) {
   const raw = (text || '').trim()
@@ -89,7 +106,9 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [cs, ifs] = await Promise.all([listCases(), listInterfaces(), loadEnvironments()])
+    const [cs, ifs] = await Promise.all([
+      listCases(props.interfaceId), props.interfaceData ? Promise.resolve([props.interfaceData]) : listInterfaces(), loadEnvironments(),
+    ])
     items.value = cs
     interfaces.value = ifs
   } catch (e) {
@@ -99,11 +118,11 @@ async function load() {
   }
 }
 
-function openCreate() {
+function openCreate(initialRequest = null, expectedStatus = 200) {
   editingId.value = null
-  form.name = ''
-  form.interface_id = ''
-  form.expected_status = 200
+  form.name = props.interfaceData ? props.interfaceData.name + ' - 用例' : ''
+  form.interface_id = props.interfaceId || ''
+  form.expected_status = expectedStatus
   form.retries = 0
   form.tags = ''
   form.extract_rules = ''
@@ -111,6 +130,8 @@ function openCreate() {
   form.setup_sql = ''
   form.teardown_sql = ''
   form.datasets = ''
+  independentRequest.value = true
+  requestForm.value = requestDraft(initialRequest || requestConfig(selectedInterface.value || {}))
   showAdvanced.value = false
   formErr.value = ''
   showModal.value = true
@@ -132,6 +153,8 @@ function openEdit(testCase) {
   form.setup_sql = formatJsonField(testCase.setup_sql)
   form.teardown_sql = formatJsonField(testCase.teardown_sql)
   form.datasets = formatJsonField(testCase.datasets)
+  independentRequest.value = testCase.request_overrides != null
+  requestForm.value = requestDraft(requestConfig(selectedInterface.value || {}, testCase.request_overrides))
   showAdvanced.value = hasAdvancedConfig(testCase)
   formErr.value = ''
   showModal.value = true
@@ -159,19 +182,22 @@ function parseJsonField(text, label) {
 }
 
 async function save() {
+  if (saving.value) return
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写用例名称'; return }
   if (!form.interface_id) { formErr.value = '请选择关联接口'; return }
 
-  let extract_rules, assertions, setup_sql, teardown_sql, datasets
+  let extract_rules, assertions, setup_sql, teardown_sql, datasets, request_overrides
   try {
+    request_overrides = independentRequest.value ? serializeRequest(requestForm.value, selectedInterface.value?.url || '') : null
     extract_rules = parseJsonField(form.extract_rules, '提取规则')
     assertions = parseJsonField(form.assertions, '断言')
     setup_sql = parseJsonField(form.setup_sql, '前置 SQL')
     teardown_sql = parseJsonField(form.teardown_sql, '后置 SQL')
     datasets = parseJsonField(form.datasets, '数据集')
   } catch (e) {
-    showAdvanced.value = true
+    if (e.tab) requestEditor.value?.focusError(e)
+    else showAdvanced.value = true
     formErr.value = e.message
     return
   }
@@ -186,7 +212,7 @@ async function save() {
       expected_status: Number(form.expected_status),
       retries: Number(form.retries) || 0,
       tags,
-      extract_rules, assertions, setup_sql, teardown_sql, datasets,
+      extract_rules, assertions, setup_sql, teardown_sql, datasets, request_overrides,
     }
 
     if (editingId.value == null) {
@@ -238,10 +264,11 @@ const overallPassed = computed(() => runs.value.length > 0 && runs.value.every(r
 function fmtJson(v) { return JSON.stringify(v, null, 2) }
 
 onMounted(load)
+defineExpose({ openCreate, load })
 </script>
 
 <template>
-  <div class="cards">
+  <div v-if="!embedded" class="cards">
     <div class="card"><div class="k">用例总数</div><div class="v pri">{{ total }}</div></div>
     <div class="card"><div class="k">关联接口</div><div class="v">{{ interfaces.length }}</div></div>
     <div class="card"><div class="k">可用环境</div><div class="v">{{ envs.length }}</div></div>
@@ -249,10 +276,10 @@ onMounted(load)
 
   <div class="panel">
     <div class="panel-head">
-      测试用例
+      <div class="case-heading">{{ embedded ? '当前接口的测试用例' : '全部测试用例' }} <span class="case-total">{{ total }}</span></div>
       <div class="head-actions">
         <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="跑测试时使用的环境" />
-        <button class="btn btn-primary" @click="openCreate">
+        <button class="btn btn-primary" @click="openCreate()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
           新建用例
         </button>
@@ -303,7 +330,7 @@ onMounted(load)
   </div>
 
   <!-- 新建/编辑用例弹层 -->
-  <Modal v-if="showModal" :title="editingId == null ? '新建测试用例' : '编辑测试用例'" :max-width="620" :busy="saving" @close="closeModal">
+  <Modal v-if="showModal" :title="editingId == null ? '新建测试用例' : '编辑测试用例'" :max-width="820" :busy="saving" @close="closeModal">
     <div class="field">
       <label>用例名称</label>
       <input v-model="form.name" placeholder="如:下单成功返回 200" />
@@ -311,20 +338,20 @@ onMounted(load)
     <div class="field interface-field">
       <label for="case-interface">关联接口 <span class="opt">(必选，复用接口请求配置)</span></label>
       <template v-if="interfaces.length">
-        <select id="case-interface" v-model="form.interface_id">
+        <select id="case-interface" v-model="form.interface_id" :disabled="embedded || saving">
           <option value="" disabled>请选择当前项目的接口</option>
           <option v-for="it in interfaces" :key="it.id" :value="it.id">
             {{ (it.method || 'GET').toUpperCase() }} · {{ it.name }} · {{ it.url }}
           </option>
         </select>
-        <div v-if="selectedInterface" class="interface-preview" aria-live="polite">
+        <div v-if="selectedInterface && !embedded" class="interface-preview" aria-live="polite">
           <span class="method-pill">{{ (selectedInterface.method || 'GET').toUpperCase() }}</span>
           <div class="preview-copy">
             <strong class="preview-name">{{ selectedInterface.name }}</strong>
             <code class="preview-url">{{ selectedInterface.url }}</code>
           </div>
         </div>
-        <div v-else-if="form.interface_id" class="orphan-warning" role="alert">
+        <div v-else-if="form.interface_id && !selectedInterface" class="orphan-warning" role="alert">
           原关联接口已不存在，请重新选择一个接口。
         </div>
       </template>
@@ -350,6 +377,11 @@ onMounted(load)
       <label>标签 <span class="opt">(逗号分隔,可选)</span></label>
       <input v-model="form.tags" placeholder="smoke, order" />
     </div>
+    <section v-if="selectedInterface" class="case-request">
+      <div class="case-request-head"><strong>请求参数</strong><label><input v-model="independentRequest" type="checkbox" :disabled="saving" />使用用例独立参数</label></div>
+      <p class="case-request-hint">{{ independentRequest ? '本用例单独保存参数值；请求方法和 URL 使用关联接口的配置。' : '执行时使用关联接口的当前默认参数值。' }}</p>
+      <RequestEditor v-if="independentRequest" ref="requestEditor" v-model="requestForm" :url="selectedInterface.url" :disabled="saving" id-prefix="case-request" />
+    </section>
     <button
       type="button"
       class="advanced-toggle"
@@ -435,6 +467,7 @@ onMounted(load)
 </template>
 
 <style scoped>
+.case-heading{display:flex;align-items:center;gap:9px}.case-total{padding:2px 8px;border-radius:12px;background:var(--surface-2);font-size:12px;font-weight:500;color:var(--text-muted)}.case-request{margin:0 0 20px}.case-request-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px}.case-request-head label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}.case-request-head input{accent-color:var(--primary)}.case-request-hint{margin:8px 0 12px;color:var(--text-muted);font-size:12px;line-height:1.6}
 .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);
   border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }

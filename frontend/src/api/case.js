@@ -1,6 +1,6 @@
 import http from './http'
 
-export const listCases = () => http.get('/cases')
+export const listCases = (interfaceId) => interfaceId == null ? http.get('/cases') : http.get('/cases', { params: { interface_id: interfaceId } })
 export const getCase = (id) => http.get(`/cases/${id}`)
 export const createCase = (data) => http.post('/cases', data)
 export const updateCase = (id, data) => http.put(`/cases/${id}`, data)

@@ -17,8 +17,11 @@ def db_get(db: Session, case_id: int, project_id: int):
     ).first()
 
 
-def db_list(db: Session, project_id: int):
-    return db.query(Case).filter(Case.project_id == project_id).all()
+def db_list(db: Session, project_id: int, interface_id: int | None = None):
+    query = db.query(Case).filter(Case.project_id == project_id)
+    if interface_id is not None:
+        query = query.filter(Case.interface_id == interface_id)
+    return query.all()
 
 
 def db_update(db: Session, case_id: int, case, project_id: int):

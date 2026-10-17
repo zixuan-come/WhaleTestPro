@@ -448,6 +448,7 @@ def run_all_migrations(*binds) -> None:
         ensure_schedule_environment_schema(bind)
         ensure_perf_load_plan_schema(bind)
         ensure_interface_path_parameters_schema(bind)
+        ensure_case_request_overrides_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -494,3 +495,16 @@ def ensure_interface_path_parameters_schema(bind) -> None:
             connection.execute(text("ALTER TABLE interface ADD COLUMN path_params JSON NULL"))
         if bind.dialect.name == "mysql":
             _record_migration(connection, "013_interface_path_parameters")
+
+
+def ensure_case_request_overrides_schema(bind) -> None:
+    """Existing cases keep inheriting interface defaults; no data backfill."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("test_case"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("test_case")}
+        if "request_overrides" not in columns:
+            connection.execute(text("ALTER TABLE test_case ADD COLUMN request_overrides JSON NULL"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "014_case_request_overrides")

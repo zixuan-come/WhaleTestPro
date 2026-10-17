@@ -22,7 +22,7 @@ const navGroups = [
     label: '测试',
     items: [
       { to: '/interfaces', text: '接口管理', icon: 'M4 6h16M4 12h16M4 18h10' },
-      { to: '/cases', text: '测试用例', icon: 'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },
+      { to: '/cases', text: '全部测试用例', icon: 'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },
       { to: '/orchestration', text: '场景编排', icon: 'M4 6h4v4H4zM16 6h4v4h-4zM10 14h4v4h-4zM8 8h8M12 10v4' },
       { to: '/suites', text: '测试套件', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
       { to: '/reports', text: '测试报告', icon: 'M9 17V9m4 8V5m4 12v-6 M4 20h16' },

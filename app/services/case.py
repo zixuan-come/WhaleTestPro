@@ -17,8 +17,8 @@ def s_get(db: Session, case_id: int, project_id: int):
     return case_repo.db_get(db, case_id, project_id)
 
 
-def s_list(db: Session, project_id: int):
-    return case_repo.db_list(db, project_id)
+def s_list(db: Session, project_id: int, interface_id: int | None = None):
+    return case_repo.db_list(db, project_id, interface_id) if interface_id is not None else case_repo.db_list(db, project_id)
 
 
 def s_update(db: Session, case_id: int, case, project_id: int):

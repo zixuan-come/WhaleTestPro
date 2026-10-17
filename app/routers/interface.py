@@ -88,6 +88,8 @@ def run_interface(
 ):
     try:
         options = {"path_params": body.path_params} if body and body.path_params is not None else {}
+        if body and body.request_overrides is not None:
+            options["request_overrides"] = body.request_overrides.model_dump(exclude_unset=True)
         result = execution.run_interface(db, interface_id, env_id, context.project_id, **options)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

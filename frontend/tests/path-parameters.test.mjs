@@ -40,6 +40,7 @@ function page(t, { run } = {}) {
   const component = buildPage({
     ...Vue, onMounted() {}, onUnmounted() {}, ...api, Modal: modal,
     KeyValueEditor: { render: () => null }, EnvironmentSelect: { render: () => null },
+    InterfaceResourceTree: { render: () => null }, InterfaceWorkspace: { render: () => null },
     PathParameterEditor: editor, pathParameterNames, pathParameterValues,
     useFeedback: () => ({ showMessage: (...args) => messages.push(args), confirmAction: async () => false }),
     useExecutionEnvironment: () => ({ envs, selectedEnv, loadEnvironments: async () => {} }),
@@ -95,63 +96,15 @@ test('editing saves defaults separately from Query parameters and drops removed 
   assert.equal(saved.args[1].url, '/orders/{id}')
 })
 
-test('execute opens inputs with defaults and sends only temporary overrides', async t => {
-  const { state, calls, html } = page(t)
-  await state.onRun(order)
-  assert.equal(calls.length, 0)
-  assert.equal(state.showRunConfig.value, true)
-  assert.match(await html(), /id="run-path-param-0"[^>]*value="1"/)
-  state.runPathParams.value.id = '2'
-  await state.submitRun()
-  assert.deepEqual(calls, [{ name: 'runInterface', args: [81, '36', { id: '2' }] }])
-  assert.equal(order.path_params.id, '1')
-  assert.equal(state.showRunConfig.value, false)
-  assert.equal(state.showRunResult.value, true)
-})
-
-test('missing values stop the request and cancel never sends', async t => {
+test('interface execution and case entry open the unified workspace', async t => {
   const { state, calls } = page(t)
-  await state.onRun({ ...order, path_params: null })
-  await state.submitRun()
-  assert.match(state.runError.value, /请填写路径参数：id/)
-  state.runPathParams.value.id = '1'
-  assert.equal(state.runError.value, '')
-  state.closeRunConfig()
+  state.items.value = [order]
+  state.onRun(order)
+  assert.equal(state.workspaceItem.value.id, 81)
+  assert.equal(state.workspaceTab.value, 'debug')
+  state.openWorkspace(order, 'cases')
+  assert.equal(state.workspaceTab.value, 'cases')
   assert.deepEqual(calls, [])
-})
-
-test('a failed request keeps the current draft available for retry', async t => {
-  const { state } = page(t, { run: async () => { throw Error('暂时无法连接') } })
-  await state.onRun(order)
-  state.runPathParams.value.id = 'abc'
-  await state.submitRun()
-  assert.equal(state.showRunConfig.value, true)
-  assert.equal(state.runPathParams.value.id, 'abc')
-  assert.equal(state.runError.value, '暂时无法连接')
-  assert.equal(state.runningId.value, null)
-})
-
-test('pending execution cannot be duplicated or cancelled', async t => {
-  let finish
-  const { state, calls } = page(t, { run: () => new Promise(resolve => { finish = resolve }) })
-  await state.onRun(order)
-  const pending = state.submitRun()
-  await state.submitRun()
-  state.closeRunConfig()
-  assert.equal(calls.length, 1)
-  assert.equal(state.showRunConfig.value, true)
-  finish({ passed: true })
-  await pending
-  assert.equal(state.runningId.value, null)
-})
-
-test('fixed paths and legacy variable paths retain one-click execution', async t => {
-  const { state, calls } = page(t)
-  await state.onRun({ ...order, url: '/orders/1' })
-  await state.onRun({ ...order, url: '/orders/${order_id}' })
-  assert.equal(state.showRunConfig.value, false)
-  assert.equal(calls.length, 2)
-  assert.equal(calls[1].args[2], undefined)
 })
 
 test('API adapter sends Path overrides in the body and leaves the legacy request body null', async () => {
@@ -161,8 +114,10 @@ test('API adapter sends Path overrides in the body and leaves the legacy request
   const run = Function('http', source + '\nreturn runInterface')({ post: (...args) => calls.push(args) })
   run(81, 36, { id: '2' })
   run(81, undefined)
+  run(81, 36, undefined, { path_params: { id: '3' }, params: { page: '2' }, headers: null, body: null })
   assert.deepEqual(calls, [
     ['/interfaces/81/run', { path_params: { id: '2' } }, { params: { env_id: 36 } }],
     ['/interfaces/81/run', null, { params: {} }],
+    ['/interfaces/81/run', { request_overrides: { path_params: { id: '3' }, params: { page: '2' }, headers: null, body: null } }, { params: { env_id: 36 } }],
   ])
 })

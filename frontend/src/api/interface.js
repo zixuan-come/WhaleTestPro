@@ -5,7 +5,12 @@ export const getInterface = (id) => http.get(`/interfaces/${id}`)
 export const createInterface = (data) => http.post('/interfaces', data)
 export const updateInterface = (id, data) => http.put(`/interfaces/${id}`, data)
 export const deleteInterface = (id) => http.delete(`/interfaces/${id}`)
-export const runInterface = (id, envId, pathParams) => http.post(`/interfaces/${id}/run`, pathParams == null ? null : { path_params: pathParams }, { params: envId ? { env_id: envId } : {} })
+export const runInterface = (id, envId, pathParams, requestOverrides) => {
+  const body = {}
+  if (pathParams != null) body.path_params = pathParams
+  if (requestOverrides != null) body.request_overrides = requestOverrides
+  return http.post(`/interfaces/${id}/run`, Object.keys(body).length ? body : null, { params: envId ? { env_id: envId } : {} })
+}
 
 // 分类批量操作:后端一次 SQL 改所有匹配的接口,快过前端循环 PUT
 export const renameCategory = (oldName, newName) =>

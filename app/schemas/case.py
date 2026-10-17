@@ -1,6 +1,7 @@
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_serializer
 from typing import Any
 from app.schemas.base import NamedSchema
+from app.schemas.request_config import RequestOverrides
 
 class CaseCreate(NamedSchema):
     interface_id: int
@@ -12,6 +13,12 @@ class CaseCreate(NamedSchema):
     datasets: list[dict[str, Any]] | None = None
     retries: int | None = Field(default=0, ge=0)
     tags: list | None = None
+    request_overrides: RequestOverrides | None = None
+
+    @field_serializer("request_overrides")
+    def serialize_request_overrides(self, value):
+        # Preserve the distinction between inheriting a field and clearing it.
+        return value.model_dump(exclude_unset=True) if value is not None else None
 
 
 class CaseUpdate(CaseCreate):

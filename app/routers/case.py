@@ -42,10 +42,15 @@ def get_case(
 
 @router.get("", response_model=ApiResponse[list[CaseOut]])
 def list_case(
+    interface_id: int | None = None,
     db: Session = Depends(get_db),
     context: ProjectContext = Depends(authorize(Resource.CASE, Action.READ)),
 ):
-    return success_response(case_service.s_list(db, context.project_id), message="查询成功")
+    if interface_id is not None and interface_id <= 0:
+        raise HTTPException(status_code=400, detail="接口编号必须大于 0")
+    rows = (case_service.s_list(db, context.project_id, interface_id) if interface_id is not None
+            else case_service.s_list(db, context.project_id))
+    return success_response(rows, message="查询成功")
 
 
 @router.put("/{case_id}", response_model=ApiResponse[CaseOut])
