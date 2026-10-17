@@ -20,6 +20,7 @@ def db_page_for_invitee(
     total = query.count()
     items = (
         query.options(
+            joinedload(TeamInvitation.team),
             joinedload(TeamInvitation.inviter),
             joinedload(TeamInvitation.invitee),
         )

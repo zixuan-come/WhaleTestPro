@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
 from app.schemas.user import UserOut
 
 class TeamInvitationCreate(BaseModel):
@@ -10,6 +10,7 @@ class TeamInvitationCreate(BaseModel):
 class TeamInvitationOut(BaseModel):
     id: int
     team_id: int
+    team_name: str = Field(validation_alias=AliasPath('team', 'name'))
     inviter_id: int
     invitee_id: int
     role: str
@@ -18,7 +19,7 @@ class TeamInvitationOut(BaseModel):
     responded_at: datetime | None = None
     inviter: UserOut
     invitee: UserOut
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class TeamInvitationPage(BaseModel):

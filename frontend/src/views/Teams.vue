@@ -219,7 +219,7 @@ onMounted(() => { load(); loadInvitations() })
     <div v-if="invitationTotal" class="invite-panel">
       <div class="panel-head">待处理邀请 <span class="count">共 {{ invitationTotal }} 条</span></div>
       <div v-for="invite in invitations" :key="invite.id" class="invite-row">
-        <span>{{ `团队 #${invite.team_id}` }} · {{ invite.role === 'admin' ? '管理员' : '成员' }}</span>
+        <span class="invite-summary">{{ invite.team_name || ('团队 #' + invite.team_id) }} · {{ invite.role === 'admin' ? '管理员' : '成员' }}</span>
         <span><button class="btn btn-ghost" @click="respondInvitation(invite, false)">拒绝</button><button class="btn btn-primary" @click="respondInvitation(invite, true)">接受</button></span>
       </div>
       <div v-if="invitationTotalPages > 1" class="invite-pagination">
@@ -292,8 +292,9 @@ onMounted(() => { load(); loadInvitations() })
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .panel-head { display:flex; justify-content:space-between; align-items:center; padding:15px 18px; border-bottom:1px solid var(--border); font-weight:700; font-size:13px; }
 .count { color:var(--text-muted); font-size:11px; font-weight:500; }
-.invite-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-bottom:1px solid var(--border); font-size:13px; }
-.invite-row > span:last-child { display:flex; gap:8px; }
+.invite-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-bottom:1px solid var(--border); font-size:13px; }
+.invite-summary { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
+.invite-row > span:last-child { display:flex; flex-shrink:0; gap:8px; }
 .invite-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:10px 18px; color:var(--text-muted); font-size:12px; }
 .team-item { width:100%; display:flex; justify-content:space-between; padding:13px 18px; border:0; border-bottom:1px solid var(--border); background:none; color:var(--text); text-align:left; cursor:pointer; font:inherit; }
 .team-item:hover, .team-item.active { background:var(--surface-2); color:var(--primary); }

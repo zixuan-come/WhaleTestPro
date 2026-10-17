@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import * as Vue from 'vue'
-import { parse, compileScript } from '@vue/compiler-sfc'
+import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 
 const oldSelection = {
@@ -159,4 +159,51 @@ test('the actual header renders confirmed empty teams and load failures as diffe
   const failedHtml = await header(failed)
   assert.ok(failedHtml.includes('团队加载失败'))
   assert.ok(!failedHtml.includes('暂无团队'))
+})
+
+test('pending invitations show complete team names before the invitee joins a team', async () => {
+  const descriptor = parse(
+    readFileSync(new URL('../src/views/Teams.vue', import.meta.url), 'utf8')).descriptor
+  const script = compileScript(descriptor, { id: 'team-invitation-name' })
+  const code = script.content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g, (_match, names) =>
+      'const {' + names.replace(/\bas\b/g, ':') + '} = Vue;')
+    .replace(/^import .+$/gm, '')
+    .replace('export default', 'return')
+  const apiNames = [
+    'listTeams', 'listTeamMembers', 'searchTeamMemberCandidates', 'updateTeamMemberRole',
+    'removeTeamMember', 'updateTeam', 'transferTeamOwnership', 'leaveTeam', 'deleteTeam',
+    'inviteTeamMember', 'listTeamInvitations', 'respondTeamInvitation',
+    'listTeamPermissions', 'setTeamPermission',
+  ]
+  const component = Function('Vue', 'useAuthStore', 'useFeedback', ...apiNames, code)(
+    Vue, () => ({ currentTeamId: null, currentTeamRole: '' }),
+    () => ({ showMessage() {}, confirmAction: async () => false }),
+    ...apiNames.map(() => async () => []))
+  const template = compileTemplate({
+    source: descriptor.template.content, id: 'team-invitation-name',
+    compilerOptions: { bindingMetadata: script.bindings },
+  })
+  assert.deepEqual(template.errors, [])
+  component.render = Function('Vue', template.code
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g, (_match, names) =>
+      'const {' + names.replace(/\bas\b/g, ':') + '} = Vue;')
+    .replace('export function render', 'return function render'))(Vue)
+  const longName = 'WhaleShop团队' + 'A'.repeat(89)
+  const setup = component.setup
+  component.setup = (props, context) => {
+    const state = setup(props, context)
+    state.invitations.value = [
+      { id: 1, team_id: 102, team_name: 'WhaleShop', role: 'member' },
+      { id: 2, team_id: 103, team_name: longName, role: 'admin' },
+    ]
+    state.invitationTotal.value = 2
+    return state
+  }
+  const html = await renderToString(Vue.createSSRApp(component))
+  assert.ok(html.includes('WhaleShop'))
+  assert.ok(html.includes(longName))
+  assert.ok(!html.includes('团队 #102'))
+  assert.equal((html.match(/>接受<\/button>/g) || []).length, 2)
+  assert.equal((html.match(/>拒绝<\/button>/g) || []).length, 2)
 })

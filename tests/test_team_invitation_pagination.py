@@ -5,11 +5,12 @@ from app.database import Base
 from app.models.team import Team
 from app.models.team_invitation import TeamInvitation
 from app.models.user import User
+from app.schemas.team_invitation import TeamInvitationPage
 from app.services import team as team_service
 import app.models.suite  # noqa: F401  注册所有外键目标表
 
 
-def test_invitation_page_is_filtered_paginated_and_preloads_users():
+def test_invitation_page_is_filtered_paginated_and_preloads_users_and_team_names():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
@@ -59,4 +60,13 @@ def test_invitation_page_is_filtered_paginated_and_preloads_users():
     before_relationship_access = len(selects)
     assert all(item.inviter.username == "invite-owner" for item in result["items"])
     assert all(item.invitee.username == "invite-target" for item in result["items"])
+    db.expunge_all()
+    payload = TeamInvitationPage.model_validate(result).model_dump()
+    assert [item["team_name"] for item in payload["items"]] == [
+        "invite-team-2", "invite-team-1"
+    ]
+    assert all(set(item) == {
+        "id", "team_id", "team_name", "inviter_id", "invitee_id",
+        "role", "status", "created_at", "responded_at", "inviter", "invitee",
+    } for item in payload["items"])
     assert len(selects) == before_relationship_access
