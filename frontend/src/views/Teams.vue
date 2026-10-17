@@ -25,6 +25,7 @@ const permissionSaving = ref('')
 const transferTargetId = ref(null)
 const editName = ref('')
 const editDescription = ref('')
+const descriptionLength = computed(() => Array.from(editDescription.value).length)
 
 const permissionOptions = [
   { key: 'interface.write', label: '接口管理', description: '新增、修改和删除接口与分类' },
@@ -130,6 +131,10 @@ async function addMember() {
 
 async function saveTeamInfo() {
   if (!currentTeam.value || !canManage.value) return
+  if (descriptionLength.value > 500) {
+    showMessage('团队简介不能超过 500 个字符', 'error')
+    return
+  }
   try {
     const updated = await updateTeam(currentTeam.value.id, { name: editName.value.trim(), description: editDescription.value.trim() || null })
     const index = teams.value.findIndex(team => team.id === updated.id)
@@ -238,15 +243,25 @@ onMounted(() => { load(); loadInvitations() })
       </section>
       <div class="team-main">
         <section class="panel member-panel">
-          <div v-if="currentTeam && canManage" class="team-edit">
-            <input v-model="editName" :placeholder="currentTeam.name" />
-            <input v-model="editDescription" placeholder="团队简介" />
-            <button class="btn btn-ghost" @click="saveTeamInfo">保存</button>
-            <template v-if="auth.currentTeamRole === 'owner'">
-              <select v-model="transferTargetId" class="transfer-select"><option :value="null">选择新所有者</option><option v-for="member in members.filter(item => item.role !== 'owner')" :key="member.id" :value="member.user_id">{{ member.user.username }}</option></select>
-              <button class="btn btn-ghost" :disabled="!transferTargetId" @click="transferOwner">转让所有权</button>
-            </template>
-          </div>
+          <template v-if="currentTeam && canManage">
+            <form class="team-edit" @submit.prevent="saveTeamInfo">
+              <div class="team-field">
+                <label for="team-name">团队名称</label>
+                <input id="team-name" v-model="editName" :placeholder="currentTeam.name" required />
+              </div>
+              <div class="team-field">
+                <label for="team-description">团队简介</label>
+                <textarea id="team-description" v-model="editDescription" rows="4" placeholder="介绍团队的用途、分工或协作方式" aria-describedby="team-description-count" :aria-invalid="descriptionLength > 500"></textarea>
+                <span id="team-description-count" class="description-count" :class="{ err: descriptionLength > 500 }">{{ descriptionLength }} / 500</span>
+              </div>
+              <div class="team-edit-actions"><button type="submit" class="btn btn-ghost">保存</button></div>
+            </form>
+            <div v-if="auth.currentTeamRole === 'owner'" class="team-transfer">
+              <label for="team-transfer-owner">转让所有权</label>
+              <select id="team-transfer-owner" v-model="transferTargetId" class="transfer-select"><option :value="null">选择新所有者</option><option v-for="member in members.filter(item => item.role !== 'owner')" :key="member.id" :value="member.user_id">{{ member.user.username }}</option></select>
+              <button type="button" class="btn btn-ghost" :disabled="!transferTargetId" @click="transferOwner">转让所有权</button>
+            </div>
+          </template>
           <div class="panel-head"><span>{{ currentTeam ? currentTeam.name : '团队成员' }} · 成员</span><span class="count">{{ members.length }} 位</span></div>
           <div v-if="!currentTeam" class="state">请选择一个团队。</div>
           <template v-else>
@@ -311,9 +326,20 @@ onMounted(() => { load(); loadInvitations() })
 .icon-btn:disabled { opacity:.35; cursor:not-allowed; }
 .state { padding:34px 18px; text-align:center; color:var(--text-muted); font-size:12px; }
 .err { color:var(--fail-fg); }
-.team-edit { display:flex; gap:8px; padding:12px 18px; border-bottom:1px solid var(--border); }
-.team-edit input { flex:1; min-width:0; height:32px; border:1px solid var(--border); border-radius:6px; padding:0 8px; background:var(--surface-2); color:var(--text); }
-.transfer-select { height:32px; border:1px solid var(--border); border-radius:6px; padding:0 8px; background:var(--surface-2); color:var(--text); font:inherit; font-size:12px; }
+.team-edit { display:grid; gap:14px; padding:16px 18px; border-bottom:1px solid var(--border); }
+.team-field { display:grid; gap:7px; min-width:0; }
+.team-field label, .team-transfer label { font-size:12px; font-weight:600; }
+.team-edit input, .team-edit textarea { width:100%; min-width:0; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text); font:inherit; font-size:13px; }
+.team-edit input { height:34px; padding:0 9px; }
+.team-edit textarea { min-height:112px; padding:8px 9px; line-height:1.6; resize:vertical; }
+.team-edit input:focus-visible, .team-edit textarea:focus-visible, .transfer-select:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.team-edit textarea[aria-invalid="true"] { border-color:var(--fail-fg); }
+.description-count { justify-self:end; color:var(--text-muted); font-size:12px; }
+.description-count.err { color:var(--fail-fg); }
+.team-edit-actions { display:flex; justify-content:flex-end; }
+.team-transfer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:14px 18px; border-bottom:1px solid var(--border); }
+.team-transfer label { flex-basis:100%; }
+.transfer-select { flex:1; min-width:0; max-width:320px; height:32px; border:1px solid var(--border); border-radius:6px; padding:0 8px; background:var(--surface-2); color:var(--text); font:inherit; font-size:12px; }
 .danger { color:var(--fail-fg); }
 .permission-description { margin:0; padding:14px 18px 4px; color:var(--text-muted); font-size:12px; line-height:1.6; }
 .permission-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:14px 18px 18px; }
@@ -322,5 +348,5 @@ onMounted(() => { load(); loadInvitations() })
 .permission-card strong { display:block; font-size:13px; }
 .permission-card small { display:block; margin-top:4px; color:var(--text-muted); font-size:11px; line-height:1.45; }
 .permission-card input { width:16px; height:16px; accent-color:var(--primary); }
-@media (max-width:800px) { .team-grid { grid-template-columns:1fr; } .team-edit { flex-wrap:wrap; } .permission-grid { grid-template-columns:1fr; } }
+@media (max-width:800px) { .team-grid { grid-template-columns:1fr; } .permission-grid { grid-template-columns:1fr; } }
 </style>
