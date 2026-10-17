@@ -1,25 +1,22 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { listCases, createCase, updateCase, deleteCase, runCase } from '../api/case'
 import { listInterfaces } from '../api/interface'
-import { listEnvironments } from '../api/environment'
+import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
-import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
 
-const auth = useAuthStore()
 const router = useRouter()
 
 const items = ref([])
 const interfaces = ref([])
-const envs = ref([])
+const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const loading = ref(true)
 const error = ref('')
 
-const selectedEnv = ref('')        // 跑测试用的环境 id(空=不带 env)
 const runningId = ref(null)        // 正在跑的用例 id
 
 // 结果弹层
@@ -92,31 +89,15 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [cs, ifs, es] = await Promise.all([listCases(), listInterfaces(), listEnvironments()])
+    const [cs, ifs] = await Promise.all([listCases(), listInterfaces(), loadEnvironments()])
     items.value = cs
     interfaces.value = ifs
-    envs.value = es
-
-    // 恢复上次选的环境:如果记忆的 envId 还存在于当前项目的环境列表里,就选它;否则清空
-    const remembered = auth.getPreferredEnv(auth.currentProjectId)
-    if (remembered && es.some(e => String(e.id) === String(remembered))) {
-      selectedEnv.value = String(remembered)
-    } else if (remembered) {
-      // 记忆的环境被删了 → 清掉这条脏数据
-      auth.setPreferredEnv(auth.currentProjectId, null)
-      selectedEnv.value = ''
-    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
   }
 }
-
-// 用户手动切换 → 立刻持久化到当前项目名下
-watch(selectedEnv, (v) => {
-  auth.setPreferredEnv(auth.currentProjectId, v || null)
-})
 
 function openCreate() {
   editingId.value = null

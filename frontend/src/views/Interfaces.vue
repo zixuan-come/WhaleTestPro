@@ -6,13 +6,12 @@ import { listInterfaces, createInterface, updateInterface, deleteInterface, runI
 import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
-import { listEnvironments } from '../api/environment'
+import { useExecutionEnvironment } from '../composables/executionEnvironment'
 
 const items = ref([])
 const loading = ref(true)
 const error = ref('')
-const envs = ref([])
-const selectedEnv = ref('')
+const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const runningId = ref(null)
 const showRunResult = ref(false)
 const runResult = ref(null)
@@ -240,14 +239,11 @@ async function onDeleteCategory(name, count) {
 async function load() {
   loading.value = true
   error.value = ""
-  const [interfacesResult, environmentsResult] = await Promise.allSettled([listInterfaces(), listEnvironments()])
+  const [interfacesResult, environmentsResult] = await Promise.allSettled([listInterfaces(), loadEnvironments()])
   if (interfacesResult.status === "fulfilled") {
     items.value = interfacesResult.value
   } else {
     error.value = interfacesResult.reason?.message || "接口加载失败"
-  }
-  if (environmentsResult.status === "fulfilled") {
-    envs.value = environmentsResult.value
   }
   if (interfacesResult.status === "rejected" && environmentsResult.status === "rejected") {
     error.value = interfacesResult.reason?.message || "加载失败"

@@ -1,11 +1,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { runRegression } from '../api/regression'
-import { listEnvironments } from '../api/environment'
+import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 
-const envs = ref([])
-const selectedEnv = ref('')
+const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const tag = ref('')
 const notify = ref(false)
 
@@ -18,7 +17,7 @@ const coverage = computed(() => summary.value ? Math.round((summary.value.interf
 
 async function loadEnvs() {
   try {
-    envs.value = await listEnvironments()
+    await loadEnvironments()
   } catch { /* 环境拉不到不阻塞回归 */ }
 }
 

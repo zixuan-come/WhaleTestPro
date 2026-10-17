@@ -52,22 +52,45 @@ export const useAuthStore = defineStore('auth', () => {
     setProject(null, '')
   }
 
-  // 每个项目记住上次选的环境,跨会话保留("这个用例上次是在哪个环境跑的")
-  // 存成 {pid: envId} 的 JSON,localStorage 只放字符串所以用 parse/stringify
-  const preferredEnvByProject = ref(JSON.parse(localStorage.getItem('wtp_env_by_pid') || '{}'))
+  // 用户名在本项目中唯一且不可改名；按账号 + 项目隔离本浏览器的环境偏好。
+  // 旧 wtp_env_by_pid 没有账号归属，不能继承给当前登录用户。
+  const environmentPreferenceKey = 'wtp_env_by_user_project'
+  function readEnvironmentPreferences() {
+    try {
+      const value = JSON.parse(localStorage.getItem(environmentPreferenceKey) || '{}')
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    } catch { return {} }
+  }
+  const preferredEnvByUserProject = ref(readEnvironmentPreferences())
+
+  function environmentPreferenceUser() {
+    return token.value && username.value ? username.value.trim().toLowerCase() : ''
+  }
+
+  function userEnvironmentPreferences(user) {
+    const value = Object.hasOwn(preferredEnvByUserProject.value, user) ? preferredEnvByUserProject.value[user] : null
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  }
 
   function setPreferredEnv(pid, envId) {
-    if (!pid) return
-    if (envId) {
-      preferredEnvByProject.value[pid] = envId
-    } else {
-      delete preferredEnvByProject.value[pid]
+    const user = environmentPreferenceUser()
+    if (!user || !Number.isSafeInteger(Number(pid)) || Number(pid) <= 0) return
+    const empty = envId == null || envId === ''
+    if (!empty && (!Number.isSafeInteger(Number(envId)) || Number(envId) <= 0)) return
+    preferredEnvByUserProject.value = {
+      ...preferredEnvByUserProject.value,
+      [user]: { ...userEnvironmentPreferences(user), [String(Number(pid))]: empty ? '' : String(Number(envId)) },
     }
-    localStorage.setItem('wtp_env_by_pid', JSON.stringify(preferredEnvByProject.value))
+    try { localStorage.setItem(environmentPreferenceKey, JSON.stringify(preferredEnvByUserProject.value)) }
+    catch { /* 存储空间不足时仍保留本次会话选择。 */ }
   }
 
   function getPreferredEnv(pid) {
-    return preferredEnvByProject.value[pid] || ''
+    const user = environmentPreferenceUser()
+    if (!user || !pid) return ''
+    const saved = userEnvironmentPreferences(user)[String(Number(pid))]
+    if (typeof saved !== 'string' && typeof saved !== 'number') return ''
+    return Number.isSafeInteger(Number(saved)) && Number(saved) > 0 ? String(Number(saved)) : ''
   }
 
   function setAuth(tk, name) {

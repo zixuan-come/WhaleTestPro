@@ -1,24 +1,21 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { listCases } from '../api/case'
 import { listInterfaces } from '../api/interface'
-import { listEnvironments } from '../api/environment'
+import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import {
   listScenarios, getScenario, createScenario, updateScenario, deleteScenario, runScenario,
 } from '../api/scenario'
-import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
-
-const auth = useAuthStore()
 
 // —— 数据源 ——
 const scenarios = ref([])
 const cases = ref([])
 const interfaces = ref([])
-const envs = ref([])
+const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const loading = ref(true)
 const error = ref('')
 
@@ -56,7 +53,6 @@ const search = ref('')
 const dragIdx = ref(null)
 
 // —— 跑测试 ——
-const selectedEnv = ref('')
 const running = ref(false)
 const showResult = ref(false)
 const results = ref([])
@@ -94,29 +90,18 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [scs, cs, ifs, es] = await Promise.all([
-      listScenarios(), listCases(), listInterfaces(), listEnvironments(),
+    const [scs, cs, ifs] = await Promise.all([
+      listScenarios(), listCases(), listInterfaces(), loadEnvironments(),
     ])
     scenarios.value = scs
     cases.value = cs
     interfaces.value = ifs
-    envs.value = es
-
-    // 恢复上次选的环境(跨 Cases/Orchestration 共用同一记忆)
-    const remembered = auth.getPreferredEnv(auth.currentProjectId)
-    if (remembered && es.some(e => String(e.id) === String(remembered))) {
-      selectedEnv.value = String(remembered)
-    } else if (remembered) {
-      auth.setPreferredEnv(auth.currentProjectId, null)
-    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
   }
 }
-
-watch(selectedEnv, (v) => auth.setPreferredEnv(auth.currentProjectId, v || null))
 
 // —— 场景操作 ——
 async function selectScenario(sc) {
