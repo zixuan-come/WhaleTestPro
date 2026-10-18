@@ -451,8 +451,10 @@ def ensure_perf_run_schema(bind) -> None:
         columns = {column["name"] for column in inspector.get_columns("perf_tasks")}
         if not set(PerfTask.__table__.columns.keys()).issubset(columns):
             return  # Minimal historical schemas are expanded by the bootstrap.
-        existing = set(connection.execute(select(PerfRun.task_id, PerfRun.execution_key)).all())
-        rows = connection.execute(select(PerfTask.__table__).where(PerfTask.status != "pending")).mappings()
+        # The standalone migration entry point has not registered every ORM
+        # relationship yet. Core columns avoid configuring unrelated mappers.
+        existing = set(connection.execute(select(PerfRun.__table__.c.task_id, PerfRun.__table__.c.execution_key)).all())
+        rows = connection.execute(select(PerfTask.__table__).where(PerfTask.__table__.c.status != "pending")).mappings()
         for values in rows:
             key = execution_key(values)
             if (values["id"], key) not in existing:

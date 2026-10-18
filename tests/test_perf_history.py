@@ -1,5 +1,8 @@
 """Independent executions, destructive-history boundaries and TPS; no external IO."""
 import copy
+import subprocess
+import sys
+import textwrap
 from datetime import datetime
 import pytest
 from sqlalchemy import create_engine
@@ -11,6 +14,38 @@ from app.repositories import perf as repo
 from app.schemas.perf import PerfRunClear
 from tests.test_perf_lifecycle import perf_control
 from tests.test_project_notifications import notifications
+
+
+def test_history_migration_works_without_application_mapper_registration():
+    """The CLI must migrate results before FastAPI imports Team relationships."""
+    script = textwrap.dedent('''
+        import sys
+        from sqlalchemy import create_engine, select
+        import app.models.project
+        from app.models.perf import PerfTask, PerfRun
+        from app.core.migrations import ensure_perf_run_schema
+
+        assert "app.models.team" not in sys.modules
+        engine = create_engine("sqlite://")
+        PerfTask.__table__.create(engine)
+        with engine.begin() as db:
+            db.execute(PerfTask.__table__.insert(), [
+                dict(id=i, name="legacy", target_host="http://fixture.invalid",
+                     target_path="/orders", users=1, spawn_rate=1, duration=10,
+                     project_id=1, status=status, rps=12)
+                for i, status in [(1, "done"), (2, "pending")]
+            ])
+        ensure_perf_run_schema(engine)
+        ensure_perf_run_schema(engine)
+        with engine.connect() as db:
+            rows = db.execute(select(PerfRun.__table__)).mappings().all()
+            assert len(rows) == 1
+            assert rows[0]["task_id"] == 1
+            assert rows[0]["snapshot"]["rps"] == 12
+        assert "app.models.team" not in sys.modules
+    ''')
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
 
 
 def finish(db, task, key, requests=30):
