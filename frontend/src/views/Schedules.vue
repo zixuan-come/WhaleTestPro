@@ -7,6 +7,7 @@ import { listCases } from '../api/case'
 import { listSuites } from '../api/suite'
 import { listEnvironments } from '../api/environment'
 import Modal from '../components/Modal.vue'
+import { scheduleTime } from '../utils/scheduleTime'
 
 const items = ref([])
 const cases = ref([])
@@ -231,14 +232,14 @@ onMounted(load)
     <template v-else>
       <div class="row head">
         <span class="c-name">任务</span>
-        <span class="c-cron">Cron</span>
+        <span class="c-cron">执行规则</span>
         <span class="c-tag">标签</span>
         <span class="c-status">状态</span>
         <span class="c-act">操作</span>
       </div>
       <div v-for="(s, i) in items" :key="s.id" class="row">
         <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ s.name }}</span>
-        <span class="c-cron">{{ s.cron }}</span>
+        <details class="c-cron cron-rule"><summary :title="'点击查看 Cron：' + s.cron">{{ scheduleTime(s.cron) }}</summary><code>{{ s.cron }}</code></details>
         <span class="c-tag"><span v-if="s.tag" class="tag">{{ s.tag }}</span><span v-else class="muted">全部</span></span>
         <span class="c-status">
           <span class="badge" :class="s.enabled ? 'b-pass' : 'b-skip'"><span class="dot"></span>{{ s.enabled ? '启用' : '停用' }}</span>
@@ -256,6 +257,7 @@ onMounted(load)
           </button>
         </span>
       </div>
+      <p class="schedule-time-note">执行规则按调度服务时区计算，点击规则可查看 Cron 表达式。</p>
     </template>
   </div>
 
@@ -351,10 +353,10 @@ onMounted(load)
 <style scoped>
 .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px; }
 .card { background:var(--surface); border:1px solid var(--border);
-  border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
+  border-radius:14px; padding:12px 18px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
 .card:hover { border-color:var(--primary); }
-.card .k { font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:550; }
-.card .v { font-size:27px; font-weight:780; letter-spacing:-.5px; }
+.card .k { font-size:12px; color:var(--text-muted); margin-bottom:6px; font-weight:550; }
+.card .v { font-size:24px; line-height:1.2; font-weight:780; letter-spacing:-.5px; }
 .card .v.pass { color:var(--pass-fg); }
 .card .v.pri { color:var(--primary); }
 
@@ -362,12 +364,18 @@ onMounted(load)
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }
 .row:not(.head):hover { background:var(--surface-2); }
-.row.head { font-size:11.5px; font-weight:600; color:var(--text-muted);
-  text-transform:uppercase; letter-spacing:.5px; background:var(--surface-2); }
+.row.head { padding:10px 20px; font-family:inherit; font-size:12px; font-weight:600;
+  line-height:20px; color:var(--text-muted); letter-spacing:0; background:var(--surface-2); }
+.row.head > span { font:inherit; color:inherit; letter-spacing:inherit; }
 .c-name { display:flex; align-items:center; gap:10px; font-weight:550; }
 .c-name .id { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px;
   background:var(--surface-2); padding:2px 8px; border-radius:6px; flex:none; }
 .c-cron { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; color:var(--text-muted); }
+.schedule-time-note { margin:0; padding:10px 20px; font-size:12px; line-height:1.6; color:var(--text-muted); }
+.cron-rule { min-width:0; font-family:inherit; color:var(--text); }
+.cron-rule summary { cursor:pointer; font-size:12.5px; overflow-wrap:anywhere; }
+.cron-rule summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; border-radius:3px; }
+.cron-rule code { display:block; margin-top:6px; color:var(--text-muted); font:11.5px/1.5 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
 .c-tag .tag { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--surface-2);
   border:1px solid var(--border); color:var(--text-muted); }
 .c-tag .muted { color:var(--text-muted); font-size:12px; }
@@ -421,7 +429,12 @@ onMounted(load)
 }
 @media (max-width:640px) {
   .cards { grid-template-columns:1fr; gap:12px; }
-  .row { grid-template-columns:1fr 90px 118px; gap:8px; padding:12px 14px; }
-  .c-cron { display:none; }
+  .row { grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:12px 14px; }
+  .row.head { display:none; }
+  .schedule-time-note { padding:10px 14px; }
+  .c-name { min-width:0; overflow-wrap:anywhere; }
+  .c-cron { display:block; grid-column:1; grid-row:2; }
+  .c-status { grid-column:2; grid-row:1; justify-self:end; }
+  .c-act { grid-column:2; grid-row:2; }
 }
 </style>
