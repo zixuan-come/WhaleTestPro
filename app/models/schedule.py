@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, JSON
 from app.database import Base
 
 
@@ -12,6 +12,8 @@ class Schedule(Base):
     suite_id = Column(Integer, ForeignKey("test_suite.id"), nullable=True)
     env_id = Column(Integer, ForeignKey("environment.id", ondelete="RESTRICT"), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
+    selection = Column(JSON, nullable=True)
+    notify = Column(Boolean, nullable=False, default=False, server_default="0")
     sync_status = Column(
         String(20),
         nullable=False,

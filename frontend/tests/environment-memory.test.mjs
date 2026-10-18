@@ -195,7 +195,8 @@ for (const view of ['Interfaces', 'Cases', 'Orchestration', 'Regression']) {
       t.after(() => scope.stop())
       const mocks = { ...Vue, onMounted() {}, onUnmounted() {}, onBeforeUnmount() {}, onBeforeRouteLeave() {},
         useAuthStore: () => auth,
-        useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), useRouter: () => ({ push() {} }),
+        useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), useRouter: () => ({ push() {}, replace() {} }),
+        useRoute: () => ({ query: {} }),
         useExecutionEnvironment: () => environmentPage(t, auth), pathParameterNames, pathParameterValues,
         requestConfig, requestDraft, serializeRequest,
       }

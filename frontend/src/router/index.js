@@ -22,7 +22,7 @@ const routes = [
       { path: 'environments', name: 'environments', component: () => import('../views/Environments.vue'), meta: { title: '环境管理', crumb: '运维 / 环境' } },
       { path: 'regression', name: 'regression', component: () => import('../views/Regression.vue'), meta: { title: '回归测试', crumb: '接口测试 / 回归测试' } },
       { path: 'mocks', name: 'mocks', component: () => import('../views/Mocks.vue'), meta: { title: 'Mock 挡板', crumb: '运维 / 挡板服务' } },
-      { path: 'schedules', name: 'schedules', component: () => import('../views/Schedules.vue'), meta: { title: '定时调度', crumb: '运维 / 定时任务' } },
+      { path: 'schedules', name: 'schedules', redirect: { path: '/regression', query: { tab: 'scheduled' } } },
     ],
   },
 ]

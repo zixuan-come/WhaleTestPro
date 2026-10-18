@@ -480,6 +480,22 @@ def run_all_migrations(*binds) -> None:
         ensure_project_notification_schema(bind)
         ensure_traffic_capture_schema(bind)
         ensure_perf_run_schema(bind)
+        ensure_schedule_selection_schema(bind)
+
+
+def ensure_schedule_selection_schema(bind) -> None:
+    """Preserve legacy targets; explicit selections use the regression workflow."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("schedule"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("schedule")}
+        if "selection" not in columns:
+            connection.execute(text("ALTER TABLE schedule ADD COLUMN selection JSON NULL"))
+        if "notify" not in columns:
+            connection.execute(text("ALTER TABLE schedule ADD COLUMN notify BOOLEAN NOT NULL DEFAULT 0"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "019_schedule_selection")
 
 
 def ensure_schedule_environment_schema(bind) -> None:

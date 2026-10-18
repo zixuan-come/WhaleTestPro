@@ -315,6 +315,7 @@ def test_redbeat_definition_and_index_are_checked(drift, monkeypatch):
                           enabled=True, cron="0 0 * * *")
     deleted = []
     entry = SimpleNamespace(task=scheduler.TASK, args=[1, None, None, 1],
+                            kwargs={"schedule_id": 1},
                             schedule=scheduler._parse_cron(job.cron), key="redbeat:schedule-1",
                             app=SimpleNamespace(redbeat_conf=SimpleNamespace(schedule_key="redbeat:zset")),
                             delete=lambda: deleted.append(True))

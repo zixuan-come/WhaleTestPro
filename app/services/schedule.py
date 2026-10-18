@@ -103,11 +103,24 @@ def reconcile_desired(db: Session, batch_size: int = 100) -> dict[str, int]:
     return {"repaired": repaired, "failed": failed}
 
 
-def _validate_references(db, data, project_id):
+def _validate_references(db, data, project_id, *, allow_stale=False):
     if env_repo.db_get(db, data.env_id, project_id) is None:
         raise HTTPException(status_code=404, detail="环境不存在或不属于当前项目")
     if data.suite_id is not None and suite_repo.db_get(db, data.suite_id, project_id) is None:
         raise HTTPException(status_code=404, detail="测试套件不存在或不属于当前项目")
+    targets = getattr(data, "selection", None)
+    if targets is not None:
+        if data.tag is not None or data.suite_id is not None:
+            raise HTTPException(422, "显式选择与旧筛选不能同时配置，请重新选择测试内容")
+        # A disabled plan can always be paused, even after a selected asset was
+        # deleted. Enabling/saving an active plan validates the whole preview.
+        if not allow_stale:
+            from app.schemas.regression import RegressionSelection
+            from app.services import regression
+            values = targets.model_dump() if hasattr(targets, "model_dump") else targets
+            plan = regression.preview(db, project_id, RegressionSelection(**values, env_id=data.env_id))
+            if data.enabled and not plan["ready"]:
+                raise HTTPException(400, "；".join(plan["warnings"]))
 
 
 def _commit_and_try_sync(db: Session, obj: Schedule) -> Schedule:
@@ -146,7 +159,8 @@ def s_update(db: Session, schedule_id: int, schedule, project_id: int):
             **sync_repo.schedule_payload(current),
             **schedule.model_dump(exclude_unset=True),
         })
-        _validate_references(db, effective, project_id)
+        _validate_references(db, effective, project_id,
+            allow_stale=not effective.enabled and effective.selection == current.selection)
         obj = schedule_repo.db_update(db, schedule_id, schedule, project_id)
         if obj is None:
             return None

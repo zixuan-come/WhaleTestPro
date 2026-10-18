@@ -1,6 +1,7 @@
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from celery.schedules import crontab
 from app.schemas.base import NamedSchema
+from app.schemas.regression import RegressionTargets
 
 class ScheduleCreate(NamedSchema):
     cron: str = Field(min_length=1, max_length=100)
@@ -8,6 +9,14 @@ class ScheduleCreate(NamedSchema):
     suite_id: int | None = None
     env_id: int = Field(gt=0)
     enabled: bool = True
+    selection: RegressionTargets | None = None
+    notify: bool = False
+
+    @model_validator(mode="after")
+    def exclusive_selection(self):
+        if self.selection is not None and (self.tag is not None or self.suite_id is not None):
+            raise ValueError("显式选择测试内容后不能同时配置旧标签或套件筛选")
+        return self
 
     @field_validator("cron")
     @classmethod

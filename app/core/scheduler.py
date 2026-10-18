@@ -28,6 +28,7 @@ def sync_schedule(schedule):
         TASK,
         _parse_cron(schedule.cron),
         args=[schedule.project_id, schedule.tag, schedule.suite_id, schedule.env_id],
+        kwargs={"schedule_id": schedule.id},
         app=celery_app,
     )
     entry.save()
@@ -47,6 +48,7 @@ def schedule_is_synced(schedule):
     return (
         entry.task == TASK
         and list(entry.args) == [schedule.project_id, schedule.tag, schedule.suite_id, schedule.env_id]
+        and getattr(entry, "kwargs", {}) == {"schedule_id": schedule.id}
         and entry.schedule == _parse_cron(schedule.cron)
         and client.zscore(entry.app.redbeat_conf.schedule_key, entry.key) is not None
     )

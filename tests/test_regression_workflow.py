@@ -83,11 +83,10 @@ def test_cross_project_and_empty_selections_are_rejected(reports):
     assert not calls
 
 
-def test_old_regression_api_keeps_its_response_contract(reports):
+def test_old_regression_api_is_removed_without_execution(reports):
     client, _, calls = reports
-    result = data(client.post('/regression?env_id=1', json=[1]))
-    assert result['total'] == 1 and 'report_id' not in result
-    assert len(calls) == 1
+    assert client.post('/regression?env_id=1', json=[1]).status_code == 404
+    assert not calls
 
 
 def test_notification_failure_preserves_regression_result_and_report(reports, monkeypatch):
@@ -104,9 +103,6 @@ def test_notification_failure_preserves_regression_result_and_report(reports, mo
     assert '飞书未接受消息' in result['notification_warning'] and url not in str(result)
     root = data(client.get('/reports/executions/' + result['report_id']))
     assert root['kind'] == 'regression'
-    # The compatibility API also uses the project configuration and keeps its result.
-    legacy = data(client.post('/regression?env_id=1&notify=true', json=[1]))
-    assert legacy['passed'] and '飞书未接受消息' in legacy['notification_warning']
 
 
 def test_missing_project_notification_returns_warning_without_sending_globally(reports):

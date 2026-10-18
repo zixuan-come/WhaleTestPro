@@ -4,6 +4,9 @@ from app.services import execution as execution_service
 from app.services import suite as suite_service
 from app.services import schedule as schedule_service
 from app.core.execution_context import triggered_by
+from app.repositories import schedule as schedule_repo
+from app.services import regression as regression_service
+from app.schemas.regression import RegressionRun, RegressionSelection
 
 
 @celery_app.task
@@ -18,7 +21,7 @@ def reconcile_schedule_outbox():
 
 
 @celery_app.task
-def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None):
+def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None, schedule_id=None):
     """
     Celery Beat 定时触发的回归任务。
 
@@ -33,6 +36,21 @@ def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None):
     """
     db = SessionLocal()
     try:
+        if schedule_id is not None:
+            current = schedule_repo.db_get(db, schedule_id, project_id)
+            if current is None or not current.enabled:
+                return {"skipped": True, "reason": "定时任务已停用或删除"}
+            # Resolve current configuration after dequeue: stale Beat arguments
+            # must not revive a disabled/deleted plan or execute old targets.
+            tag, suite_id, env_id = current.tag, current.suite_id, current.env_id
+            if current.selection is not None:
+                if env_id is None:
+                    raise ValueError("定时任务未配置执行环境，请编辑后重新启用")
+                selection = RegressionSelection(**current.selection, env_id=env_id)
+                plan = regression_service.preview(db, project_id, selection)
+                with triggered_by("scheduled"):
+                    return regression_service.run(db, project_id, RegressionRun(
+                        **selection.model_dump(), preview_key=plan["preview_key"], notify=current.notify), report_name=current.name)
         if env_id is None:
             raise ValueError("定时任务未配置执行环境，请编辑后重新启用")
         execution_service._env_context(db, env_id, project_id)

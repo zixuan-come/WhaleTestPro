@@ -42,6 +42,15 @@ test('report preferences survive reload and remain isolated by account and proje
   assert.doesNotThrow(() => rememberReportType('a', 1, 'case', { setItem() { throw Error('quota') } }))
 })
 
+test('a scheduled task report link selects its category and applies its name filter', async t => {
+  const { state, calls } = view(t, async () => page(), { query: { kind: 'regression', q: '每日订单回归' } })
+  state.initialize()
+  await Vue.nextTick()
+  assert.equal(state.reportType.value, 'regression')
+  assert.equal(state.search.value, '每日订单回归')
+  assert.equal(calls.at(-1).q, '每日订单回归')
+})
+
 test('switching categories cannot display a late response from another category', async t => {
   const first = deferred(), second = deferred()
   const { state } = view(t, params => params.kind === 'suite' ? second.promise : first.promise)

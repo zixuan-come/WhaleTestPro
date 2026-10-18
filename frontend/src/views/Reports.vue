@@ -64,11 +64,14 @@ function searchChanged() { clearTimeout(searchTimer); searchTimer = setTimeout((
 function changePage(target) { if (target >= 1 && target <= totalPages.value && target !== page.value) load(target) }
 function restore() { linkedReportId.value = null; reportType.value = preferredReportType(auth.username, auth.currentProjectId); resetFilters() }
 function initialize() {
-  if (route.query.kind === 'regression') {
-    reportType.value = 'regression'
-    rememberReportType(auth.username, auth.currentProjectId, 'regression')
+  if (['regression', 'suite'].includes(route.query.kind)) {
+    reportType.value = route.query.kind
+    rememberReportType(auth.username, auth.currentProjectId, route.query.kind)
     linkedReportId.value = /^run-[1-9]\d*$/.test(route.query.report || '') ? route.query.report : null
     resetFilters()
+    if (typeof route.query.q === 'string' && route.query.q.trim()) {
+      search.value = route.query.q.slice(0, 100); load(1)
+    }
   } else restore()
 }
 function tabKey(event, index) {

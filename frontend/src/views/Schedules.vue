@@ -1,28 +1,32 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
+import { useAuthStore } from '../stores/auth'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from '../api/schedule'
-import { listCases } from '../api/case'
-import { listSuites } from '../api/suite'
 import { listEnvironments } from '../api/environment'
 import Modal from '../components/Modal.vue'
 import { scheduleTime } from '../utils/scheduleTime'
 
 const items = ref([])
-const cases = ref([])
-const suites = ref([])
+const props = defineProps({ catalog: { type: Object, default: () => ({ suites: [], cases: [] }) }, active: Boolean })
+const emit = defineEmits(['create', 'edit', 'saved'])
+const auth = useAuthStore()
+const context = computed(() => `${auth.username}:${auth.currentProjectId}:${auth.token}`)
+let version = 0
+const pendingIds = ref([])
 const environments = ref([])
 const loading = ref(true)
 const error = ref('')
 
-// 从现有用例聚合出所有用过的 tag,给下拉选(避免手敲字符串敲错);编辑时若旧 tag 已不在用例里也补进来
-const allTags = computed(() => {
-  const set = new Set()
-  for (const c of cases.value) for (const t of (c.tags || [])) if (t) set.add(t)
-  if (form.tag && !set.has(form.tag)) set.add(form.tag)
-  return [...set].sort()
-})
+function targetLabel(row) {
+  if (row.selection) {
+    const source = row.selection.mode === 'suite' ? props.catalog.suites : props.catalog.cases
+    return row.selection.ids.map(id => source.find(item => item.id === id)?.name || `已删除的${row.selection.mode === 'suite' ? '套件' : '用例'} #${id}`).join('、')
+  }
+  return row.suite_id ? props.catalog.suites.find(item => item.id === row.suite_id)?.name || `套件 #${row.suite_id}` : row.tag ? `标签：${row.tag}（动态匹配）` : '全部用例（旧规则）'
+}
+const environmentName = id => environments.value.find(env => env.id === id)?.name || '未配置环境'
 
 // ===== cron 友好构造:选频率+时间,自动拼 cron;custom 档才手写 =====
 const FREQS = [
@@ -102,51 +106,35 @@ const showModal = ref(false)
 const saving = ref(false)
 const formErr = ref('')
 const editingId = ref(null)
-const form = reactive({ name: '', cron: '', tag: '', suite_id: null, env_id: null, enabled: true })
+const form = reactive({ name: '', cron: '', tag: null, suite_id: null, env_id: null, enabled: true, selection: null, notify: false })
 
 const total = computed(() => items.value.length)
 const enabledCount = computed(() => items.value.filter(s => s.enabled).length)
 
 async function load() {
+  const request = ++version, key = context.value
   loading.value = true
   error.value = ''
   try {
-    const [ss, cs] = await Promise.all([listSchedules(), listCases()])
+    const [ss, envs] = await Promise.all([listSchedules(), listEnvironments()])
+    if (request !== version || key !== context.value) return
     items.value = ss
-    cases.value = cs
-    // 加载测试套件列表(供定时任务绑定);统一走 http 实例,别再手搓 axios+localStorage
-    const suitesData = await listSuites()
-    suites.value = Array.isArray(suitesData) ? suitesData : []
-    environments.value = await listEnvironments()
+    environments.value = envs
   } catch (e) {
-    error.value = e.message || '加载失败'
+    if (request === version && key === context.value) error.value = e.message || '加载失败'
   } finally {
-    loading.value = false
+    if (request === version) loading.value = false
   }
 }
 
-function openCreate() {
-  editingId.value = null
-  form.name = ''
-  form.tag = ''
-  form.suite_id = null
-  form.env_id = null
-  form.enabled = true
+function openTiming(row, selection, notify) {
+  editingId.value = row?.id || null
+  Object.assign(form, { name: row?.name || '', tag: null, suite_id: null,
+    env_id: selection.env_id, enabled: row?.enabled ?? true,
+    selection: { mode: selection.mode, ids: [...selection.ids] }, notify: !!notify })
   Object.assign(cronUi, { freq: 'daily', minute: 0, hour: 2, dow: '1', dom: 1 })
-  form.cron = builtCron.value
-  formErr.value = ''
-  showModal.value = true
-}
-
-function openEdit(s) {
-  editingId.value = s.id
-  form.name = s.name
-  form.cron = s.cron
-  form.tag = s.tag || ''
-  form.suite_id = s.suite_id || null
-  form.env_id = s.env_id || null
-  form.enabled = s.enabled
-  loadCronToUi(s.cron)
+  form.cron = row?.cron || builtCron.value
+  if (row) loadCronToUi(row.cron)
   formErr.value = ''
   showModal.value = true
 }
@@ -157,6 +145,8 @@ function closeModal() {
 }
 
 async function save() {
+  if (saving.value) return
+  const key = context.value
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写任务名称'; return }
   if (!form.env_id) { formErr.value = '请选择执行环境；没有环境时请先创建环境'; return }
@@ -166,20 +156,25 @@ async function save() {
   const payload = {
     name: form.name.trim(),
     cron: form.cron.trim(),
-    tag: form.tag.trim() || null,
-    suite_id: form.suite_id || null,
+    tag: null,
+    suite_id: null,
     env_id: form.env_id,
     enabled: form.enabled,
+    selection: form.selection,
+    notify: form.notify,
   }
 
   saving.value = true
   try {
     if (editingId.value == null) await createSchedule(payload)
     else await updateSchedule(editingId.value, payload)
+    if (key !== context.value) return
     showModal.value = false
+    showMessage('定时任务已保存')
+    emit('saved')
     await load()
   } catch (e) {
-    formErr.value = e.message || '保存失败'
+    if (key === context.value) formErr.value = e.message || '保存失败'
   } finally {
     saving.value = false
   }
@@ -187,26 +182,36 @@ async function save() {
 
 // 列表里直接切启用/停用:复用 update,只翻 enabled
 async function toggleEnabled(s) {
+  if (pendingIds.value.includes(s.id)) return
+  const key = context.value
+  pendingIds.value = [...pendingIds.value, s.id]
   try {
-    if (!s.env_id) { openEdit(s); formErr.value = '请先选择执行环境再启用或停用'; return }
-    await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, suite_id: s.suite_id, env_id: s.env_id, enabled: !s.enabled })
-    await load()
+    if (!s.env_id) { emit('edit', s); showMessage('请先选择执行环境', 'error'); return }
+    await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, suite_id: s.suite_id, env_id: s.env_id, selection: s.selection || null, notify: !!s.notify, enabled: !s.enabled })
+    if (key === context.value) await load()
   } catch (e) {
-    showMessage(e.message || '切换失败', 'error')
-  }
+    if (key === context.value) showMessage(e.message || '切换失败', 'error')
+  } finally { pendingIds.value = pendingIds.value.filter(id => id !== s.id) }
 }
 
 async function onDelete(s) {
+  const key = context.value
   if (!(await confirmAction(`确认删除定时任务「${s.name}」?`))) return
+  if (key !== context.value) return
   try {
     await deleteSchedule(s.id)
-    items.value = items.value.filter(i => i.id !== s.id)
+    if (key === context.value) items.value = items.value.filter(i => i.id !== s.id)
   } catch (e) {
     showMessage(e.message || '删除失败', 'error')
   }
 }
 
-onMounted(load)
+watch([context, () => props.active], () => {
+  version++; items.value = []; showModal.value = false; formErr.value = ''
+  if (props.active && auth.currentProjectId) load()
+}, { immediate: true })
+onBeforeUnmount(() => { version++ })
+defineExpose({ openTiming })
 </script>
 
 <template>
@@ -218,8 +223,8 @@ onMounted(load)
 
   <div class="panel">
     <div class="panel-head">
-      定时调度
-      <button class="btn btn-primary" @click="openCreate">
+      定时回归任务
+      <button class="btn btn-primary" @click="emit('create')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
         新建任务
       </button>
@@ -233,23 +238,25 @@ onMounted(load)
       <div class="row head">
         <span class="c-name">任务</span>
         <span class="c-cron">执行规则</span>
-        <span class="c-tag">标签</span>
+        <span class="c-tag">测试内容 · 环境</span>
         <span class="c-status">状态</span>
         <span class="c-act">操作</span>
       </div>
       <div v-for="(s, i) in items" :key="s.id" class="row">
         <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ s.name }}</span>
         <details class="c-cron cron-rule"><summary :title="'点击查看 Cron：' + s.cron">{{ scheduleTime(s.cron) }}</summary><code>{{ s.cron }}</code></details>
-        <span class="c-tag"><span v-if="s.tag" class="tag">{{ s.tag }}</span><span v-else class="muted">全部</span></span>
+        <span class="c-tag target-summary"><span :title="targetLabel(s)">{{ targetLabel(s) }}</span><small>{{ environmentName(s.env_id) }}</small></span>
         <span class="c-status">
           <span class="badge" :class="s.enabled ? 'b-pass' : 'b-skip'"><span class="dot"></span>{{ s.enabled ? '启用' : '停用' }}</span>
+          <small v-if="s.sync_status !== 'synced'" class="sync-warning">{{ s.sync_status === 'error' ? '同步失败，请稍后重试' : '同步中' }}</small>
         </span>
         <span class="c-act">
-          <button class="icon-btn" :title="s.enabled ? '停用' : '启用'" @click="toggleEnabled(s)">
+          <RouterLink class="icon-btn" title="查看报告" :to="{ path: '/reports', query: { kind: !s.selection && s.suite_id ? 'suite' : 'regression', ...(s.selection ? { q: s.name } : {}) } }"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7h8M8 12h8M8 17h5M5 3h14v18H5z" /></svg></RouterLink>
+          <button class="icon-btn" :disabled="pendingIds.includes(s.id)" :title="s.enabled ? '停用' : '启用'" @click="toggleEnabled(s)">
             <svg v-if="s.enabled" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 9v6M14 9v6M5 7h14v12a1 1 0 01-1 1H6a1 1 0 01-1-1V7Z" /></svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
-          <button class="icon-btn edit" title="编辑" @click="openEdit(s)">
+          <button class="icon-btn edit" title="编辑" @click="emit('edit', s)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5Z" /></svg>
           </button>
           <button class="icon-btn del" title="删除" @click="onDelete(s)">
@@ -262,25 +269,19 @@ onMounted(load)
   </div>
 
   <!-- 新建/编辑任务弹层 -->
-  <Modal v-if="showModal" :title="editingId == null ? '新建定时任务' : '编辑定时任务'" :max-width="520" :busy="saving" @close="closeModal">
+  <Modal v-if="showModal" :title="editingId == null ? '新建定时任务' : '编辑定时任务'" :max-width="560" :hide-scrollbar="true" :busy="saving" @close="closeModal">
+    <div class="timing-summary">已选 {{ form.selection?.ids.length }} {{ form.selection?.mode === 'suite' ? '个套件' : '个用例' }} · {{ environmentName(form.env_id) }}<small>保存后按最新测试配置执行，报告归入回归测试。</small></div>
     <div class="field">
-      <label>任务名称</label>
-      <input v-model="form.name" placeholder="如:每日冒烟回归" />
+      <label for="schedule-name">任务名称</label>
+      <input id="schedule-name" maxlength="100" v-model="form.name" placeholder="如:每日冒烟回归" />
     </div>
     <div class="field">
-      <label>执行频率</label>
-      <select v-model="cronUi.freq">
+      <label for="schedule-frequency">执行频率</label>
+      <select id="schedule-frequency" v-model="cronUi.freq">
         <option v-for="f in FREQS" :key="f.key" :value="f.key">{{ f.label }}</option>
       </select>
     </div>
-    <div class="field">
-      <label>执行环境</label>
-      <select v-model="form.env_id">
-        <option :value="null">请选择环境</option>
-        <option v-for="env in environments" :key="env.id" :value="env.id">{{ env.name }}</option>
-      </select>
-      <div class="tip">使用所选环境的 base_url 和变量执行定时测试。</div>
-    </div>
+
 
     <div class="field time-row" v-if="cronUi.freq !== 'custom'">
       <template v-if="cronUi.freq === 'weekly'">
@@ -321,25 +322,11 @@ onMounted(load)
     <div class="cron-preview" :class="{ bad: !cronPreview.ok }">
       <span class="mark">{{ cronPreview.ok ? '✓' : '✗' }}</span>{{ cronPreview.text }}
     </div>
-    <div class="field">
-      <label>用例标签筛选 <span class="opt">(可选,不选跑全部用例)</span></label>
-      <select v-model="form.tag">
-        <option value="">全部用例</option>
-        <option v-for="t in allTags" :key="t" :value="t">{{ t }}</option>
-      </select>
-      <div class="tip">按用例标签圈一批做定时回归;标签来自「用例管理」里给用例打的 tag。</div>
-    </div>
-    <div class="field">
-      <label>测试套件 <span class="opt">(可选，优先级高于标签)</span></label>
-      <select v-model="form.suite_id">
-        <option :value="null">不使用套件</option>
-        <option v-for="s in suites" :key="s.id" :value="s.id">{{ s.name }}</option>
-      </select>
-      <div class="tip">选择测试套件后，将运行套件内的场景和用例，忽略标签筛选。</div>
-    </div>
+
+
     <label class="chk">
       <input type="checkbox" v-model="form.enabled" />
-      <span>创建后立即启用</span>
+      <span>启用此定时任务</span>
     </label>
     <div v-if="formErr" class="form-err">{{ formErr }}</div>
 
@@ -437,4 +424,5 @@ onMounted(load)
   .c-status { grid-column:2; grid-row:1; justify-self:end; }
   .c-act { grid-column:2; grid-row:2; }
 }
+.target-summary{min-width:0;display:flex;flex-direction:column;gap:4px}.target-summary>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-summary small,.sync-warning{display:block;color:var(--text-muted);font-size:11px}.sync-warning{margin-top:4px;color:var(--fail-fg)}.timing-summary{padding:12px;margin-bottom:18px;background:var(--surface-2);border-radius:8px;font-size:13px;line-height:1.7}.timing-summary small{display:block;color:var(--text-muted);font-size:12px}.row{grid-template-columns:minmax(120px,1.2fr) minmax(110px,1fr) minmax(120px,1.3fr) 100px 140px}.icon-btn:disabled{opacity:.45;cursor:default}@media(max-width:900px){.row{grid-template-columns:minmax(0,1fr) auto}.row.head{display:none}.target-summary{display:flex;grid-column:1;grid-row:3}.c-status{grid-column:2;grid-row:1}.c-act{grid-column:2;grid-row:2}.c-cron{grid-column:1;grid-row:2}}
 </style>

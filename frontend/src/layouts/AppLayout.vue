@@ -34,7 +34,6 @@ const navGroups = [
     items: [
       { to: '/perf', text: '压测监控', icon: 'M3 12h4l3 8 4-16 3 8h4' },
       { to: '/mocks', text: 'Mock 挡板', icon: 'M4 7h16M4 12h16M4 17h10 M7 4v16' },
-      { to: '/schedules', text: '定时调度', icon: 'M12 7v5l3 2 M12 21a9 9 0 100-18 9 9 0 000 18z' },
       { to: '/environments', text: '环境管理', icon: 'M12 8a4 4 0 100-8 4 4 0 000 8z M4 21v-1a6 6 0 0112 0v1' },
     ],
   },

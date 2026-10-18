@@ -16,18 +16,20 @@ const ready = key => ({ ready: true, preview_key: key, groups: [], warnings: [] 
 function view(t, overrides = {}) {
   const calls = [], callbacks = [], auth = Vue.reactive({ username: 'workflow-user', token: 'synthetic', currentProjectId: 1 })
   const selectedEnv = Vue.ref('1')
+  const route = Vue.reactive({ query: {} })
   const options = Function('Vue', 'useAuthStore', 'regressionOptions', 'previewRegression', 'runSelectedRegression',
-    'useExecutionEnvironment', 'EnvironmentSelect', 'regressionRows', 'getProjectNotifications', script.replace('export default', 'return'))(
+    'useExecutionEnvironment', 'EnvironmentSelect', 'regressionRows', 'getProjectNotifications', 'useRoute', 'useRouter', 'Schedules', script.replace('export default', 'return'))(
     { ...Vue, onMounted() {}, onBeforeUnmount(fn) { callbacks.push(fn) } }, () => auth,
     overrides.options || (async () => ({ suites: [{ id: 1, name: '订单套件' }], cases: [
       { id: 2, name: '创建订单', tags: ['order'], interface_name: '创建' }, { id: 3, name: '查询用户', tags: ['user'], interface_name: '用户' } ] })),
     async selection => { calls.push({ type: 'preview', selection }); return overrides.preview ? overrides.preview(selection) : ready('key') },
     async selection => { calls.push({ type: 'run', selection }); return overrides.run ? overrides.run(selection) : { report_id: 'run-1', results: [] } },
     () => ({ envs: Vue.ref([]), selectedEnv, loadEnvironments: async () => [] }), null, regressionRows,
-    overrides.notifications || (async () => ({enabled:true,configured:true,can_manage:true})))
+    overrides.notifications || (async () => ({enabled:true,configured:true,can_manage:true})),
+    () => route, () => ({ replace(value) { route.query = value.query } }), null)
   const scope = Vue.effectScope(), state = scope.run(() => options.setup({}, { expose() {} }))
   t.after(() => { callbacks.forEach(fn => fn()); scope.stop() })
-  return { state, calls, auth, selectedEnv }
+  return { state, calls, auth, selectedEnv, route }
 }
 
 test('nothing runs until a nonempty selection has a valid current preview', async t => {
@@ -115,4 +117,34 @@ test('an old notification response cannot enable sending for another project', a
   assert.equal(state.notification.value,null)
   next.resolve({enabled:false,configured:false,can_manage:false});await tick()
   assert.equal(state.notificationReady.value,false)
+})
+
+test('scheduled execution reuses explicit selection and passes it to timing without executing', async t => {
+  const { state, calls } = view(t)
+  await state.loadOptions()
+  state.setExecutionTab('scheduled'); state.editSchedule()
+  state.toggle(1); await state.loadPreview()
+  let draft
+  state.schedulePanel.value = { openTiming(...args) { draft = args } }
+  state.setScheduleTime()
+  assert.deepEqual(draft[1], { mode: 'suite', ids: [1], env_id: 1 })
+  assert.equal(calls.some(item => item.type === 'run'), false)
+})
+
+test('editing a legacy tag plan resolves current candidates explicitly, not all cases', async t => {
+  const { state } = view(t)
+  await state.loadOptions()
+  state.editSchedule({ id: 10, tag: 'order', env_id: 1 })
+  assert.equal(state.mode.value, 'case')
+  assert.deepEqual(state.selectedIds.value, [2])
+  assert.equal(state.editingSchedule.value.tag, 'order')
+})
+
+test('switching project closes the schedule editor and drops its old references', async t => {
+  const { state, auth } = view(t)
+  state.editSchedule({ id: 10, env_id: 1, selection: { mode: 'suite', ids: [1] } })
+  auth.currentProjectId = 2
+  await tick()
+  assert.equal(state.scheduleForm.value, false)
+  assert.equal(state.editingSchedule.value, null)
 })

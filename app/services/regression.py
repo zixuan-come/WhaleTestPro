@@ -108,13 +108,13 @@ def preview(db, project_id, selection):
             "preview_key": key}
 
 
-def run(db, project_id, selection):
+def run(db, project_id, selection, *, report_name=None):
     plan = preview(db, project_id, selection)
     if plan["preview_key"] != selection.preview_key:
         raise HTTPException(409, "测试内容或环境已变更，请刷新执行清单后再开始")
     if not plan["ready"]:
         raise HTTPException(400, "；".join(plan["warnings"]))
-    title = "套件回归" if selection.mode == "suite" else "用例回归"
+    title = report_name or ("套件回归" if selection.mode == "suite" else "用例回归")
     return _run_plan(db, plan, selection.env_id, project_id, title, selection.notify)
 
 

@@ -6,8 +6,33 @@ import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import { regressionRows } from '../utils/regression'
 import { getProjectNotifications } from '../api/project'
+import { useRoute, useRouter } from 'vue-router'
+import Schedules from './Schedules.vue'
 
 const auth = useAuthStore()
+const route = useRoute(), router = useRouter()
+const executionTab = computed(() => route.query.tab === 'scheduled' ? 'scheduled' : 'immediate')
+const schedulePanel = ref(null), scheduleForm = ref(false), editingSchedule = ref(null)
+function setExecutionTab(tab) {
+  if (running.value) return
+  scheduleForm.value = false
+  router.replace({ path: '/regression', query: tab === 'scheduled' ? { tab: 'scheduled' } : {} })
+}
+function editSchedule(row = null) {
+  if (running.value) return
+  editingSchedule.value = row
+  scheduleForm.value = true
+  const targets = row?.selection || (row?.suite_id ? { mode: 'suite', ids: [row.suite_id] }
+    : { mode: row ? 'case' : 'suite', ids: row ? catalog.value.cases.filter(item => !row.tag || item.tags?.includes(row.tag)).map(item => item.id) : [] })
+  mode.value = targets.mode; selectedIds.value = [...targets.ids]
+  search.value = ''; tagFilter.value = ''; summary.value = null
+  if (row) selectedEnv.value = row.env_id ? String(row.env_id) : ''
+  notify.value = !!row?.notify
+}
+function setScheduleTime() {
+  if (!canRun.value || !selectedEnv.value) return
+  schedulePanel.value?.openTiming(editingSchedule.value, selection.value, notify.value && notificationReady.value)
+}
 const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
 const mode = ref('suite'), selectedIds = ref([]), search = ref(''), tagFilter = ref('')
 const catalog = ref({ suites: [], cases: [] }), loading = ref(false), loadError = ref('')
@@ -96,6 +121,7 @@ async function onRun() {
   } finally { if (version === runVersion) running.value = false }
 }
 function resetProject() {
+  scheduleForm.value = false; editingSchedule.value = null
   clearTimeout(previewTimer); previewVersion++; runVersion++
   selectedIds.value = []; search.value = ''; tagFilter.value = ''; plan.value = null; summary.value = null
   previewing.value = false; running.value = false; previewError.value = ''; runError.value = ''; notify.value = false
@@ -109,9 +135,17 @@ onBeforeUnmount(() => { clearTimeout(previewTimer); optionsVersion++; previewVer
 </script>
 
 <template>
-  <p class="intro">代码更新后，重新执行已有测试，检查原有功能是否正常。</p>
+  <p class="intro">选择已有测试立即回归，或设置时间自动执行。结果统一保存在测试报告中。</p>
+  <div class="execution-tabs" role="group" aria-label="回归执行方式">
+    <button type="button" :aria-pressed="executionTab === 'immediate'" :disabled="running" @click="setExecutionTab('immediate')">立即执行</button>
+    <button type="button" :aria-pressed="executionTab === 'scheduled'" :disabled="running" @click="setExecutionTab('scheduled')">定时任务</button>
+  </div>
   <div v-if="!auth.currentProjectId" class="panel state">请先选择项目。</div>
   <template v-else>
+    <div v-show="executionTab === 'scheduled' && !scheduleForm"><Schedules ref="schedulePanel" :catalog="catalog" :active="executionTab === 'scheduled'" @create="editSchedule()" @edit="editSchedule" @saved="scheduleForm = false" /></div>
+    <section v-show="executionTab === 'immediate' || scheduleForm">
+    <div v-if="executionTab === 'scheduled'" class="schedule-editor-heading"><button class="btn btn-ghost" type="button" @click="scheduleForm = false">返回任务列表</button><span>{{ editingSchedule ? '编辑定时任务' : '新建定时任务' }} · 先确认测试内容，再设置时间</span></div>
+    <p v-if="executionTab === 'scheduled' && editingSchedule && !editingSchedule.selection" class="legacy-note">此任务原来{{ editingSchedule.suite_id ? '绑定单个套件' : editingSchedule.tag ? `按标签「${editingSchedule.tag}」动态匹配用例` : '执行全部用例' }}。下方已列出当前匹配内容，保存后改为执行明确勾选的内容；未保存前仍沿用原规则。</p>
     <fieldset class="configuration" :disabled="running">
       <div class="panel setup-panel">
         <div class="panel-head"><span>1 · 选择测试内容</span><span class="step-note">先选环境，再选择本次要执行的测试</span></div>
@@ -145,7 +179,7 @@ onBeforeUnmount(() => { clearTimeout(previewTimer); optionsVersion++; previewVer
           <ul v-if="plan.warnings.length" class="warnings"><li v-for="warning in plan.warnings" :key="warning">{{ warning }}</li></ul>
           <div class="plan-list"><div v-for="group in plan.groups" :key="group.id" class="plan-group"><strong>{{ group.name }}</strong><ul v-if="group.items"><li v-for="(item, index) in group.items" :key="index"><span class="item-kind">{{ item.type === 'scenario' ? '场景' : '用例' }}</span>{{ item.name }}<ol v-if="item.steps?.length" class="step-chain"><li v-for="(step, stepIndex) in item.steps" :key="stepIndex">{{ stepIndex + 1 }}. {{ step.name }}</li></ol></li></ul></div></div>
         </div>
-        <div class="run-footer"><details class="notify-options"><summary>通知设置</summary><small class="notification-status" role="status">{{ notificationText }}</small><label><input v-model="notify" type="checkbox" :disabled="!notificationReady || running" /> 执行完成后发送飞书通知</label><div class="notification-actions"><RouterLink v-if="notification?.can_manage && ['owner', 'admin'].includes(auth.currentTeamRole)" :to="{ path: '/projects', query: { notifications: auth.currentProjectId } }">{{ notificationReady ? '管理通知设置' : '去配置' }}</RouterLink><span v-else-if="!notificationLoading && !notificationError && !notificationReady">请联系项目管理员配置</span><button type="button" class="text-btn" :disabled="notificationLoading || running" @click="loadNotification">{{ notificationError ? '重试' : '刷新状态' }}</button></div></details><button type="button" class="btn btn-primary" :disabled="!canRun" @click="onRun">{{ running ? '正在执行…' : '开始回归' }}</button></div>
+        <div class="run-footer"><details class="notify-options"><summary>通知设置</summary><small class="notification-status" role="status">{{ notificationText }}</small><label><input v-model="notify" type="checkbox" :disabled="!notificationReady || running" /> 执行完成后发送飞书通知</label><div class="notification-actions"><RouterLink v-if="notification?.can_manage && ['owner', 'admin'].includes(auth.currentTeamRole)" :to="{ path: '/projects', query: { notifications: auth.currentProjectId } }">{{ notificationReady ? '管理通知设置' : '去配置' }}</RouterLink><span v-else-if="!notificationLoading && !notificationError && !notificationReady">请联系项目管理员配置</span><button type="button" class="text-btn" :disabled="notificationLoading || running" @click="loadNotification">{{ notificationError ? '重试' : '刷新状态' }}</button></div></details><button v-if="executionTab === 'immediate'" type="button" class="btn btn-primary" :disabled="!canRun" @click="onRun">{{ running ? '正在执行…' : '开始回归' }}</button><button v-else type="button" class="btn btn-primary" :disabled="!canRun || !selectedEnv" @click="setScheduleTime">设置执行时间</button></div>
       </div>
     </fieldset>
     <p v-if="running" class="running-note" role="status">正在执行本次测试，请等待结果。执行记录会保存在“测试报告 → 回归测试”。</p>
@@ -157,6 +191,7 @@ onBeforeUnmount(() => { clearTimeout(previewTimer); optionsVersion++; previewVer
       <div v-for="(row, index) in rows" :key="index" class="result-row"><span class="badge" :class="row.passed ? 'b-pass' : 'b-fail'">{{ row.passed ? '通过' : '失败' }}</span><div><strong>{{ row.name }}</strong><small v-if="row.suite_name">所属套件：{{ row.suite_name }}</small><p v-if="!row.passed" class="failure-reason">{{ row.reason }}</p></div></div>
       <details class="more-stats"><summary>更多统计</summary><p>通过率 {{ Math.round(summary.pass_rate * 100) }}% · 接口覆盖率 {{ Math.round(summary.interface_coverage * 100) }}%（{{ summary.interface_covered }}/{{ summary.interface_total }}）</p><small>执行项按场景或独立用例统计；接口覆盖率按关联到的接口数量统计。</small></details>
     </div>
+    </section>
   </template>
 </template>
 
@@ -164,4 +199,5 @@ onBeforeUnmount(() => { clearTimeout(previewTimer); optionsVersion++; previewVer
 .intro{margin-bottom:18px;color:var(--text-muted);font-size:13px;line-height:1.7}.configuration{padding:0;margin:0;min-width:0;border:0}.configuration:disabled{opacity:.8}.setup-panel,.plan-panel{margin-bottom:20px}.panel-head{gap:12px;flex-wrap:wrap}.step-note{font-size:12px;font-weight:400;color:var(--text-muted)}.setup-body,.plan-body{padding:18px 20px}.field-label{font-size:13px;font-weight:600}.environment-field{display:flex;align-items:center;gap:16px;margin-bottom:18px}.environment-field :deep(.env-select){width:290px}.mode-switch{display:flex;gap:6px;flex-wrap:wrap}.mode-switch button{border:1px solid var(--border);padding:9px 14px;border-radius:7px;background:var(--surface);color:var(--text-muted);font:inherit;font-size:13px;cursor:pointer}.mode-switch button.active{border-color:var(--primary);background:var(--surface-2);color:var(--primary)}.mode-switch small{margin-left:6px;font-size:10px}.selection-help{font-size:12px;line-height:1.7;color:var(--text-muted);margin:12px 0 16px}.selection-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px}.selection-toolbar>input{flex:1;min-width:180px;max-width:420px;height:34px;border:1px solid var(--border);border-radius:6px;padding:0 10px;background:var(--surface-2);color:var(--text);font:inherit;font-size:12px}.selection-toolbar>span{font-size:12px;color:var(--text-muted)}.text-btn{padding:4px;border:0;background:transparent;color:var(--primary);font:inherit;font-size:12px;cursor:pointer}.text-btn:disabled{opacity:.4;cursor:default}.selection-list{max-height:310px;overflow:auto;border:1px solid var(--border);border-radius:8px}.selection-row{display:flex;align-items:flex-start;gap:12px;padding:13px 14px;border-bottom:1px solid var(--border);cursor:pointer}.selection-row:last-child{border:0}.selection-row.selected{background:var(--surface-2)}input[type=checkbox]{accent-color:var(--primary);flex:none;margin-top:3px;width:15px;height:15px}.selection-row>span{min-width:0;overflow-wrap:anywhere}.selection-row strong,.plan-group>strong,.result-row strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}.selection-row small,.result-row small,.item-tags{display:block;margin-top:5px;font-size:11px;color:var(--text-muted);line-height:1.6}.tag-filter{margin-bottom:12px}.tag-filter summary,.notify-options summary,.more-stats summary{font-size:12px;color:var(--text-muted);cursor:pointer}.tag-options{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.tag-options button{padding:5px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text-muted);font:inherit;font-size:12px;cursor:pointer}.tag-options button[aria-pressed=true]{border-color:var(--primary);color:var(--primary)}.state{padding:28px 16px;text-align:center;font-size:13px;color:var(--text-muted);line-height:1.8}.state a{color:var(--primary);white-space:nowrap}.error,.run-error,.failure-reason{color:var(--fail-fg)}.plan-counts{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;font-size:12px;color:var(--text-muted)}.plan-list{max-height:380px;overflow:auto}.plan-group{padding:8px 12px;border:1px solid var(--border);border-radius:7px;margin-bottom:8px}.plan-group:last-child{margin-bottom:0}.plan-group ul{margin:4px 0 0;padding-left:20px;font-size:12px;line-height:1.6}.plan-group ul>li{padding:2px 0;overflow-wrap:anywhere}.item-kind{margin-right:8px;color:var(--text-muted);font-size:11px}.step-chain{display:flex;flex-wrap:wrap;gap:4px 18px;list-style:none;padding:2px 0 0 0;margin:0;color:var(--text-muted);font-size:11px}.warnings,.run-error,.notification-warning{padding:12px 16px;background:var(--fail-bg);color:var(--fail-fg);border-radius:7px;font-size:12px;line-height:1.8;overflow-wrap:anywhere}.warnings{padding-left:30px;margin-bottom:12px}.run-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-top:1px solid var(--border)}.notify-options label{display:flex;gap:7px;align-items:center;margin-top:10px;font-size:12px}.notify-options small{display:block;font-size:11px;margin-top:5px;color:var(--text-muted)}.running-note{margin:12px 0 18px;color:var(--text-muted);font-size:13px}.run-error{margin-bottom:18px}.result-summary{display:flex;align-items:center;flex-wrap:wrap;gap:18px;padding:20px;font-size:13px}.pass{color:var(--pass-fg)}.fail{color:var(--fail-fg)}.result-row{display:flex;align-items:flex-start;gap:12px;padding:14px 20px;border-top:1px solid var(--border)}.result-row>div{min-width:0}.result-row>.badge{flex:none}.failure-reason{font-size:12px;line-height:1.7;margin-top:6px;overflow-wrap:anywhere}.more-stats{padding:16px 20px;border-top:1px solid var(--border)}.more-stats p{margin-top:12px;font-size:12px}.more-stats small{display:block;margin-top:7px;font-size:11px;color:var(--text-muted)}button:focus-visible,input:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}button:disabled{cursor:default}@media(max-width:600px){.setup-body,.plan-body{padding:14px}.step-note{display:none}.environment-field{align-items:stretch;flex-direction:column;gap:9px}.environment-field :deep(.env-select){width:100%}.selection-toolbar>input{flex-basis:100%;max-width:none}.mode-switch button{flex:1;padding:9px 10px}.run-footer{padding:14px}.result-row{padding:14px}.result-summary{padding:16px}.panel-head .btn{font-size:12px}}
 .notification-actions { display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:8px;font-size:11px; }
 .notification-actions a { color:var(--primary); }.notification-actions > span { color:var(--text-muted); }.notification-actions .text-btn { font-size:11px; }
+.execution-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:20px}.execution-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--text-muted);font:inherit;font-size:14px;padding:10px 18px;cursor:pointer}.execution-tabs button[aria-pressed=true]{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}.execution-tabs button:disabled{cursor:default}.schedule-editor-heading{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px;font-size:12px;color:var(--text-muted)}.legacy-note{font-size:12px;line-height:1.8;padding:12px 16px;margin-bottom:16px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);background:var(--surface)}.selection-list,.plan-list{scrollbar-width:none}.selection-list::-webkit-scrollbar,.plan-list::-webkit-scrollbar{display:none}@media(max-width:600px){.run-footer{flex-wrap:wrap}.run-footer>.btn{margin-left:auto}.execution-tabs button{flex:1}}
 </style>

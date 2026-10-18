@@ -36,7 +36,7 @@ const permissionOptions = [
   { key: 'case.write', label: '测试用例', description: '新增、修改和删除测试用例' },
   { key: 'environment.write', label: '环境配置', description: '维护环境变量和执行环境' },
   { key: 'mock.write', label: 'Mock 服务', description: '新增、修改和删除 Mock 规则' },
-  { key: 'schedule.write', label: '定时任务', description: '维护定时执行计划' },
+  { key: 'schedule.write', label: '回归定时任务', description: '维护回归测试中的定时执行计划' },
   { key: 'perf.write', label: '性能任务', description: '维护性能测试任务配置' },
   { key: 'scenario.write', label: '业务场景', description: '新增、修改和删除场景' },
   { key: 'suite.write', label: '测试套件', description: '新增、修改和删除测试套件' },
