@@ -42,6 +42,7 @@ function page(t, { run } = {}) {
     KeyValueEditor: { render: () => null }, EnvironmentSelect: { render: () => null },
     InterfaceResourceTree: { render: () => null }, InterfaceWorkspace: { render: () => null },
     PathParameterEditor: editor, pathParameterNames, pathParameterValues,
+    CategorySelect: { render: () => null },
     useFeedback: () => ({ showMessage: (...args) => messages.push(args), confirmAction: async () => false }),
     useExecutionEnvironment: () => ({ envs, selectedEnv, loadEnvironments: async () => {} }),
   })

@@ -10,6 +10,7 @@ import {
   listScenarios, getScenario, createScenario, updateScenario, deleteScenario, runScenario,
 } from '../api/scenario'
 import Modal from '../components/Modal.vue'
+import ScenarioRunResult from '../components/ScenarioRunResult.vue'
 
 // —— 数据源 ——
 const scenarios = ref([])
@@ -82,8 +83,6 @@ const filteredCases = computed(() => {
   if (!q) return cases.value
   return cases.value.filter(c => c.name.toLowerCase().includes(q))
 })
-
-const overallPassed = computed(() => results.value.length > 0 && results.value.every(r => r.passed))
 
 // —— 加载全量 ——
 async function load() {
@@ -218,8 +217,6 @@ async function onRun() {
     running.value = false
   }
 }
-
-function fmtJson(v) { return JSON.stringify(v, null, 2) }
 
 onMounted(load)
 </script>
@@ -358,32 +355,7 @@ onMounted(load)
 
   <!-- 执行结果弹层 -->
   <Modal v-if="showResult" :title="`执行结果 · ${currentName}`" :max-width="720" @close="showResult = false">
-    <div class="verdict">
-      <span class="badge" :class="overallPassed ? 'b-pass' : 'b-fail'">
-        <span class="dot"></span>{{ overallPassed ? '通过' : '失败' }}
-      </span>
-      <span class="muted">共 {{ results.length }} 步</span>
-    </div>
-    <div v-for="(r, i) in results" :key="i" class="run">
-      <div class="run-head">
-        <span class="badge" :class="r.passed ? 'b-pass' : 'b-fail'">
-          <span class="dot"></span>{{ r.passed ? '通过' : '失败' }}
-        </span>
-        <span class="run-idx">步骤 #{{ i + 1 }}</span>
-      </div>
-      <div v-if="r.error" class="form-err">{{ r.error }}</div>
-      <div v-else class="kv">
-        <div><span class="kk">期望状态</span><span class="vv">{{ r.expected_status }}</span></div>
-        <div><span class="kk">实际状态</span><span class="vv" :class="{ bad: r.actual_status !== r.expected_status }">{{ r.actual_status }}</span></div>
-      </div>
-      <div v-if="r.assertions && r.assertions.length" class="asserts">
-        <div class="asserts-t">断言 ({{ r.assertions.filter(a => a.passed).length }}/{{ r.assertions.length }} 通过)</div>
-        <div v-for="(a, j) in r.assertions" :key="j" class="assert-row" :class="{ fail: !a.passed }">
-          <span class="badge" :class="a.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ a.passed ? 'PASS' : 'FAIL' }}</span>
-          <code>{{ fmtJson(a) }}</code>
-        </div>
-      </div>
-    </div>
+    <ScenarioRunResult :results="results" />
     <template #foot>
       <button class="btn btn-primary" @click="showResult = false">关闭</button>
     </template>
@@ -492,25 +464,6 @@ onMounted(load)
   background:var(--surface-2); border:1px solid var(--border); border-radius:8px; font-family:inherit; }
 .field input:focus { outline:none; border-color:var(--primary); }
 .form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
-
-/* ===== 结果弹层 ===== */
-.verdict { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
-.verdict .muted { color:var(--text-muted); font-size:12.5px; }
-.run { border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
-.run:last-child { margin-bottom:0; }
-.run-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-.run-head .run-idx { font-weight:600; font-size:12.5px; }
-.kv { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
-.kv > div { display:flex; flex-direction:column; gap:4px; background:var(--surface-2);
-  border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
-.kv .kk { font-size:11px; color:var(--text-muted); }
-.kv .vv { font-family:ui-monospace,Consolas,monospace; font-weight:700; font-size:15px; }
-.kv .vv.bad { color:var(--fail-fg); }
-.asserts-t { font-size:12px; color:var(--text-muted); font-weight:600; margin-bottom:8px; }
-.assert-row { display:flex; align-items:flex-start; gap:10px; margin-bottom:8px; }
-.assert-row code { flex:1; font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--text-muted);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 9px;
-  white-space:pre-wrap; word-break:break-all; }
 
 /* ===== 响应式 ===== */
 @media (max-width:1200px) {

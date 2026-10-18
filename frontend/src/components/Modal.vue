@@ -8,6 +8,7 @@ const props = defineProps({
   title: { type: String, default: '' },
   maxWidth: { type: Number, default: 560 },
   busy: { type: Boolean, default: false },
+  hideScrollbar: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close'])
 
@@ -27,7 +28,7 @@ function onClose() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
-        <div class="modal-body"><slot /></div>
+        <div class="modal-body" :class="{ 'hide-scrollbar': hideScrollbar }"><slot /></div>
         <div v-if="$slots.foot" class="modal-foot"><slot name="foot" /></div>
       </div>
     </div>
@@ -47,5 +48,8 @@ function onClose() {
 .modal-head .x svg { width:18px; height:18px; }
 .modal-head .x:hover { background:var(--surface-2); color:var(--text); }
 .modal-body { padding:20px 22px; overflow:auto; }
+.modal-body.hide-scrollbar { scrollbar-width:none; -ms-overflow-style:none; }
+.modal-body.hide-scrollbar::-webkit-scrollbar { display:none; width:0; height:0; }
+.modal-head, .modal-foot { flex-shrink:0; }
 .modal-foot { display:flex; justify-content:flex-end; gap:10px; padding:16px 22px; border-top:1px solid var(--border); }
 </style>

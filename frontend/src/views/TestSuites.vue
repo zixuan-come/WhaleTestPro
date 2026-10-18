@@ -1,8 +1,11 @@
 <template>
   <div class="test-suites">
     <div class="top-bar">
-      <h2>测试套件</h2>
-      <button @click="showCreateDialog = true" class="btn-create">
+      <div class="suite-heading">
+        <h2>测试套件</h2>
+        <span class="suite-count">共 {{ suites.length }} 个</span>
+      </div>
+      <button @click="openCreate" class="btn btn-primary btn-create">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14" />
         </svg>
@@ -10,186 +13,72 @@
       </button>
     </div>
 
-    <!-- 统计卡片区域 -->
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-icon total">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-label">总套件数</div>
-          <div class="stat-value">{{ suites.length }}</div>
-        </div>
+    <section class="suite-list-panel" aria-label="测试套件列表">
+      <div class="suite-list-toolbar">
+        <label class="suite-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+          <input v-model="search" aria-label="搜索套件名称或简介" placeholder="搜索套件名称、简介…" />
+        </label>
+        <span v-if="search.trim()" class="search-count" role="status">找到 {{ filteredSuites.length }} 个套件</span>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon scenario">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 6h4v4H4zM16 6h4v4h-4zM10 14h4v4h-4z" />
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-label">场景套件</div>
-          <div class="stat-value">{{ typeCount('scenario') }}</div>
-        </div>
+      <div v-if="loadingSuites" class="suite-list-state" role="status">正在加载套件…</div>
+      <div v-else-if="suiteLoadError" class="suite-list-state error" role="alert">{{ suiteLoadError }}<button class="btn btn-ghost" @click="fetchSuites">重试</button></div>
+      <template v-else-if="filteredSuites.length">
+        <table class="suite-table">
+          <thead><tr><th scope="col">套件名称</th><th scope="col">内容组成</th><th scope="col">更新时间</th><th scope="col" class="actions-column">操作</th></tr></thead>
+          <tbody>
+            <tr v-for="suite in pageSuites" :key="suite.id" class="suite-row">
+              <td class="suite-info"><strong :title="suite.name">{{ suite.name }}</strong><span class="suite-description" :title="suite.description || '暂无简介'">{{ suite.description || '暂无简介' }}</span></td>
+              <td class="suite-composition" data-label="内容组成"><span>{{ composition(suite) }}</span></td>
+              <td class="suite-updated" data-label="更新时间"><time v-if="suite.updated_at || suite.created_at" :datetime="suite.updated_at || suite.created_at" :title="formatDate(suite.updated_at || suite.created_at)">{{ formatDate(suite.updated_at || suite.created_at) }}</time><span v-else>—</span></td>
+              <td class="suite-row-actions">
+                <button type="button" class="suite-text-button run" @click="runSuite(suite.id)" :disabled="running" :aria-label="'运行套件：' + suite.name">运行</button>
+                <button type="button" class="suite-text-button" @click="editSuite(suite)" :aria-label="'编辑套件：' + suite.name">编辑</button>
+                <details class="suite-more" @keydown.esc.stop.prevent="$event.currentTarget.open = false">
+                  <summary :aria-label="'更多操作：' + suite.name" @click="closeOtherMenus($event)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></summary>
+                  <div class="suite-more-menu"><button type="button" @click="requestDelete(suite, $event)">删除套件</button></div>
+                </details>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="suite-pagination"><span>共 {{ filteredSuites.length }} 个 · 每页 {{ pageSize }} 个</span><div><button type="button" class="btn btn-ghost" :disabled="page <= 1" @click="page--" aria-label="上一页套件">上一页</button><span aria-live="polite">{{ page }} / {{ pageCount }}</span><button type="button" class="btn btn-ghost" :disabled="page >= pageCount" @click="page++" aria-label="下一页套件">下一页</button></div></div>
+      </template>
+      <div v-else class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+        <p>{{ suites.length ? '没有匹配的套件' : '还没有测试套件' }}</p>
+        <button v-if="suites.length" type="button" class="btn btn-ghost" @click="search = ''">清空搜索</button>
+        <button v-else @click="openCreate" class="btn btn-primary btn-create-empty">创建第一个套件</button>
       </div>
-      <div class="stat-card">
-        <div class="stat-icon case">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-label">用例套件</div>
-          <div class="stat-value">{{ typeCount('case') }}</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon mixed">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 6h16M4 12h16M4 18h10" />
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-label">混合套件</div>
-          <div class="stat-value">{{ typeCount('mixed') }}</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 套件卡片网格 - 一行5个 -->
-    <div class="suites-grid">
-      <div
-        v-for="suite in suites"
-        :key="suite.id"
-        class="suite-card"
-        :class="'suite-type-' + suite.type"
-      >
-        <div class="suite-header">
-          <div class="suite-title">
-            <h3>{{ suite.name }}</h3>
-            <span :class="'type-badge type-' + suite.type">
-              {{ typeLabel(suite.type) }}
-            </span>
-          </div>
-          <div class="suite-actions">
-            <button @click="runSuite(suite.id)" class="action-btn run" title="运行">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-            <button @click="editSuite(suite)" class="action-btn edit" title="编辑">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5Z" />
-              </svg>
-            </button>
-            <button @click="deleteSuite(suite.id)" class="action-btn delete" title="删除">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="suite-description">
-          {{ suite.description || '暂无描述' }}
-        </div>
-
-        <div class="suite-stats">
-          <div class="stat-item" v-if="suite.scenario_ids?.length">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 6h4v4H4z" />
-            </svg>
-            <span>{{ suite.scenario_ids.length }} 场景</span>
-          </div>
-          <div class="stat-item" v-if="suite.case_ids?.length">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 11l3 3L22 4" />
-            </svg>
-            <span>{{ suite.case_ids.length }} 用例</span>
-          </div>
-          <div class="stat-item" v-if="suite.tags?.length">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M7 7h.01M7 3h5l8 8-5 5-8-8V3z" />
-            </svg>
-            <span>{{ suite.tags.length }} 标签</span>
-          </div>
-          <div class="stat-item empty" v-if="!suite.scenario_ids?.length && !suite.case_ids?.length && !suite.tags?.length">
-            <span>空套件</span>
-          </div>
-        </div>
-
-        <div class="suite-footer">
-          <div class="create-time">
-            {{ formatDate(suite.created_at) }}
-          </div>
-        </div>
-      </div>
-
-      <!-- 空状态 -->
-      <div v-if="suites.length === 0" class="empty-state">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-        </svg>
-        <p>还没有测试套件</p>
-        <button @click="showCreateDialog = true" class="btn-create-empty">创建第一个套件</button>
-      </div>
-    </div>
+    </section>
 
     <!-- 创建/编辑对话框 -->
-    <Modal v-if="showCreateDialog || showEditDialog" :title="showEditDialog ? '编辑套件' : '新建套件'" :max-width="560" @close="closeDialog">
-      <form @submit.prevent="submitForm">
+    <Modal v-if="showCreateDialog || showEditDialog" :title="showEditDialog ? '编辑套件' : '新建套件'" :max-width="960" :busy="saving" hide-scrollbar @close="closeDialog">
+      <form id="suite-editor-form" class="suite-editor-form" @submit.prevent="submitForm">
+        <fieldset :disabled="saving" class="suite-editor-fields">
+        <div class="suite-basic-fields">
         <div class="form-row">
           <label class="required">套件名称</label>
           <input v-model="form.name" required maxlength="100" placeholder="如: 每日冒烟测试" />
         </div>
         <div class="form-row">
           <label>描述</label>
-          <textarea v-model="form.description" maxlength="500" rows="3" placeholder="描述这个套件的用途"></textarea>
+          <textarea v-model="form.description" maxlength="500" rows="2" placeholder="描述这个套件的用途（可选）"></textarea>
         </div>
-        <div class="form-row">
-          <label class="required">套件类型</label>
-          <div class="radio-group">
-            <label class="radio-option">
-              <input type="radio" v-model="form.type" value="scenario" />
-              <span>场景套件</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" v-model="form.type" value="case" />
-              <span>用例套件</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" v-model="form.type" value="mixed" />
-              <span>混合套件</span>
-            </label>
-          </div>
         </div>
-        <div class="form-row">
-          <label>场景 ID <span class="hint">逗号分隔，如: 1,2,3</span></label>
-          <input v-model="scenarioIdsText" placeholder="1,2,3" />
-        </div>
-        <div class="form-row">
-          <label>用例 ID <span class="hint">逗号分隔，如: 10,11,12</span></label>
-          <input v-model="caseIdsText" placeholder="10,11,12" />
-        </div>
-        <div class="form-row">
-          <label>标签 <span class="hint">逗号分隔，如: smoke,p0</span></label>
-          <input v-model="tagsText" placeholder="smoke,p0" />
-        </div>
-        <div class="form-actions">
-          <button type="button" @click="closeDialog" class="btn-cancel">取消</button>
-          <button type="submit" class="btn-submit">{{ showEditDialog ? '更新' : '创建' }}</button>
-        </div>
+        <SuiteContentPicker v-model="selection" :disabled="saving" @ready="pickerReady = $event" />
+        <p v-if="saveError" class="suite-save-error" role="alert">{{ saveError }}</p>
+        </fieldset>
       </form>
+      <template #foot><span class="suite-selection-count">已选 {{ selection.scenario_ids.length }} 个场景、{{ selection.case_ids.length }} 个独立用例<span v-if="selection.tags.length"> · {{ selection.tags.length }} 个动态标签</span></span><button type="button" @click="closeDialog" class="btn btn-ghost" :disabled="saving">取消</button><button type="submit" form="suite-editor-form" class="btn btn-primary" :disabled="saving || !pickerReady">{{ saving ? '保存中…' : showEditDialog ? '保存修改' : '创建套件' }}</button></template>
     </Modal>
 
     <!-- 运行对话框 -->
-    <Modal v-if="showRunDialog" title="运行套件" :max-width="400" @close="showRunDialog = false">
+    <Modal v-if="showRunDialog" title="运行套件" :max-width="400" :busy="running" @close="showRunDialog = false">
       <div>
         <div class="form-row">
           <label>选择环境</label>
-          <select v-model="selectedEnvId">
+          <select v-model="selectedEnvId" :disabled="running">
             <option :value="null">默认环境</option>
             <option v-for="env in environments" :key="env.id" :value="env.id">
               {{ env.name }}
@@ -197,41 +86,16 @@
           </select>
         </div>
         <div class="form-actions">
-          <button @click="showRunDialog = false" class="btn-cancel">取消</button>
-          <button @click="executeRun" class="btn-submit">开始执行</button>
+          <button @click="showRunDialog = false" class="btn-cancel" :disabled="running">取消</button>
+          <button @click="executeRun" class="btn-submit" :disabled="running">{{ running ? '正在执行…' : '开始执行' }}</button>
         </div>
       </div>
     </Modal>
 
     <!-- 运行结果 -->
-    <Modal v-if="runResult" title="运行结果" :max-width="600" @close="runResult = null">
-      <div class="result-summary">
-        <div class="result-stat">
-          <div class="label">套件名称</div>
-          <div class="value">{{ runResult.suite_name }}</div>
-        </div>
-        <div class="result-stat">
-          <div class="label">执行时间</div>
-          <div class="value">{{ runResult.duration_ms }}ms</div>
-        </div>
-        <div class="result-stat">
-          <div class="label">总数</div>
-          <div class="value">{{ runResult.total }}</div>
-        </div>
-        <div class="result-stat pass">
-          <div class="label">通过</div>
-          <div class="value">{{ runResult.passed }}</div>
-        </div>
-        <div class="result-stat fail">
-          <div class="label">失败</div>
-          <div class="value">{{ runResult.failed }}</div>
-        </div>
-        <div class="result-stat rate">
-          <div class="label">通过率</div>
-          <div class="value">{{ runResult.pass_rate }}%</div>
-        </div>
-      </div>
-      <button @click="runResult = null" class="btn-close-result">关闭</button>
+    <Modal v-if="runResult" title="运行结果" :max-width="600" hide-scrollbar @close="runResult = null">
+      <SuiteRunResult :result="runResult" />
+      <template #foot><button type="button" class="btn btn-primary" @click="runResult = null">关闭</button></template>
     </Modal>
   </div>
 </template>
@@ -240,13 +104,19 @@
 import { listSuites, createSuite, updateSuite, deleteSuite as apiDeleteSuite, runSuite as apiRunSuite } from '../api/suite';
 import { listEnvironments } from '../api/environment';
 import Modal from '../components/Modal.vue';
+import SuiteContentPicker from '../components/SuiteContentPicker.vue';
+import SuiteRunResult from '../components/SuiteRunResult.vue';
+import { useAuthStore } from '../stores/auth';
+import { showMessage, confirmAction } from '../composables/feedback';
 
 export default {
   name: 'TestSuites',
-  components: { Modal },
+  components: { Modal, SuiteContentPicker, SuiteRunResult },
   data() {
     return {
       suites: [],
+      search: '', page: 1, pageSize: 20, loadingSuites: false, suiteLoadError: '',
+      running: false, runVersion: 0,
       environments: [],
       showCreateDialog: false,
       showEditDialog: false,
@@ -258,133 +128,179 @@ export default {
       form: {
         name: '',
         description: '',
-        type: 'mixed',
       },
-      scenarioIdsText: '',
-      caseIdsText: '',
-      tagsText: '',
+      selection: { scenario_ids: [], case_ids: [], tags: [] },
+      pickerReady: false, saving: false, saveError: '',
+      suitesVersion: 0, envVersion: 0, saveVersion: 0,
     };
   },
   mounted() {
+    document.addEventListener('pointerdown', this.closeMenusOutside);
     this.fetchSuites();
     this.fetchEnvironments();
   },
+  computed: {
+    filteredSuites() { const query = this.search.trim().toLocaleLowerCase(); return this.suites.filter(suite => !query || `${suite.name || ''} ${suite.description || ''}`.toLocaleLowerCase().includes(query)); },
+    pageCount() { return Math.max(1, Math.ceil(this.filteredSuites.length / this.pageSize)); },
+    pageSuites() { return this.filteredSuites.slice((this.page - 1) * this.pageSize, this.page * this.pageSize); },
+    projectIdentity() { const auth = useAuthStore(); return `${auth.username}:${auth.currentProjectId}:${auth.token}`; },
+  },
+  watch: {
+    search() { this.page = 1; this.closeMenusOutside(); },
+    page() { this.closeMenusOutside(); },
+    pageCount(value) { this.page = Math.min(this.page, value); },
+    projectIdentity() {
+      this.runVersion++; this.running = false; this.runningSuiteId = null; this.search = ''; this.page = 1;
+      this.saveVersion++; this.saving = false; this.closeDialog();
+      this.showRunDialog = false; this.runResult = null; this.suites = []; this.environments = [];
+      this.fetchSuites(); this.fetchEnvironments();
+    },
+  },
+  beforeUnmount() { document.removeEventListener('pointerdown', this.closeMenusOutside); this.suitesVersion++; this.envVersion++; this.saveVersion++; this.runVersion++; },
   methods: {
+    openCreate() { if (this.saving) return; this.closeDialog(); this.showCreateDialog = true; },
     async fetchSuites() {
+      const version = ++this.suitesVersion, context = this.projectIdentity;
+      this.loadingSuites = true; this.suiteLoadError = '';
       try {
-        const data = await listSuites();
+        const data = [];
+        for (let skip = 0; ; skip += 100) {
+          const batch = await listSuites({ skip, limit: 100 });
+          if (version !== this.suitesVersion || context !== this.projectIdentity) return;
+          if (!Array.isArray(batch)) throw Error('套件数据格式异常');
+          data.push(...batch);
+          if (batch.length < 100) break;
+        }
+        if (version !== this.suitesVersion || context !== this.projectIdentity) return;
         // 兜底成数组:模板里 suites.length / filter 依赖数组,拿到非数组会整页崩(白屏)
         this.suites = Array.isArray(data) ? data : [];
       } catch (error) {
-        alert('获取套件列表失败: ' + (error.message || '未知错误'));
-      }
+        if (version === this.suitesVersion && context === this.projectIdentity) this.suiteLoadError = '获取套件列表失败：' + (error.message || '未知错误');
+      } finally { if (version === this.suitesVersion) this.loadingSuites = false; }
     },
     async fetchEnvironments() {
+      const version = ++this.envVersion, context = this.projectIdentity;
       try {
         const data = await listEnvironments();
+        if (version !== this.envVersion || context !== this.projectIdentity) return;
         this.environments = Array.isArray(data) ? data : [];
       } catch (error) {
         console.error('获取环境列表失败:', error);
       }
     },
     async submitForm() {
+      if (this.saving || !this.pickerReady) return;
+      this.saveError = '';
+      if (!this.form.name.trim()) { this.saveError = '请填写套件名称'; return; }
+      if (this.selection.scenario_ids.length > 100 || this.selection.case_ids.length > 100 || this.selection.tags.length > 20) { this.saveError = '最多选择 100 个场景、100 个独立用例和 20 个标签'; return; }
+      const context = this.projectIdentity, version = ++this.saveVersion;
       const payload = {
         name: this.form.name.trim(),
         description: this.form.description?.trim() || null,
-        type: this.form.type,
-        scenario_ids: this.parseIds(this.scenarioIdsText),
-        case_ids: this.parseIds(this.caseIdsText),
-        tags: this.parseTags(this.tagsText),
+        scenario_ids: this.selection.scenario_ids.length ? [...this.selection.scenario_ids] : null,
+        case_ids: this.selection.case_ids.length ? [...this.selection.case_ids] : null,
+        tags: this.selection.tags.length ? [...this.selection.tags] : null,
       };
-
+      this.saving = true;
       try {
         if (this.showEditDialog) {
           await updateSuite(this.editingId, payload);
-          alert('套件更新成功');
+          if (version !== this.saveVersion || context !== this.projectIdentity) return;
+          showMessage('套件更新成功', 'success');
         } else {
-          await createSuite(payload);
-          alert('套件创建成功');
+          // Compatibility with the existing API; suite content is unrestricted.
+          await createSuite({ ...payload, type: 'mixed' });
+          if (version !== this.saveVersion || context !== this.projectIdentity) return;
+          showMessage('套件创建成功', 'success');
         }
 
-        this.closeDialog();
+        this.saving = false; this.closeDialog();
         this.fetchSuites();
       } catch (error) {
-        alert('操作失败: ' + (error.message || '未知错误'));
-      }
+        if (version === this.saveVersion && context === this.projectIdentity) this.saveError = error.message || '保存失败，请重试';
+      } finally { if (version === this.saveVersion) this.saving = false; }
     },
     editSuite(suite) {
+      if (this.saving) return;
       this.editingId = suite.id;
       this.form.name = suite.name;
       this.form.description = suite.description || '';
-      this.form.type = suite.type;
-      this.scenarioIdsText = suite.scenario_ids?.join(',') || '';
-      this.caseIdsText = suite.case_ids?.join(',') || '';
-      this.tagsText = suite.tags?.join(',') || '';
+      this.selection = { scenario_ids: [...(suite.scenario_ids || [])], case_ids: [...(suite.case_ids || [])], tags: [...(suite.tags || [])] };
+      this.pickerReady = false; this.saveError = '';
       this.showEditDialog = true;
     },
     async deleteSuite(id) {
-      if (!confirm('确认删除此套件？')) return;
-
+      const context = this.projectIdentity;
+      if (!await confirmAction('删除后无法恢复，请确认是否删除此套件。', '删除套件')) return;
+      if (context !== this.projectIdentity) return;
       try {
         await apiDeleteSuite(id);
-        alert('删除成功');
+        if (context !== this.projectIdentity) return;
+        showMessage('删除成功', 'success');
         this.fetchSuites();
       } catch (error) {
-        alert('删除失败: ' + (error.message || '未知错误'));
+        if (context !== this.projectIdentity) return;
+        showMessage('删除失败: ' + (error.message || '未知错误'), 'error');
       }
     },
     runSuite(id) {
+      if (this.running) return;
       this.runningSuiteId = id;
       this.selectedEnvId = null;
       this.showRunDialog = true;
     },
     async executeRun() {
+      if (this.running || this.runningSuiteId == null) return;
+      const version = ++this.runVersion, context = this.projectIdentity;
+      this.running = true;
       try {
-        this.runResult = await apiRunSuite(this.runningSuiteId, this.selectedEnvId);
+        const result = await apiRunSuite(this.runningSuiteId, this.selectedEnvId);
+        if (version !== this.runVersion || context !== this.projectIdentity) return;
+        this.runResult = result;
         this.showRunDialog = false;
       } catch (error) {
-        alert('运行失败: ' + (error.message || '未知错误'));
-      }
+        if (version !== this.runVersion || context !== this.projectIdentity) return;
+        showMessage('运行失败: ' + (error.message || '未知错误'), 'error');
+      } finally { if (version === this.runVersion) this.running = false; }
     },
     closeDialog() {
+      if (this.saving) return;
       this.showCreateDialog = false;
       this.showEditDialog = false;
       this.editingId = null;
-      this.form = { name: '', description: '', type: 'mixed' };
-      this.scenarioIdsText = '';
-      this.caseIdsText = '';
-      this.tagsText = '';
+      this.form = { name: '', description: '' };
+      this.selection = { scenario_ids: [], case_ids: [], tags: [] };
+      this.pickerReady = false; this.saveError = '';
     },
-    parseIds(text) {
-      if (!text) return null;
-      return text.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+    composition(suite) {
+      return [suite.scenario_ids?.length ? suite.scenario_ids.length + ' 场景' : '', suite.case_ids?.length ? suite.case_ids.length + ' 独立用例' : '', suite.tags?.length ? suite.tags.length + ' 动态标签' : ''].filter(Boolean).join(' · ') || '空套件';
     },
-    parseTags(text) {
-      if (!text) return null;
-      return text.split(',').map(s => s.trim()).filter(s => s);
+    closeMenusOutside(event) {
+      if (typeof document === 'undefined') return;
+      document.querySelectorAll('.suite-more[open]').forEach(menu => { if (!event || !menu.contains(event.target)) menu.open = false; });
     },
-    typeLabel(type) {
-      const labels = { scenario: '场景', case: '用例', mixed: '混合' };
-      return labels[type] || type;
-    },
-    typeCount(type) {
-      return this.suites.filter(s => s.type === type).length;
-    },
+    closeOtherMenus(event) { document.querySelectorAll('.suite-more[open]').forEach(menu => { if (menu !== event.currentTarget.parentElement) menu.open = false; }); },
+    requestDelete(suite, event) { event.currentTarget.closest('details').open = false; this.deleteSuite(suite.id); },
     formatDate(dateStr) {
+      if (!dateStr) return '—';
       const d = new Date(dateStr);
-      const now = new Date();
-      const diff = now - d;
-      const days = Math.floor(diff / 86400000);
-      if (days === 0) return '今天';
-      if (days === 1) return '昨天';
-      if (days < 7) return `${days}天前`;
-      return d.toLocaleDateString('zh-CN');
+      return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false });
     },
   },
 };
 </script>
 
 <style scoped>
+.suite-editor-form { height:min(570px,calc(88dvh - 170px)); min-height:330px; }
+.suite-editor-fields { height:100%;min-width:0;min-height:0;padding:0;margin:0;border:0;display:flex;flex-direction:column;gap:14px; }
+.suite-basic-fields { display:grid;grid-template-columns:1fr 1.35fr;gap:16px;flex:none; }
+.suite-basic-fields .form-row { margin:0; }.suite-basic-fields .form-row label { font-size:12px;margin-bottom:6px; }
+.suite-basic-fields .form-row input { height:36px;padding:7px 10px;font-size:13px; }
+.suite-basic-fields .form-row textarea { font:inherit;font-size:12px;line-height:1.5;resize:none;height:54px;padding:7px 10px;scrollbar-width:none; }
+.suite-basic-fields textarea::-webkit-scrollbar { display:none; }
+.suite-selection-count { margin-right:auto;align-self:center;font-size:11px;color:var(--text-muted);line-height:1.7; }
+.suite-save-error { font-size:12px;color:var(--fail-fg);margin:0;flex:none; }
+@media(max-width:680px) { .suite-basic-fields { grid-template-columns:1fr;gap:8px; }.suite-basic-fields .form-row textarea { height:36px; }.suite-editor-form { height:calc(88dvh - 190px);min-height:350px; }.suite-selection-count { flex-basis:100%; }.suite-editor-form :deep(.suite-picker) { min-height:0; } }
 .test-suites {
   padding: 24px;
   max-width: 1800px;
@@ -394,8 +310,10 @@ export default {
 /* 顶部栏 */
 .top-bar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
@@ -406,368 +324,55 @@ export default {
   margin: 0;
 }
 
-.btn-create {
+.suite-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.btn-create:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
-.btn-create svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* 统计卡片行 */
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 32px;
-}
-
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 20px;
-  background: var(--surface);
+.suite-count {
+  padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  transition: all 0.3s;
-}
-
-.stat-card:hover {
-  border-color: var(--primary);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-icon svg {
-  width: 24px;
-  height: 24px;
-  stroke-width: 2;
-}
-
-.stat-icon.total {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-}
-
-.stat-icon.scenario {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  color: white;
-}
-
-.stat-icon.case {
-  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-  color: white;
-}
-
-.stat-icon.mixed {
-  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-  color: white;
-}
-
-.stat-info {
-  flex: 1;
-}
-
-.stat-label {
-  font-size: 13px;
+  border-radius: 99px;
+  background: var(--surface-2);
   color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
-.stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-/* 套件卡片网格 - 一行5个 */
-.suites-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 20px;
-}
-
-@media (max-width: 1800px) {
-  .suites-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-@media (max-width: 1400px) {
-  .suites-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-@media (max-width: 1000px) {
-  .suites-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.suite-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
-  transition: all 0.3s;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-
-.suite-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-.suite-card.suite-type-scenario::before {
-  background: linear-gradient(90deg, #f093fb 0%, #f5576c 100%);
-}
-
-.suite-card.suite-type-case::before {
-  background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
-}
-
-.suite-card.suite-type-mixed::before {
-  background: linear-gradient(90deg, #43e97b 0%, #38f9d7 100%);
-}
-
-.suite-card:hover {
-  border-color: var(--primary);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  transform: translateY(-4px);
-}
-
-.suite-card:hover::before {
-  opacity: 1;
-}
-
-.suite-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 12px;
-}
-
-.suite-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.suite-title h3 {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 6px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 12px;
   white-space: nowrap;
 }
 
-.type-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.type-badge.type-scenario {
-  background: rgba(240, 147, 251, 0.15);
-  color: #f5576c;
-}
-
-.type-badge.type-case {
-  background: rgba(79, 172, 254, 0.15);
-  color: #0096ff;
-}
-
-.type-badge.type-mixed {
-  background: rgba(67, 233, 123, 0.15);
-  color: #00b894;
-}
-
-.suite-actions {
-  display: flex;
-  gap: 4px;
-  margin-left: 8px;
-}
-
-.action-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 6px;
-  background: var(--bg);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  opacity: 0;
-}
-
-.suite-card:hover .action-btn {
-  opacity: 1;
-}
-
-.action-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.action-btn.run {
-  color: #00b894;
-}
-
-.action-btn.run:hover {
-  background: rgba(0, 184, 148, 0.1);
-}
-
-.action-btn.edit {
-  color: #0984e3;
-}
-
-.action-btn.edit:hover {
-  background: rgba(9, 132, 227, 0.1);
-}
-
-.action-btn.delete {
-  color: #d63031;
-}
-
-.action-btn.delete:hover {
-  background: rgba(214, 48, 49, 0.1);
-}
-
-.suite-description {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-bottom: 16px;
-  line-height: 1.5;
-  min-height: 40px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.suite-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding: 12px;
-  background: var(--bg);
-  border-radius: 8px;
-}
-
-.stat-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.stat-item svg {
-  width: 14px;
-  height: 14px;
-  color: var(--primary);
-  flex-shrink: 0;
-}
-
-.stat-item.empty {
-  color: var(--text-muted);
-  justify-content: center;
-}
-
-.suite-footer {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.create-time {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* 空状态 */
-.empty-state {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-}
-
-.empty-state svg {
-  width: 80px;
-  height: 80px;
-  margin-bottom: 16px;
-  opacity: 0.3;
-}
-
-.empty-state p {
-  font-size: 16px;
-  margin-bottom: 20px;
-}
-
-.btn-create-empty {
-  padding: 10px 24px;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.btn-create-empty:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+/* 紧凑套件列表 */
+.suite-list-panel { background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-sm); }
+.suite-list-toolbar { display:flex;align-items:center;gap:14px;padding:16px 20px;border-bottom:1px solid var(--border); }
+.suite-search { display:flex;align-items:center;gap:9px;width:340px;max-width:100%;padding:0 11px;height:36px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2); }
+.suite-search:focus-within { border-color:var(--primary);box-shadow:0 0 0 3px var(--ring); }
+.suite-search svg { width:15px;height:15px;flex:none;color:var(--text-muted); }
+.suite-search input { border:0;outline:none;min-width:0;width:100%;background:transparent;color:var(--text);font:inherit;font-size:13px; }
+.search-count,.suite-list-state { font-size:12px;color:var(--text-muted); }
+.suite-list-state { padding:40px 20px;display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap; }.suite-list-state.error { color:var(--fail-fg); }
+.suite-table { width:100%;table-layout:fixed;border-collapse:collapse;text-align:left;font-size:13px; }
+.suite-table th { font-size:12px;color:var(--text-muted);font-weight:500;background:var(--surface-2);padding:11px 20px; }
+.suite-table th:first-child { width:38%; }.suite-table th:nth-child(2) { width:25%; }.suite-table th:nth-child(3) { width:21%; }.suite-table th:last-child { width:16%; }
+.suite-table td { padding:9px 20px;border-top:1px solid var(--border);vertical-align:middle; }
+.suite-row:hover { background:var(--surface-2); }
+.suite-info strong { display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.6; }
+.suite-description { display:block;margin-top:2px;font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5; }
+.suite-composition { font-size:12px;line-height:1.7;overflow-wrap:anywhere; }.suite-updated { font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums; }
+.suite-table .actions-column { text-align:right; }.suite-table .suite-row-actions { text-align:right;white-space:nowrap; }
+.suite-text-button { border:0;background:none;color:var(--primary);font:inherit;font-size:12px;padding:6px;cursor:pointer;border-radius:5px; }.suite-text-button:hover { background:var(--ring); }.suite-text-button:disabled { opacity:.45;cursor:wait; }
+.suite-more { position:relative;display:inline-block;text-align:left;vertical-align:middle; }
+.suite-more > summary { display:grid;place-items:center;width:28px;height:28px;border-radius:5px;color:var(--text-muted);list-style:none;cursor:pointer; }.suite-more > summary::-webkit-details-marker { display:none; }.suite-more > summary svg { width:17px;height:17px; }.suite-more[open] > summary,.suite-more > summary:hover { background:var(--ring);color:var(--primary); }
+.suite-more-menu { position:absolute;right:0;top:calc(100% + 5px);z-index:5;width:112px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md); }.suite-more-menu button { width:100%;padding:8px;border:0;border-radius:4px;background:none;color:var(--fail-fg);font:inherit;font-size:12px;cursor:pointer;text-align:left; }.suite-more-menu button:hover { background:var(--fail-bg); }
+.suite-text-button:focus-visible,.suite-more summary:focus-visible,.suite-more-menu button:focus-visible { outline:2px solid var(--primary);outline-offset:2px; }
+.suite-pagination { display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;border-top:1px solid var(--border);padding:12px 20px;font-size:12px;color:var(--text-muted); }.suite-pagination > div { display:flex;align-items:center;gap:12px; }.suite-pagination .btn { height:28px;padding:0 10px;font-size:12px; }.suite-pagination button:disabled { opacity:.4;cursor:default; }
+.empty-state { display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--text-muted); }.empty-state svg { width:44px;height:44px;margin-bottom:12px;opacity:.4; }.empty-state p { font-size:13px;margin-bottom:16px; }
+@media(max-width:1100px) { .suite-table th,.suite-table td { padding-left:14px;padding-right:14px; }.suite-table th:first-child { width:34%; }.suite-table th:nth-child(2) { width:25%; }.suite-table th:nth-child(3) { width:22%; }.suite-table th:last-child { width:19%; } }
+@media(max-width:700px) {
+ .test-suites { padding:16px 12px; }.top-bar h2 { font-size:24px; }.top-bar { margin-bottom:16px; }
+ .suite-list-toolbar { padding:12px;flex-wrap:wrap;gap:8px; }.suite-search { width:100%; }.suite-table thead { position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%); }
+ .suite-table,.suite-table tbody { display:block; }.suite-table .suite-row { display:grid;grid-template-columns:minmax(0,1fr) auto;padding:10px 12px;gap:8px;position:relative;border-top:1px solid var(--border); }.suite-table .suite-row:first-child { border-top:0; }
+ .suite-table td { display:block;border:0;padding:0;min-width:0; }.suite-info { grid-column:1;grid-row:1; }.suite-row-actions { grid-column:2;grid-row:1;align-self:start; }.suite-composition,.suite-updated { grid-column:1 / -1;font-size:11px; }.suite-composition::before,.suite-updated::before { content:attr(data-label);display:inline-block;width:68px;color:var(--text-muted); }
+ .suite-pagination { padding:12px;gap:10px; }.suite-pagination > div { margin-left:auto;gap:8px; }
 }
 
 /* 对话框 */
@@ -816,33 +421,6 @@ export default {
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
-.radio-group {
-  display: flex;
-  gap: 12px;
-}
-
-.radio-option {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.radio-option:hover {
-  border-color: var(--primary);
-  background: rgba(102, 126, 234, 0.05);
-}
-
-.radio-option input {
-  margin: 0;
-  cursor: pointer;
-}
-
 .form-actions {
   display: flex;
   justify-content: flex-end;
@@ -880,60 +458,5 @@ export default {
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
 
-/* 运行结果对话框 */
-.result-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.result-stat {
-  text-align: center;
-  padding: 16px;
-  background: var(--bg);
-  border-radius: 8px;
-}
-
-.result-stat .label {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-
-.result-stat .value {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.result-stat.pass .value {
-  color: #00b894;
-}
-
-.result-stat.fail .value {
-  color: #d63031;
-}
-
-.result-stat.rate .value {
-  color: var(--primary);
-}
-
-.btn-close-result {
-  width: 100%;
-  margin: 24px 0 0;
-  padding: 12px;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-close-result:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-}
+button:disabled { cursor:default;opacity:.5; }
 </style>

@@ -11,6 +11,7 @@ import Modal from '../components/Modal.vue'
 import KeyValueEditor from '../components/KeyValueEditor.vue'
 import InterfaceWorkspace from '../components/InterfaceWorkspace.vue'
 import PathParameterEditor from '../components/PathParameterEditor.vue'
+import CategorySelect from '../components/CategorySelect.vue'
 import { pathParameterNames, pathParameterValues } from '../utils/pathParameters'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
 
@@ -64,7 +65,7 @@ watch(() => pathParameterNames(form.url).join(','), names => {
   if (showModal.value && names) requestTab.value = 'path'
 })
 
-// 现存分类(datalist 自动补全用),不含"未分类"占位
+// 当前项目已有分类，供分类选择器筛选和复用。
 const existingCategories = computed(() => {
   const set = new Set()
   for (const it of items.value) {
@@ -495,11 +496,8 @@ onUnmounted(() => { document.removeEventListener('pointerdown', handleDocumentPo
       <input v-model="form.name" placeholder="如:创建订单" />
     </div>
     <div class="field">
-      <label>分类 <span class="opt">(留空归"未分类";可从已有分类里选或新建)</span></label>
-      <input v-model="form.category" list="cat-list" placeholder="如:订单管理" />
-      <datalist id="cat-list">
-        <option v-for="c in existingCategories" :key="c" :value="c" />
-      </datalist>
+      <label for="interface-category">分类 <span class="opt">(可选，支持输入新分类)</span></label>
+      <CategorySelect v-model="form.category" :categories="existingCategories" :disabled="saving" input-id="interface-category" />
     </div>
     <div class="grid-mu">
       <div class="field">
