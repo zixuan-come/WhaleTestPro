@@ -449,6 +449,7 @@ def run_all_migrations(*binds) -> None:
         ensure_perf_load_plan_schema(bind)
         ensure_interface_path_parameters_schema(bind)
         ensure_case_request_overrides_schema(bind)
+        ensure_execution_report_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -508,3 +509,22 @@ def ensure_case_request_overrides_schema(bind) -> None:
             connection.execute(text("ALTER TABLE test_case ADD COLUMN request_overrides JSON NULL"))
         if bind.dialect.name == "mysql":
             _record_migration(connection, "014_case_request_overrides")
+
+
+def ensure_execution_report_schema(bind) -> None:
+    """Add explicit execution records and nullable links; retain all old rows."""
+    from app.models.execution_report import ExecutionReport
+    ExecutionReport.__table__.create(bind, checkfirst=True)
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        for table in ("test_report", "scenario_report"):
+            if inspector.has_table(table):
+                columns = {column["name"] for column in inspector.get_columns(table)}
+                if "execution_report_id" not in columns:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN execution_report_id INTEGER NULL"))
+                indexes = {index["name"] for index in inspect(connection).get_indexes(table)}
+                name = f"ix_{table}_execution_report_id"
+                if name not in indexes:
+                    connection.execute(text(f"CREATE INDEX {name} ON {table} (execution_report_id)"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "015_execution_report")

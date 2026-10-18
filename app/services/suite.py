@@ -11,6 +11,7 @@ from app.repositories import environment as environment_repo
 from app.repositories import report as report_repo
 from app.services import execution
 from app.schemas.suite import SuiteCreate, SuiteUpdate
+from app.services.execution_tracking import tracked
 
 
 def s_create(db: Session, suite: SuiteCreate, project_id: int):
@@ -50,6 +51,7 @@ def s_delete(db: Session, suite_id: int, project_id: int):
     return {"message": "删除成功"}
 
 
+@tracked("suite")
 def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = None):
     """
     运行测试套件

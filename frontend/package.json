@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test:perf": "node --test tests/perf-plan.test.mjs tests/perf-grid.test.mjs",
-    "test:refactor": "node --test tests/suite-modal.test.mjs tests/auth-session.test.mjs tests/team-info.test.mjs tests/environment-memory.test.mjs tests/path-parameters.test.mjs tests/interface-workspace.test.mjs tests/suite-picker.test.mjs",
+    "test:refactor": "node --test tests/suite-modal.test.mjs tests/auth-session.test.mjs tests/team-info.test.mjs tests/environment-memory.test.mjs tests/path-parameters.test.mjs tests/interface-workspace.test.mjs tests/reports.test.mjs tests/regression-workflow.test.mjs tests/suite-picker.test.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

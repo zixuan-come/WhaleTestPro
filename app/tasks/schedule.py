@@ -3,6 +3,7 @@ from app.database import SessionLocal
 from app.services import execution as execution_service
 from app.services import suite as suite_service
 from app.services import schedule as schedule_service
+from app.core.execution_context import triggered_by
 
 
 @celery_app.task
@@ -37,10 +38,12 @@ def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None):
         execution_service._env_context(db, env_id, project_id)
         if suite_id is not None:
             # 新逻辑：运行测试套件
-            return suite_service.run_suite(db, suite_id, project_id, env_id=env_id)
+            with triggered_by("scheduled"):
+                return suite_service.run_suite(db, suite_id, project_id, env_id=env_id)
         else:
             # 旧逻辑：按 tag 运行回归
-            return execution_service.run_regression(db, tag=tag, notify=True, project_id=project_id, env_id=env_id)
+            with triggered_by("scheduled"):
+                return execution_service.run_regression(db, tag=tag, notify=True, project_id=project_id, env_id=env_id)
     finally:
         db.close()
 

@@ -193,14 +193,15 @@ for (const view of ['Interfaces', 'Cases', 'Orchestration', 'Regression']) {
     async function mount() {
       const scope = Vue.effectScope()
       t.after(() => scope.stop())
-      const mocks = { ...Vue, onMounted() {}, onUnmounted() {}, onBeforeRouteLeave() {},
+      const mocks = { ...Vue, onMounted() {}, onUnmounted() {}, onBeforeUnmount() {}, onBeforeRouteLeave() {},
+        useAuthStore: () => auth,
         useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), useRouter: () => ({ push() {} }),
         useExecutionEnvironment: () => environmentPage(t, auth), pathParameterNames, pathParameterValues,
         requestConfig, requestDraft, serializeRequest,
       }
       const component = Function(...names, code)(...names.map(name => mocks[name] || (script.imports[name].source.includes('/api/') ? async () => [] : {})))
       const state = scope.run(() => component.setup({}, { expose() {} }))
-      await (view === 'Regression' ? state.loadEnvs() : state.load())
+      await (view === 'Regression' ? state.loadOptions() : state.load())
       return { state, dispose: () => scope.stop() }
     }
     const first = await mount()

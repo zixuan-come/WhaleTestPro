@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
+from app.core.execution_context import execution_id
 
 
 def db_create(
@@ -24,6 +25,7 @@ def db_create(
         duration_ms=duration_ms,
         created_at=created_at,
         project_id=project_id,
+        execution_report_id=execution_id(project_id),
     )
     db.add(report)
     db.flush()

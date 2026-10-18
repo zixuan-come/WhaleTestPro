@@ -6,3 +6,6 @@ export const getReport = (id) => http.get(`/reports/${id}`)
 export const listScenarioReports = (page = 1, pageSize = 20) =>
   http.get('/reports/scenarios', { params: { page, page_size: pageSize } })
 export const getScenarioReport = (id) => http.get(`/reports/scenarios/${id}`)
+
+export const listExecutionReports = (params) => http.get('/reports/executions', { params })
+export const getExecutionReport = (id) => http.get(`/reports/executions/${encodeURIComponent(id)}`)

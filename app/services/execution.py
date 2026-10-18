@@ -6,6 +6,8 @@ from app.repositories import scenario_report as scenario_report_repo
 from app.core.variables import render, extract_match, render_deep
 from app.core.path_parameters import render_request_path
 from app.core.request_config import with_request_overrides
+from app.core.execution_context import capture_attempt, capture_steps, current_execution
+from app.services.execution_tracking import tracked
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
 from app.core.notifier import send_feishu
@@ -98,6 +100,7 @@ def _render_request_fields(interface, context, report_secrets):
     return fields
 
 
+@tracked("case")
 def run_case(db, case_id, env_id, project_id):
     case = case_repo.db_get(db, case_id, project_id)
     if case is None:
@@ -160,6 +163,7 @@ def run_interface(db, interface_id, env_id, project_id, *, path_params=None, req
     return result
 
 
+@tracked("chain")
 def run_chain(
     db,
     case_ids,
@@ -344,6 +348,7 @@ def run_chain(
             steps=report_steps,
         )
 
+    capture_steps(report_steps)
     return results
 
 
@@ -367,18 +372,25 @@ def _request(interface, **kwargs):
 
 def _run_once(db, case, interface, context):
     result = None
+    started = perf_counter()
+    request_detail = response_detail = None
     report_secrets = set(sensitive_strings(context))
     try:
         interface = with_request_overrides(interface, getattr(case, "request_overrides", None))
         report_secrets.update(sensitive_strings(render_deep(getattr(interface, "path_params", None), context)))
         run_sql(db, render_deep(case.setup_sql, context))
         fields = _render_request_fields(interface, context, report_secrets)
+        url = _full_url(interface.url, context, getattr(interface, "path_params", None))
+        request_detail = {"method": interface.method, "url": url, "headers": fields["headers"],
+                          "params": fields["params"], "body": fields["json"]}
         response = _request(
             interface,
-            url=_full_url(interface.url, context, getattr(interface, "path_params", None)),
+            url=url,
             **fields,
         )
         _add_response_secrets(response, report_secrets)
+        if current_execution.get():
+            response_detail = _response_detail(response, secrets=report_secrets)
         status_passed = response.status_code == case.expected_status
         assertions_results = run_assertions(response, render_deep(case.assertions, context), db)
         passed = status_passed and all(r["passed"] for r in assertions_results)
@@ -406,6 +418,11 @@ def _run_once(db, case, interface, context):
             result[field] = _mask_sensitive(result[field], secrets=report_secrets)
     if "assertions" in result:
         result["assertions"] = _assertion_evidence(result["assertions"], report_secrets)
+    if current_execution.get():
+        capture_attempt({**result, "case_name": _mask_sensitive(case.name, secrets=report_secrets),
+                         "request_detail": _evidence_detail(request_detail, report_secrets),
+                         "response_detail": response_detail,
+                         "duration_ms": round((perf_counter() - started) * 1000)})
     return result
 
 
@@ -425,6 +442,7 @@ def _result_passed(result):
     return result.get("passed", False)
 
 
+@tracked("regression")
 def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, project_id=None):
     if case_ids is None:
         cases = case_repo.db_list(db, project_id)

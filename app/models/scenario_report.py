@@ -27,6 +27,7 @@ class ScenarioReport(Base):
     duration_ms = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False)
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False, index=True)
+    execution_report_id = Column(Integer, nullable=True, index=True)
 
     steps = relationship(
         "ScenarioReportStep",

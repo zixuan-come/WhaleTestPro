@@ -13,6 +13,7 @@ from app.models.scenario_report import ScenarioReport, ScenarioReportStep
 from app.models.schedule import Schedule
 from app.models.traffic_record import TrafficRecord
 from app.models.suite import TestSuite
+from app.models.execution_report import ExecutionReport
 from app.repositories import schedule_sync as schedule_sync_repo
 from app.schemas.project import ProjectCreate
 
@@ -105,6 +106,7 @@ def db_delete(db: Session, project_id: int, check_perf=None) -> Project | None:
         # suite_id 外键引用测试套件。
         for model in (
             Schedule,
+            ExecutionReport,
             Case,
             Interface,
             Environment,

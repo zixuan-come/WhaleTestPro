@@ -138,6 +138,9 @@ def test_case_api_roundtrips_independent_values_and_filters_within_project(monke
     calls=[]
     monkeypatch.setattr(execution,'_env_context',lambda *args:{'base_url':'http://orders.invalid'})
     monkeypatch.setattr(execution.report_repo,'db_create',lambda *args,**kw:None)
+    # This focused request-config fixture omits report tables. Execution tracking
+    # is exercised with real persistence in test_execution_reports.py instead.
+    monkeypatch.setattr(execution, 'run_case', execution.run_case.__wrapped__)
     def send(interface,**kw):
         calls.append(kw)
         response=requests.Response()

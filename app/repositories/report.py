@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.report import TestReport
 from app.models.suite import TestSuite
+from app.core.execution_context import execution_id
 
 
 def _report_data(report, case_name):
@@ -17,7 +18,8 @@ def _report_data(report, case_name):
 
 
 def db_create(db: Session, case_id: int, passed: bool, detail, project_id: int):
-    db_report = TestReport(case_id=case_id, passed=passed, detail=detail, project_id=project_id)
+    db_report = TestReport(case_id=case_id, passed=passed, detail=detail, project_id=project_id,
+                           execution_report_id=execution_id(project_id))
     db.add(db_report)
     db.commit()
     db.refresh(db_report)
@@ -38,6 +40,7 @@ def db_create_suite_report(db: Session, suite_id: int, suite_name: str, passed: 
             case_id=0, passed=passed, detail=detail,
             suite_id=parent[0] if parent else None,
             suite_name=suite_name, execution_type="suite", project_id=project_id,
+            execution_report_id=execution_id(project_id),
         )
         db.add(db_report)
         db.commit()

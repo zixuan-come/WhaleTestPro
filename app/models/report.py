@@ -10,6 +10,7 @@ class TestReport(Base):
     suite_id = Column(Integer, ForeignKey("test_suite.id"), nullable=True)
     suite_name = Column(String(100), nullable=True)
     execution_type = Column(String(20), nullable=True)
+    execution_report_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
 

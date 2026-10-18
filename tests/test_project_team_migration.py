@@ -173,6 +173,9 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         lambda bind: calls.append((bind, "011")),
     )
     monkeypatch.setattr(migrations, "ensure_perf_load_plan_schema", lambda bind: calls.append((bind, "012")))
+    monkeypatch.setattr(migrations, "ensure_interface_path_parameters_schema", lambda bind: calls.append((bind, "013")))
+    monkeypatch.setattr(migrations, "ensure_case_request_overrides_schema", lambda bind: calls.append((bind, "014")))
+    monkeypatch.setattr(migrations, "ensure_execution_report_schema", lambda bind: calls.append((bind, "015")))
     migrations.run_all_migrations("main", "shadow")
 
     assert calls == [
@@ -184,6 +187,9 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("main", "010"),
         ("main", "011"),
         ("main", "012"),
+        ("main", "013"),
+        ("main", "014"),
+        ("main", "015"),
         ("shadow", "005"),
         ("shadow", "006"),
         ("shadow", "007"),
@@ -192,4 +198,7 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("shadow", "010"),
         ("shadow", "011"),
         ("shadow", "012"),
+        ("shadow", "013"),
+        ("shadow", "014"),
+        ("shadow", "015"),
     ]
