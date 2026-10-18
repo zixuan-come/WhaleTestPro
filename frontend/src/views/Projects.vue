@@ -1,13 +1,17 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { listProjects, createProject, updateProject, deleteProject, moveProjectToTeam } from '../api/project'
 import { listTeams } from '../api/team'
 import { useAuthStore } from '../stores/auth'
 import Modal from '../components/Modal.vue'
+import ProjectNotifications from '../components/ProjectNotifications.vue'
 
 const auth = useAuthStore()
+const route = useRoute()
+const notificationProject = ref(null)
 const items = ref([])
 const loading = ref(true)
 const error = ref('')
@@ -119,6 +123,12 @@ function switchTo(project) {
 }
 
 async function openMove(project) { moveProject.value = project; moveTargetTeam.value = null; moveTeams.value = (await listTeams()).filter(t => t.id !== project.team_id) }
+function openNotifications(project) { if (canManageTeam.value) notificationProject.value = project }
+watch(() => [route.query.notifications, items.value, auth.currentTeamRole], () => {
+  if (!canManageTeam.value) { notificationProject.value = null; return }
+  const project = items.value.find(item => item.id === Number(route.query.notifications))
+  if (project) notificationProject.value = project
+}, { immediate: true })
 async function submitMove() { if (!moveProject.value || !moveTargetTeam.value) return; moving.value = true; try { await moveProjectToTeam(moveProject.value.id, Number(moveTargetTeam.value)); showMessage("项目迁移成功", "success"); moveProject.value = null; await load() } catch (e) { showMessage(e.message || "迁移失败", "error") } finally { moving.value = false } }
 
 function formatDate(iso) {
@@ -174,6 +184,7 @@ onMounted(load)
         <span class="c-time">{{ formatDate(p.created_at) }}</span>
         <span class="c-act">
           <button v-if="p.id !== auth.currentProjectId" class="btn btn-ghost sm" @click="switchTo(p)">切到这个</button>
+          <button v-if="canManageTeam" class="btn btn-ghost sm notification-action" @click="openNotifications(p)" :aria-label="'通知设置：' + p.name">通知设置</button>
           <button v-if="canManageTeam" class="icon-btn edit-action" title="编辑" @click="openEdit(p)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>
@@ -204,7 +215,7 @@ onMounted(load)
       <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>
   </Modal>
-
+  <ProjectNotifications v-if="notificationProject" :project="notificationProject" @close="notificationProject = null" />
 </template>
 
 <style scoped>
@@ -216,7 +227,7 @@ onMounted(load)
 .card .v { font-size:22px; font-weight:750; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .card .v.pri { color:var(--primary); font-size:27px; }
 
-.row { display:grid; grid-template-columns:1.5fr 2fr 1.4fr 170px; align-items:center; gap:12px;
+.row { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,2fr) minmax(0,1.4fr) 280px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }
 .row:not(.head):hover { background:var(--surface-2); }
@@ -259,12 +270,14 @@ onMounted(load)
 .permission-tip { margin:0 0 16px; padding:10px 12px; border-radius:8px; background:var(--surface-2); color:var(--text-muted); font-size:12px; }
 
 @media (max-width:900px) {
-  .row { grid-template-columns:1.4fr 1.5fr 130px; gap:8px; padding:12px 14px; }
+  .row { grid-template-columns:minmax(0,1.4fr) minmax(0,1.5fr) 260px; gap:8px; padding:12px 14px; }
   .c-desc { display:none; }
 }
 @media (max-width:600px) {
   .cards { grid-template-columns:1fr; }
-  .row { grid-template-columns:1fr 100px; }
+  .row { grid-template-columns:minmax(0,1fr); }
+  .c-act { justify-content:flex-start;flex-wrap:wrap; }
+  .c-name { min-width:0;overflow-wrap:anywhere; }
   .c-time { display:none; }
 }
 </style>

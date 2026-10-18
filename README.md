@@ -108,8 +108,9 @@ flowchart TB
    MYSQL_ROOT_PASSWORD=你的密码
    SECRET_KEY=改成一段随机字符串
    LOCUST_CONTROL_TOKEN=另一段独立随机字符串
-   FEISHU_WEBHOOK=
    ```
+
+   飞书通知在启动后通过「项目管理 → 通知设置」按项目配置，详见[项目飞书通知配置](docs/项目飞书通知配置.md)。部署变量 `FEISHU_WEBHOOK` 不再作为回归通知目的地。
 
 2. 一键启动:
 

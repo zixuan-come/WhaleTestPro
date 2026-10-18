@@ -450,6 +450,7 @@ def run_all_migrations(*binds) -> None:
         ensure_interface_path_parameters_schema(bind)
         ensure_case_request_overrides_schema(bind)
         ensure_execution_report_schema(bind)
+        ensure_project_notification_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -528,3 +529,13 @@ def ensure_execution_report_schema(bind) -> None:
                     connection.execute(text(f"CREATE INDEX {name} ON {table} (execution_report_id)"))
         if bind.dialect.name == "mysql":
             _record_migration(connection, "015_execution_report")
+
+
+def ensure_project_notification_schema(bind) -> None:
+    """Add an empty settings table without copying global credentials."""
+    from app.models.project import Project
+    from app.models.project_notification import ProjectNotification
+    ProjectNotification.__table__.create(bind, checkfirst=True)
+    if bind.dialect.name == "mysql":
+        with bind.begin() as connection:
+            _record_migration(connection, "016_project_notification")

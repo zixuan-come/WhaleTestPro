@@ -7,3 +7,7 @@ export const updateProject = (id, data) => http.put(`/projects/${id}`, data)
 export const deleteProject = (id) => http.delete(`/projects/${id}`)
 
 export const moveProjectToTeam = (id, team_id) => http.post(`/projects/${id}/move-team`, { team_id })
+
+export const getProjectNotifications = (id) => http.get(`/projects/${id}/notifications`)
+export const saveProjectNotifications = (id, data) => http.put(`/projects/${id}/notifications`, data)
+export const testProjectNotifications = (id) => http.post(`/projects/${id}/notifications/test`)

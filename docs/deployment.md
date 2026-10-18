@@ -75,7 +75,6 @@ openssl rand -hex 32
 MYSQL_ROOT_PASSWORD=<第一段随机值>
 SECRET_KEY=<第二段随机值>
 LOCUST_CONTROL_TOKEN=<第三段独立随机值，不复用SECRET_KEY>
-FEISHU_WEBHOOK=
 ```
 
 限制文件权限并检查变量名,不要输出变量值:
@@ -86,6 +85,8 @@ grep -E '^[A-Z_][A-Z0-9_]*=' .env | cut -d= -f1
 ```
 
 Compose 会在容器内组装主库、影子库、Redis 和 RabbitMQ 连接地址,无需在 `.env` 重复配置 `DATABASE_URL`。
+
+飞书 Webhook 改为在「项目管理 → 通知设置」由项目所属团队所有者或管理员维护，不再使用全局 `FEISHU_WEBHOOK`。升级时运行 016_project_notification 增量迁移，配置初始为空且不会从旧变量复制。凭据使用 `SECRET_KEY` 派生的项目密钥加密；保留该部署密钥，轮换后需要重新保存通知凭据。操作说明见[项目飞书通知配置](项目飞书通知配置.md)。
 
 Locust 控制面不再公开 8089；app、worker、locust-master 共用 `LOCUST_CONTROL_TOKEN`，所有控制及统计 HTTP 请求必须携带 `X-Locust-Control-Token`。不要把凭证加入前端或日志；在平台任务报告和 Grafana 查看结果。升级时需补齐该变量并重建这三个服务，不能只重启旧镜像。
 

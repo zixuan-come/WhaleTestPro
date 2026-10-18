@@ -10,7 +10,7 @@ from app.core.execution_context import capture_attempt, capture_steps, current_e
 from app.services.execution_tracking import tracked
 from app.core.assertions import run_assertions
 from app.core.sql_runner import run_sql
-from app.core.notifier import send_feishu
+from app.services.project_notification import notify_regression
 from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
 from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
@@ -485,8 +485,7 @@ def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, proje
         "interface_covered": interface_covered,
         "interface_coverage": coverage,
     }
-    if notify and settings.FEISHU_WEBHOOK:
-        content = f"回归结果: {summary['passed_count']}/{summary['total']} 通过, 通过率 {pass_rate:.0%}, 接口覆盖率 {coverage:.0%}"
-        send_feishu(settings.FEISHU_WEBHOOK, content)
+    if notify:
+        notify_regression(db, project_id, summary)
     return summary
 

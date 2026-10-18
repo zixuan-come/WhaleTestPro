@@ -17,13 +17,14 @@ function view(t, overrides = {}) {
   const calls = [], callbacks = [], auth = Vue.reactive({ username: 'workflow-user', token: 'synthetic', currentProjectId: 1 })
   const selectedEnv = Vue.ref('1')
   const options = Function('Vue', 'useAuthStore', 'regressionOptions', 'previewRegression', 'runSelectedRegression',
-    'useExecutionEnvironment', 'EnvironmentSelect', 'regressionRows', script.replace('export default', 'return'))(
+    'useExecutionEnvironment', 'EnvironmentSelect', 'regressionRows', 'getProjectNotifications', script.replace('export default', 'return'))(
     { ...Vue, onMounted() {}, onBeforeUnmount(fn) { callbacks.push(fn) } }, () => auth,
     overrides.options || (async () => ({ suites: [{ id: 1, name: '订单套件' }], cases: [
       { id: 2, name: '创建订单', tags: ['order'], interface_name: '创建' }, { id: 3, name: '查询用户', tags: ['user'], interface_name: '用户' } ] })),
     async selection => { calls.push({ type: 'preview', selection }); return overrides.preview ? overrides.preview(selection) : ready('key') },
     async selection => { calls.push({ type: 'run', selection }); return overrides.run ? overrides.run(selection) : { report_id: 'run-1', results: [] } },
-    () => ({ envs: Vue.ref([]), selectedEnv, loadEnvironments: async () => [] }), null, regressionRows)
+    () => ({ envs: Vue.ref([]), selectedEnv, loadEnvironments: async () => [] }), null, regressionRows,
+    overrides.notifications || (async () => ({enabled:true,configured:true,can_manage:true})))
   const scope = Vue.effectScope(), state = scope.run(() => options.setup({}, { expose() {} }))
   t.after(() => { callbacks.forEach(fn => fn()); scope.stop() })
   return { state, calls, auth, selectedEnv }
@@ -94,4 +95,24 @@ test('failed scenario and dataset results show useful reasons and suite names', 
   assert.equal(rows[0].suite_name, '订单套件')
   assert.match(rows[0].reason, /200.*500/)
   assert.match(rows[1].reason, /断言未通过/)
+})
+
+test('unconfigured or disabled notifications cannot be requested, and status failures allow testing without notification', async t => {
+  const {state,calls}=view(t,{notifications:async()=>({enabled:false,configured:false,can_manage:false})})
+  await state.loadOptions();await tick()
+  assert.equal(state.notificationReady.value,false)
+  state.toggle(1);await state.loadPreview();state.notify.value=true
+  await state.onRun();assert.equal(calls.at(-1).selection.notify,false)
+  assert.equal(state.notificationText.value,'本项目尚未配置飞书通知')
+})
+
+test('an old notification response cannot enable sending for another project', async t => {
+  const pending=deferred(),next=deferred();let count=0
+  const {state,auth}=view(t,{notifications:()=>++count===1?pending.promise:next.promise})
+  const request=state.loadNotification();auth.currentProjectId=2;await tick()
+  pending.resolve({enabled:true,configured:true,can_manage:true});await request;await tick()
+  assert.equal(state.notify.value,false)
+  assert.equal(state.notification.value,null)
+  next.resolve({enabled:false,configured:false,can_manage:false});await tick()
+  assert.equal(state.notificationReady.value,false)
 })

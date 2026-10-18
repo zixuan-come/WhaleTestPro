@@ -5,9 +5,8 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
-from app.core.notifier import send_feishu
+from app.services.project_notification import notify_regression
 from app.models.case import Case
 from app.models.environment import Environment
 from app.models.interface import Interface
@@ -157,9 +156,6 @@ def _run_plan(db, plan, env_id, project_id, report_name, notify=False):
     summary = {"passed": total > 0 and passed_count == total, "total": total, "passed_count": passed_count,
                "failed_count": total - passed_count, "pass_rate": rate, "results": results,
                "interface_total": len(interface_ids), "interface_covered": len(covered & interface_ids), "interface_coverage": coverage}
-    if notify and settings.FEISHU_WEBHOOK:
-        try:
-            send_feishu(settings.FEISHU_WEBHOOK, f"回归结果: {passed_count}/{total} 通过, 通过率 {rate:.0%}, 接口覆盖率 {coverage:.0%}")
-        except Exception:
-            summary["notification_warning"] = "测试已执行完成，但飞书通知发送失败"
+    if notify:
+        notify_regression(db, project_id, summary)
     return summary

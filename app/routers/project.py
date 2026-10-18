@@ -12,9 +12,33 @@ from app.schemas.response import ApiResponse, success_response
 from app.services import project as project_service
 from app.services.perf import PerfRunBusyError, PerfControlUnavailableError
 from app.repositories.project import ProjectPerfBusyError
+from app.schemas.project_notification import NotificationStatus, NotificationUpdate
+from app.services import project_notification
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("/{project_id}/notifications", response_model=ApiResponse[NotificationStatus])
+def notification_status(db: Session = Depends(get_db), context: ProjectContext = Depends(
+    authorize(Resource.PROJECT, Action.READ, from_path=True)
+)):
+    return success_response(project_notification.status(db, context.project_id, context.role in {"owner", "admin"}))
+
+
+@router.put("/{project_id}/notifications", response_model=ApiResponse[NotificationStatus])
+def save_notifications(data: NotificationUpdate, db: Session = Depends(get_db), context: ProjectContext = Depends(
+    authorize(Resource.PROJECT, Action.MANAGE, from_path=True)
+)):
+    return success_response(project_notification.save(db, context.project_id, data), message="通知配置已保存")
+
+
+@router.post("/{project_id}/notifications/test", response_model=ApiResponse[dict])
+def test_notifications(db: Session = Depends(get_db), context: ProjectContext = Depends(
+    authorize(Resource.PROJECT, Action.MANAGE, from_path=True)
+)):
+    project_notification.send_test(db, context.project_id)
+    return success_response({"sent": True}, message="测试通知已发送，请到飞书群查看")
 
 
 @router.post("", response_model=ApiResponse[ProjectOut], status_code=status.HTTP_201_CREATED)

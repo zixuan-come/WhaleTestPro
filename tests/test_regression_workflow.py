@@ -88,3 +88,28 @@ def test_old_regression_api_keeps_its_response_contract(reports):
     result = data(client.post('/regression?env_id=1', json=[1]))
     assert result['total'] == 1 and 'report_id' not in result
     assert len(calls) == 1
+
+
+def test_notification_failure_preserves_regression_result_and_report(reports, monkeypatch):
+    from app.services import project_notification
+    from app.schemas.project_notification import NotificationUpdate
+    from app.core.notifier import NotificationDeliveryError
+    client, db, _ = reports
+    url = 'https://open.feishu.cn/open-apis/bot/v2/hook/11111111-2222-3333-4444-555555555555'
+    project_notification.save(db, 1, NotificationUpdate(enabled=True, webhook_url=url))
+    def failed(*args):raise NotificationDeliveryError('飞书未接受消息')
+    monkeypatch.setattr(project_notification, 'send_feishu', failed)
+    result = data(run(client, preview(client), notify=True))
+    assert result['failed_count'] == 1 and result['passed_count'] == 1
+    assert '飞书未接受消息' in result['notification_warning'] and url not in str(result)
+    root = data(client.get('/reports/executions/' + result['report_id']))
+    assert root['kind'] == 'regression'
+    # The compatibility API also uses the project configuration and keeps its result.
+    legacy = data(client.post('/regression?env_id=1&notify=true', json=[1]))
+    assert legacy['passed'] and '飞书未接受消息' in legacy['notification_warning']
+
+
+def test_missing_project_notification_returns_warning_without_sending_globally(reports):
+    client, _, _ = reports
+    result = data(run(client, preview(client, 'case', [1]), 'case', [1], notify=True))
+    assert result['passed'] and '尚未配置' in result['notification_warning']
