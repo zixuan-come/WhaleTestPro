@@ -36,7 +36,7 @@ def tracked(kind, *, include_report_id=False):
             elif kind == "chain":
                 name = values.get("scenario_name") or "临时接口链路"
             else:
-                name = values.get("report_name") or ("标签回归 · " + values["tag"] if values.get("tag") else "批量回归测试")
+                name = values.get("report_name") or "批量回归测试"
             env_id = values.get("env_id")
             env = environment.db_get(db, env_id, project_id) if env_id is not None else None
             if env_id is not None and env is None:

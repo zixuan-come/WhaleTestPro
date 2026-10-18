@@ -113,7 +113,7 @@ test('suite Modal close bindings reset create/edit state and close run/result di
       data: () => ({ ...options.data(),
         showCreateDialog: mode === 'create', showEditDialog: mode === 'edit',
         editingId: 8, form: { name: 'unfinished', description: 'draft' },
-        selection: { scenario_ids:[1,2], case_ids:[3], tags:['smoke'] },
+        selection: { scenario_ids:[1,2], case_ids:[3] },
         showRunDialog: true, selectedEnvId: 7,
         runResult: { suite_name: 'synthetic', duration_ms: 20, total: 2, passed: 1, failed: 1, pass_rate: 50 },
       }),
@@ -143,7 +143,7 @@ test('suite Modal close bindings reset create/edit state and close run/result di
     assert.equal(view.showEditDialog, false)
     assert.equal(view.editingId, null)
     assert.deepEqual(view.form, { name: '', description: '' })
-    assert.deepEqual(view.selection, { scenario_ids:[], case_ids:[], tags:[] })
+    assert.deepEqual(view.selection, { scenario_ids:[], case_ids:[] })
     assert.equal(view.showRunDialog, true)
     assert.ok(view.runResult)
     close('运行套件')
@@ -156,15 +156,15 @@ test('suite Modal close bindings reset create/edit state and close run/result di
   }
 })
 
-test('create preserves chosen order and dynamic tags, and resets only after success', async () => {
+test('create preserves chosen order, and resets only after success', async () => {
   const { state, calls, feedback } = suite()
   state.showCreateDialog = true
   state.form = { name: '  smoke  ', description: '  description  ' }
   state.pickerReady = true
-  state.selection = { scenario_ids:[1,2], case_ids:[3], tags:['smoke','p0'] }
+  state.selection = { scenario_ids:[1,2], case_ids:[3] }
   await state.submitForm()
   assert.deepEqual(calls, [['create', { name: 'smoke', description: 'description', type: 'mixed',
-    scenario_ids: [1, 2], case_ids: [3], tags: ['smoke', 'p0'] }]])
+    scenario_ids: [1, 2], case_ids: [3] }]])
   assert.equal(state.showCreateDialog, false)
   assert.deepEqual(state.form, { name: '', description: '' })
   assert.deepEqual(feedback,[{message:'套件创建成功',type:'success'}])
@@ -177,7 +177,7 @@ test('edit uses the selected ID and preserves omitted selections as null', async
   assert.equal(state.showEditDialog, true)
   await state.submitForm()
   assert.deepEqual(calls, [['update', 8, { name: 'existing', description: null,
-    scenario_ids: null, case_ids: [3], tags: null }]])
+    scenario_ids: null, case_ids: [3] }]])
   assert.equal(state.editingId, null)
 })
 

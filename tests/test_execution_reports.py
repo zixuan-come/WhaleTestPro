@@ -24,7 +24,7 @@ from app.models.suite import TestSuite as Suite
 from app.models.report import TestReport as Report
 from app.models.scenario_report import ScenarioReport
 from app.models.execution_report import ExecutionReport
-from app.routers import report, case, scenario, suite, regression
+from app.routers import report, case, scenario, suite, regression, schedule
 from app.services import execution
 from app.core.execution_context import current_execution, triggered_by
 from app.core.migrations import ensure_execution_report_schema
@@ -48,12 +48,12 @@ def reports(monkeypatch):
                      headers={"Authorization": "Bearer ${api_token}"}))
     db.flush()
     db.add_all([Case(id=i, project_id=1, interface_id=1, name=f"用例{i}",
-                     expected_status=201 if i == 2 else 200, retries=0, tags=["smoke"]) for i in (1, 2, 3)])
+                     expected_status=201 if i == 2 else 200, retries=0) for i in (1, 2, 3)])
     db.add(Scenario(id=1, project_id=1, name="下单场景", case_ids=[1, 2]))
-    db.add(Suite(id=1, project_id=1, name="每日冒烟", type="mixed", scenario_ids=[1], case_ids=[1, 3], tags=["smoke"]))
+    db.add(Suite(id=1, project_id=1, name="每日冒烟", type="mixed", scenario_ids=[1], case_ids=[1, 3]))
     db.commit()
     app = FastAPI()
-    for module in (report, case, scenario, suite, regression):
+    for module in (report, case, scenario, suite, regression, schedule):
         app.include_router(module.router)
         for route in module.router.routes:
             for dependency in route.dependant.dependencies:

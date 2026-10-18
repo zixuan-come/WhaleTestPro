@@ -44,7 +44,7 @@ def test_suite_selection_limits_apply_to_create_and_update(model, field, value):
 def test_suite_update_preserves_omission_null_and_limit_boundaries():
     assert SuiteUpdate().model_dump(exclude_unset=True) == {}
     assert SuiteUpdate(case_ids=None).model_dump(exclude_unset=True) == {"case_ids": None}
-    assert len(SuiteUpdate(case_ids=list(range(100)), tags=["tag"] * 20).case_ids) == 100
+    assert len(SuiteUpdate(case_ids=list(range(100))).case_ids) == 100
 
 
 @pytest.mark.parametrize("model", [CaseCreate, CaseUpdate])

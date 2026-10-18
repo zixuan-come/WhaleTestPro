@@ -8,12 +8,12 @@ import { suiteCatalog, selectedSuiteContent, filterSuiteContent } from '../src/u
 const source = parse(readFileSync(new URL('../src/components/SuiteContentPicker.vue', import.meta.url), 'utf8')).descriptor
 const compiled = compileScript(source, { id:'suite-picker-contract' })
 const code = compiled.content.replace(/^import[^\n]*\n/gm, '').replace('export default', 'return')
-const cases = Array.from({ length:55 }, (_, i) => ({ id:i+1, name:`用例${i+1}`, interface_id:i%2 ? 20 : 10, tags:i%2 ? ['order'] : ['smoke'] }))
+const cases = Array.from({ length:55 }, (_, i) => ({ id:i+1, name:`用例${i+1}`, interface_id:i%2 ? 20 : 10 }))
 const scenarios = [{ id:1, name:'下单主流程', case_ids:[1,2] }, { id:2, name:'取消流程', case_ids:[3] }]
 const interfaces = [{ id:10, name:'订单查询' }, { id:20, name:'订单创建' }]
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
-function picker(t, overrides={}, selection={ scenario_ids:[], case_ids:[], tags:[] }) {
+function picker(t, overrides={}, selection={ scenario_ids:[], case_ids:[] }) {
   const callbacks=[], events=[], auth=Vue.reactive({ username:'picker-user', token:'synthetic', currentProjectId:1 })
   const props=Vue.reactive({ modelValue:structuredClone(selection), disabled:false })
   const mocks={ ...Vue, onMounted() {}, onBeforeUnmount(fn) { callbacks.push(fn) }, useAuthStore:()=>auth,
@@ -30,7 +30,7 @@ test('search covers all project content before pagination and includes parent in
   assert.equal(state.pages.value,3);assert.equal(state.visible.value.length,20)
   state.query.value='用例55';assert.deepEqual(state.visible.value.map(item=>item.id),[55])
   state.query.value='订单创建';assert.equal(state.filtered.value.length,27)
-  state.tag.value='smoke';assert.equal(state.filtered.value.length,0)
+  state.interfaceId.value='10';assert.equal(state.filtered.value.length,0)
 })
 
 test('checkbox and full-page selections persist across pages and filters',async t=>{
@@ -43,27 +43,23 @@ test('checkbox and full-page selections persist across pages and filters',async 
 })
 
 test('scenario coverage is marked without silently deleting explicit legacy selections',async t=>{
-  const {state,props}=picker(t,{}, {scenario_ids:[],case_ids:[1],tags:[]});await state.load()
+  const {state,props}=picker(t,{}, {scenario_ids:[],case_ids:[1]});await state.load()
   state.toggleItem(state.visible.value[0]);state.setKind('case')
   assert.equal(state.chosen.value.cases[0].included,true)
   state.toggleItem(state.visible.value.find(item=>item.id===2));assert.deepEqual(props.modelValue.case_ids,[1])
   state.toggleItem(state.visible.value.find(item=>item.id===1));assert.deepEqual(props.modelValue.case_ids,[])
 })
 
-test('ordered scenarios, dynamic tags and unresolved legacy IDs remain explicit',async t=>{
-  const {state,props}=picker(t,{}, {scenario_ids:[2,1,999],case_ids:[4,998],tags:['order','legacy-tag']});await state.load()
-  assert.equal(state.dynamicEnabled.value,true)
+test('ordered scenarios and unresolved legacy IDs remain explicit',async t=>{
+  const {state,props}=picker(t,{}, {scenario_ids:[2,1,999],case_ids:[4,998]});await state.load()
   assert.equal(state.chosen.value.scenarios[2].missing,true)
-  assert.ok(state.tagOptions.value.includes('legacy-tag'))
-  assert.ok(!state.chosen.value.dynamic.some(item=>[1,2,3,4].includes(item.id)))
   state.moveScenario(1,-1);assert.deepEqual(props.modelValue.scenario_ids,[1,2,999])
-  state.dynamicEnabled.value=false;state.toggleDynamic();assert.deepEqual(props.modelValue.tags,[])
   assert.deepEqual(props.modelValue.case_ids,[4,998])
 })
 
 test('a failed catalog load preserves the draft and prevents ready until retry succeeds',async t=>{
   let fail=true
-  const {state,props,events}=picker(t,{listCases:async()=>{if(fail)throw Error('load failed');return cases}}, {scenario_ids:[1],case_ids:[4],tags:['order']})
+  const {state,props,events}=picker(t,{listCases:async()=>{if(fail)throw Error('load failed');return cases}}, {scenario_ids:[1],case_ids:[4]})
   await state.load();assert.match(state.error.value,/load failed/)
   assert.equal(events.at(-1)[1],false);assert.deepEqual(props.modelValue.case_ids,[4])
   fail=false;await state.load();assert.equal(events.at(-1)[1],true)
@@ -80,7 +76,7 @@ test('a late response from another project or an unmounted picker cannot restore
 })
 
 test('selection limits reject the whole over-limit operation and disabled pickers cannot mutate',async t=>{
-  const {state,props}=picker(t,{}, {scenario_ids:[],case_ids:Array.from({length:100},(_,i)=>i+100),tags:[]})
+  const {state,props}=picker(t,{}, {scenario_ids:[],case_ids:Array.from({length:100},(_,i)=>i+100)})
   await state.load();state.setKind('case');state.togglePage();assert.equal(props.modelValue.case_ids.length,100)
   assert.match(state.notice.value,/100/)
   props.disabled=true;state.clear();state.toggleItem(state.visible.value[0]);assert.equal(props.modelValue.case_ids.length,100)

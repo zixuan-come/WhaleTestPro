@@ -5,7 +5,6 @@ from app.schemas.regression import RegressionTargets
 
 class ScheduleCreate(NamedSchema):
     cron: str = Field(min_length=1, max_length=100)
-    tag: str | None = Field(default=None, max_length=50)
     suite_id: int | None = None
     env_id: int = Field(gt=0)
     enabled: bool = True
@@ -14,8 +13,8 @@ class ScheduleCreate(NamedSchema):
 
     @model_validator(mode="after")
     def exclusive_selection(self):
-        if self.selection is not None and (self.tag is not None or self.suite_id is not None):
-            raise ValueError("显式选择测试内容后不能同时配置旧标签或套件筛选")
+        if self.selection is not None and self.suite_id is not None:
+            raise ValueError("显式选择测试内容后不能同时配置单套件筛选")
         return self
 
     @field_validator("cron")
@@ -31,13 +30,12 @@ class ScheduleCreate(NamedSchema):
             raise ValueError("Cron 表达式不合法") from exc
         return value
 
-    @field_validator("tag")
+    @model_validator(mode="before")
     @classmethod
-    def normalize_tag(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        return value or None
+    def reject_retired_tag(cls, value):
+        if isinstance(value, dict) and "tag" in value:
+            raise ValueError("标签功能已移除，请明确选择测试内容")
+        return value
 
 class ScheduleOut(ScheduleCreate):
     # Existing schedules have no environment until explicitly edited.

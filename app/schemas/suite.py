@@ -1,15 +1,23 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal
 from datetime import datetime
 
 
-class SuiteCreate(BaseModel):
+class SuiteInput(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_tags(cls, value):
+        if isinstance(value, dict) and "tags" in value:
+            raise ValueError("标签功能已移除，请明确选择场景或用例")
+        return value
+
+
+class SuiteCreate(SuiteInput):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     type: Literal["scenario", "case", "mixed"]
     scenario_ids: list[int] | None = None
     case_ids: list[int] | None = None
-    tags: list[str] | None = None
 
     @field_validator("name")
     @classmethod
@@ -33,35 +41,19 @@ class SuiteCreate(BaseModel):
             raise ValueError("单个套件最多包含 100 个场景或用例")
         return value
 
-    @field_validator("tags")
-    @classmethod
-    def validate_tags(cls, value: list[str] | None) -> list[str] | None:
-        if value is not None:
-            if len(value) > 20:
-                raise ValueError("单个套件最多包含 20 个标签")
-            for tag in value:
-                if not tag.strip():
-                    raise ValueError("标签不能为空")
-        return value
 
 
-class SuiteUpdate(BaseModel):
+class SuiteUpdate(SuiteInput):
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     type: Literal["scenario", "case", "mixed"] | None = None
     scenario_ids: list[int] | None = None
     case_ids: list[int] | None = None
-    tags: list[str] | None = None
 
     @field_validator("scenario_ids", "case_ids")
     @classmethod
     def validate_ids(cls, value):
         return SuiteCreate.validate_ids(value)
-
-    @field_validator("tags")
-    @classmethod
-    def validate_tags(cls, value):
-        return SuiteCreate.validate_tags(value)
 
     @field_validator("name", "type", mode="before")
     @classmethod
@@ -97,7 +89,6 @@ class SuiteOut(BaseModel):
     type: str
     scenario_ids: list[int] | None
     case_ids: list[int] | None
-    tags: list[str] | None
     created_at: datetime
     updated_at: datetime
 

@@ -25,7 +25,7 @@ def options(db, project_id):
     return {
         "suites": [{"id": row.id, "name": row.name, "description": row.description}
                    for row in _assets(db, TestSuite, project_id).values()],
-        "cases": [{"id": row.id, "name": row.name, "tags": row.tags or [],
+        "cases": [{"id": row.id, "name": row.name,
                    "interface_name": interfaces[row.interface_id].name if row.interface_id in interfaces else "接口已删除"}
                   for row in _assets(db, Case, project_id).values()],
     }
@@ -86,8 +86,6 @@ def preview(db, project_id, selection):
                     step_count += len(steps)
                 scenario_count += 1
             explicit = list(current.case_ids or [])
-            tags = set(current.tags or [])
-            explicit += [row.id for row in cases.values() if tags.intersection(row.tags or [])]
             for case_id in explicit:
                 if case_id not in used:
                     items.append(case_item(case_id))

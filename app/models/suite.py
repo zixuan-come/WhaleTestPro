@@ -16,7 +16,6 @@ class TestSuite(Base):
     # 配置
     scenario_ids = Column(JSON, nullable=True)  # [1, 2, 3]
     case_ids = Column(JSON, nullable=True)      # [10, 11, 12]
-    tags = Column(JSON, nullable=True)          # ["smoke", "p0"]
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

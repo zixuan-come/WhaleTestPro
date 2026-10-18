@@ -17,7 +17,6 @@ def db_create(db: Session, suite: SuiteCreate, project_id: int):
         type=suite.type,
         scenario_ids=suite.scenario_ids or [],
         case_ids=suite.case_ids or [],
-        tags=suite.tags or [],
     )
     db.add(db_suite)
     db.commit()

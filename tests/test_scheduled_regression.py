@@ -21,7 +21,7 @@ def test_saved_selection_and_scheduled_report_use_current_regression_engine(repo
     row = service.s_create(db, ScheduleCreate(name='每日订单回归', cron='0 2 * * *', env_id=1,
         selection={'mode': mode, 'ids': ids}), 1)
     assert row.selection['ids'] == list(dict.fromkeys(ids))
-    result = tasks.scheduled_regression.run(1, None, None, 1, schedule_id=row.id)
+    result = tasks.scheduled_regression.run(project_id=1, schedule_id=row.id)
     assert result['report_id'].startswith('run-') and calls
     root = db.get(ExecutionReport, int(result['report_id'].split('-')[1]))
     assert root.kind == 'regression' and root.trigger_source == 'scheduled'
@@ -37,7 +37,7 @@ def test_disabled_or_deleted_schedule_is_not_executed_by_queued_message(reports,
         selection={'mode':'case','ids':[1]}, enabled=False)
     db.add(row); db.commit()
     for schedule_id in (row.id, 999):
-        assert tasks.scheduled_regression.run(1, None, None, 1, schedule_id=schedule_id)['skipped']
+        assert tasks.scheduled_regression.run(project_id=1, schedule_id=schedule_id)['skipped']
     assert not calls
 
 
@@ -50,7 +50,7 @@ def test_deleted_selected_case_cannot_expand_to_all_cases(reports, monkeypatch):
     db.add(row); db.commit()
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as error:
-        tasks.scheduled_regression.run(1, schedule_id=row.id)
+        tasks.scheduled_regression.run(project_id=1, schedule_id=row.id)
     assert error.value.status_code == 404 and not calls
 
 

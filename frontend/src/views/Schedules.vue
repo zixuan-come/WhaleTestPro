@@ -24,7 +24,7 @@ function targetLabel(row) {
     const source = row.selection.mode === 'suite' ? props.catalog.suites : props.catalog.cases
     return row.selection.ids.map(id => source.find(item => item.id === id)?.name || `已删除的${row.selection.mode === 'suite' ? '套件' : '用例'} #${id}`).join('、')
   }
-  return row.suite_id ? props.catalog.suites.find(item => item.id === row.suite_id)?.name || `套件 #${row.suite_id}` : row.tag ? `标签：${row.tag}（动态匹配）` : '全部用例（旧规则）'
+  return row.suite_id ? props.catalog.suites.find(item => item.id === row.suite_id)?.name || `套件 #${row.suite_id}` : '未选择测试内容'
 }
 const environmentName = id => environments.value.find(env => env.id === id)?.name || '未配置环境'
 
@@ -106,7 +106,7 @@ const showModal = ref(false)
 const saving = ref(false)
 const formErr = ref('')
 const editingId = ref(null)
-const form = reactive({ name: '', cron: '', tag: null, suite_id: null, env_id: null, enabled: true, selection: null, notify: false })
+const form = reactive({ name: '', cron: '', suite_id: null, env_id: null, enabled: true, selection: null, notify: false })
 
 const total = computed(() => items.value.length)
 const enabledCount = computed(() => items.value.filter(s => s.enabled).length)
@@ -129,7 +129,7 @@ async function load() {
 
 function openTiming(row, selection, notify) {
   editingId.value = row?.id || null
-  Object.assign(form, { name: row?.name || '', tag: null, suite_id: null,
+  Object.assign(form, { name: row?.name || '', suite_id: null,
     env_id: selection.env_id, enabled: row?.enabled ?? true,
     selection: { mode: selection.mode, ids: [...selection.ids] }, notify: !!notify })
   Object.assign(cronUi, { freq: 'daily', minute: 0, hour: 2, dow: '1', dom: 1 })
@@ -156,7 +156,6 @@ async function save() {
   const payload = {
     name: form.name.trim(),
     cron: form.cron.trim(),
-    tag: null,
     suite_id: null,
     env_id: form.env_id,
     enabled: form.enabled,
@@ -187,7 +186,7 @@ async function toggleEnabled(s) {
   pendingIds.value = [...pendingIds.value, s.id]
   try {
     if (!s.env_id) { emit('edit', s); showMessage('请先选择执行环境', 'error'); return }
-    await updateSchedule(s.id, { name: s.name, cron: s.cron, tag: s.tag || null, suite_id: s.suite_id, env_id: s.env_id, selection: s.selection || null, notify: !!s.notify, enabled: !s.enabled })
+    await updateSchedule(s.id, { name: s.name, cron: s.cron, suite_id: s.suite_id, env_id: s.env_id, selection: s.selection || null, notify: !!s.notify, enabled: !s.enabled })
     if (key === context.value) await load()
   } catch (e) {
     if (key === context.value) showMessage(e.message || '切换失败', 'error')
@@ -363,9 +362,6 @@ defineExpose({ openTiming })
 .cron-rule summary { cursor:pointer; font-size:12.5px; overflow-wrap:anywhere; }
 .cron-rule summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; border-radius:3px; }
 .cron-rule code { display:block; margin-top:6px; color:var(--text-muted); font:11.5px/1.5 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
-.c-tag .tag { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--surface-2);
-  border:1px solid var(--border); color:var(--text-muted); }
-.c-tag .muted { color:var(--text-muted); font-size:12px; }
 .c-act { text-align:right; display:flex; gap:4px; justify-content:flex-end; }
 .icon-btn { display:inline-flex; align-items:center; justify-content:center;
   width:32px; height:32px; padding:0; background:none; border:none; color:var(--text-muted);

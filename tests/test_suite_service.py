@@ -57,7 +57,6 @@ def test_suite_create(db):
         type="mixed",
         scenario_ids=[1, 2],
         case_ids=[10, 11],
-        tags=["smoke"],
     )
     result = suite_repo.db_create(db, suite, project_id=1)
 
@@ -67,7 +66,6 @@ def test_suite_create(db):
     assert result.type == "mixed"
     assert result.scenario_ids == [1, 2]
     assert result.case_ids == [10, 11]
-    assert result.tags == ["smoke"]
     assert result.project_id == 1
 
 
@@ -175,8 +173,7 @@ def test_run_suite_raises_404_when_suite_not_found(db):
 
 # ---------- run_suite 执行逻辑 ----------
 # 策略:monkeypatch 掉 execution 层(不真发 HTTP),专注测 suite 自己的编排:
-# 三条路径(scenario/case/tags)、去重、汇总统计、总成绩单落库。
-# tags 路径曾因调用不存在的 db_list_by_tags 而崩溃 —— 这些测试锁死回归。
+# 场景和独立用例两条路径、去重、汇总统计、总成绩单落库。
 
 from app.repositories import case as case_repo          # noqa: E402
 from app.repositories import scenario as scenario_repo  # noqa: E402
@@ -186,10 +183,9 @@ from app.models.report import TestReport as ReportModel  # noqa: E402  (别名�
 
 
 class _FakeCase:
-    def __init__(self, id, name, tags=None):
+    def __init__(self, id, name):
         self.id = id
         self.name = name
-        self.tags = tags or []
 
 
 class _FakeScenario:
@@ -252,31 +248,10 @@ def test_run_suite_runs_scenarios_via_run_chain(db, monkeypatch):
     assert result["results"][0]["steps"] == 2
 
 
-def test_run_suite_runs_tagged_cases(db, monkeypatch):
-    # 曾崩溃的路径:带 tags 的套件。回归锁。
-    suite = _make_suite(db, name="s", type="case", tags=["smoke"])
-
-    all_cases = [
-        _FakeCase(1, "a", tags=["smoke"]),
-        _FakeCase(2, "b", tags=["slow"]),
-        _FakeCase(3, "c", tags=["smoke", "p0"]),
-    ]
-    monkeypatch.setattr(case_repo, "db_list", lambda db, pid: all_cases)
-    ran = []
-    monkeypatch.setattr(execution_service, "run_case",
-                        lambda db, cid, env_id, pid: ran.append(cid) or {"passed": True})
-
-    result = suite_service.run_suite(db, suite.id, project_id=1)
-
-    # 只跑带 smoke 标签的 1 和 3,不跑 2
-    assert sorted(ran) == [1, 3]
-    assert result["total"] == 2
-
-
-def test_run_suite_dedupes_case_across_scenario_and_tags(db, monkeypatch):
-    # 用例 1 同时出现在场景步骤、case_ids、tags 里,只应执行一次
+def test_run_suite_dedupes_case_across_scenario_and_explicit_selection(db, monkeypatch):
+    # 用例 1 同时出现在场景步骤和 case_ids 里，只应执行一次
     suite = _make_suite(db, name="s", type="mixed",
-                        scenario_ids=[5], case_ids=[1], tags=["smoke"])
+                        scenario_ids=[5], case_ids=[1])
 
     monkeypatch.setattr(scenario_repo, "db_get",
                         lambda db, sid, pid: _FakeScenario(sid, "scn", [1]))
@@ -285,14 +260,14 @@ def test_run_suite_dedupes_case_across_scenario_and_tags(db, monkeypatch):
     monkeypatch.setattr(case_repo, "db_get",
                         lambda db, cid, pid: _FakeCase(cid, f"case{cid}"))
     monkeypatch.setattr(case_repo, "db_list",
-                        lambda db, pid: [_FakeCase(1, "a", tags=["smoke"])])
+                        lambda db, pid: [_FakeCase(1, "a")])
     ran = []
     monkeypatch.setattr(execution_service, "run_case",
                         lambda db, cid, env_id, pid: ran.append(cid) or {"passed": True})
 
     result = suite_service.run_suite(db, suite.id, project_id=1)
 
-    # case 1 在场景里跑过,case_ids 和 tags 都应跳过 → run_case 一次都不调
+    # case 1 在场景里跑过,case_ids 应跳过 → run_case 一次都不调
     assert ran == []
     assert result["scenario_count"] == 1
 

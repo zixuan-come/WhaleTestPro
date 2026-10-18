@@ -301,8 +301,8 @@ def test_regression_coverage_uses_selected_cases_and_ignores_ghost_interfaces(mo
 
     interfaces = [SimpleNamespace(id=10), SimpleNamespace(id=11)]
     cases = [
-        SimpleNamespace(id=1, interface_id=10, tags=['smoke']),
-        SimpleNamespace(id=2, interface_id=999, tags=['smoke']),
+        SimpleNamespace(id=1, interface_id=10),
+        SimpleNamespace(id=2, interface_id=999),
     ]
 
     monkeypatch.setattr(execution.interface_repo, 'db_list', lambda db, project_id: interfaces)
@@ -314,7 +314,7 @@ def test_regression_coverage_uses_selected_cases_and_ignores_ghost_interfaces(mo
     assert summary['interface_covered'] == 1
     assert summary['interface_coverage'] == 0.5
 
-    summary = execution.run_regression(object(), tag='smoke', project_id=7)
+    summary = execution.run_regression(object(), case_ids=[1, 2], project_id=7)
     assert summary['interface_covered'] == 1
     assert summary['interface_coverage'] == 0.5
 def test_mock_schema_normalizes_match_fields_and_rejects_invalid_ranges():
@@ -622,8 +622,8 @@ def test_schedule_schema_validates_field_lengths():
     from pydantic import ValidationError
     from app.schemas.schedule import ScheduleCreate
 
-    schedule = ScheduleCreate(name='daily', cron='0 0 * * *', tag=' smoke ', env_id=1)
-    assert schedule.tag == 'smoke'
+    schedule = ScheduleCreate(name='daily', cron='0 0 * * *', env_id=1)
+    assert schedule.cron == '0 0 * * *'
 
     with pytest.raises(ValidationError):
         ScheduleCreate(name='daily', cron='0 0 * * *', tag='x' * 51)

@@ -59,7 +59,7 @@ const independentRequest = ref(false)
 const requestForm = ref(requestDraft())
 const requestEditor = ref(null)
 const form = reactive({
-  name: '', interface_id: '', expected_status: 200, retries: 0, tags: '',
+  name: '', interface_id: '', expected_status: 200, retries: 0,
   extract_rules: '', assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
 })
 
@@ -135,7 +135,6 @@ function openCreate(initialRequest = null, expectedStatus = 200) {
   form.interface_id = props.interfaceId || ''
   form.expected_status = expectedStatus
   form.retries = 0
-  form.tags = ''
   form.extract_rules = ''
   form.assertions = ''
   form.setup_sql = ''
@@ -159,7 +158,6 @@ function openEdit(testCase) {
   form.interface_id = testCase.interface_id
   form.expected_status = testCase.expected_status
   form.retries = testCase.retries || 0
-  form.tags = (testCase.tags || []).join(', ')
   form.extract_rules = formatJsonField(testCase.extract_rules)
   form.assertions = formatJsonField(testCase.assertions)
   form.setup_sql = formatJsonField(testCase.setup_sql)
@@ -216,7 +214,6 @@ async function save() {
     return
   }
 
-  const tags = form.tags.trim() ? form.tags.split(',').map(t => t.trim()).filter(Boolean) : null
 
   saving.value = true
   try {
@@ -225,7 +222,6 @@ async function save() {
       interface_id: Number(form.interface_id),
       expected_status: Number(form.expected_status),
       retries: Number(form.retries) || 0,
-      tags,
       extract_rules, assertions, setup_sql, teardown_sql, datasets, request_overrides,
     }
 
@@ -331,17 +327,12 @@ defineExpose({ openCreate, load })
         <span class="c-name">用例</span>
         <span class="c-iface">关联接口</span>
         <span class="c-exp">期望状态</span>
-        <span class="c-tags">标签</span>
         <span class="c-act">操作</span>
       </div>
       <div v-for="(c, i) in items" :key="c.id" class="row">
         <span class="c-name"><span class="id">#{{ i + 1 }}</span>{{ c.name }}</span>
         <span class="c-iface" :title="ifaceLabel(c.interface_id)">{{ ifaceLabel(c.interface_id) }}</span>
         <span class="c-exp">{{ c.expected_status }}</span>
-        <span class="c-tags">
-          <span v-for="t in (c.tags || [])" :key="t" class="tag">{{ t }}</span>
-          <span v-if="!(c.tags && c.tags.length)" class="muted">—</span>
-        </span>
         <span class="c-act">
           <button class="icon-btn run" title="运行" :disabled="runningId === c.id" @click="onRun(c)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
@@ -406,10 +397,6 @@ defineExpose({ openCreate, load })
         <label for="case-retries">失败重试</label>
         <input id="case-retries" v-model.number="form.retries" type="number" min="0" />
       </div>
-    </div>
-    <div class="field">
-      <label>标签 <span class="opt">(逗号分隔,可选)</span></label>
-      <input v-model="form.tags" placeholder="smoke, order" />
     </div>
     <section v-if="selectedInterface" class="case-request">
       <div class="case-request-head"><strong>请求参数</strong><label><input v-model="independentRequest" type="checkbox" :disabled="saving" />使用用例独立参数</label></div>
@@ -522,7 +509,7 @@ defineExpose({ openCreate, load })
   background:var(--surface-2); border:1px solid var(--border); border-radius:6px; font-family:inherit; }
 .env-sel:focus { outline:none; border-color:var(--primary); }
 
-.row { display:grid; grid-template-columns:1.6fr 1.6fr 88px 1.2fr 116px; align-items:center; gap:12px;
+.row { display:grid; grid-template-columns:1.6fr 1.6fr 88px 116px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
 .row:last-child { border-bottom:none; }
 .row:not(.head):hover { background:var(--surface-2); }
@@ -533,10 +520,6 @@ defineExpose({ openCreate, load })
   background:var(--surface-2); padding:2px 8px; border-radius:6px; flex:none; }
 .c-iface { color:var(--text-muted); font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .c-exp { font-family:ui-monospace,Consolas,monospace; font-weight:600; }
-.c-tags { display:flex; flex-wrap:wrap; gap:5px; }
-.c-tags .tag { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--surface-2);
-  border:1px solid var(--border); color:var(--text-muted); }
-.c-tags .muted { color:var(--text-muted); }
 .c-act { text-align:right; display:flex; gap:4px; justify-content:flex-end; }
 .icon-btn { display:inline-flex; align-items:center; justify-content:center;
   width:32px; height:32px; padding:0; background:none; border:none; color:var(--text-muted);
@@ -626,13 +609,12 @@ defineExpose({ openCreate, load })
 /* ===== 响应式 ===== */
 @media (max-width:1100px) {
   .cards { grid-template-columns:repeat(3,1fr); }
-  .row { grid-template-columns:1.6fr 88px 1fr 116px; }
+  .row { grid-template-columns:1.6fr 88px 116px; }
   .c-iface { display:none; }
 }
 @media (max-width:640px) {
   .cards { grid-template-columns:1fr; gap:12px; }
   .row { grid-template-columns:1fr 72px 108px; gap:8px; padding:12px 14px; }
-  .c-tags { display:none; }
   .grid2, .grid3 { grid-template-columns:1fr; }
   .interface-empty { align-items:flex-start; flex-direction:column; }
   .kv { grid-template-columns:1fr; }

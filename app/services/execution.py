@@ -461,11 +461,9 @@ def _result_passed(result):
 
 
 @tracked("regression")
-def run_regression(db, case_ids=None, env_id=None, tag=None, notify=False, project_id=None):
+def run_regression(db, case_ids=None, env_id=None, notify=False, project_id=None):
     if case_ids is None:
         cases = case_repo.db_list(db, project_id)
-        if tag is not None:
-            cases = [c for c in cases if c.tags and tag in c.tags]
         case_ids = [c.id for c in cases]
     else:
         selected_case_ids = set(case_ids)

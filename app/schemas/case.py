@@ -1,9 +1,16 @@
-from pydantic import ConfigDict, Field, field_serializer
+from pydantic import ConfigDict, Field, field_serializer, model_validator
 from typing import Any
 from app.schemas.base import NamedSchema
 from app.schemas.request_config import RequestOverrides
 
 class CaseCreate(NamedSchema):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_tags(cls, value):
+        if isinstance(value, dict) and "tags" in value:
+            raise ValueError("标签功能已移除，请使用名称搜索和测试套件")
+        return value
+
     interface_id: int
     expected_status: int
     extract_rules: dict | None = None
@@ -12,7 +19,6 @@ class CaseCreate(NamedSchema):
     teardown_sql: list | None = None
     datasets: list[dict[str, Any]] | None = None
     retries: int | None = Field(default=0, ge=0)
-    tags: list | None = None
     request_overrides: RequestOverrides | None = None
 
     @field_serializer("request_overrides")

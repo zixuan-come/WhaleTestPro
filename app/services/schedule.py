@@ -110,7 +110,7 @@ def _validate_references(db, data, project_id, *, allow_stale=False):
         raise HTTPException(status_code=404, detail="测试套件不存在或不属于当前项目")
     targets = getattr(data, "selection", None)
     if targets is not None:
-        if data.tag is not None or data.suite_id is not None:
+        if data.suite_id is not None:
             raise HTTPException(422, "显式选择与旧筛选不能同时配置，请重新选择测试内容")
         # A disabled plan can always be paused, even after a selected asset was
         # deleted. Enabling/saving an active plan validates the whole preview.

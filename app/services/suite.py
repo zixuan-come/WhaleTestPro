@@ -59,8 +59,7 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
     执行流程:
     1. 运行 scenario_ids 中的场景 (链式传参)
     2. 运行 case_ids 中的独立用例
-    3. 按 tags 筛选用例并运行 (去重)
-    4. 汇总结果并写入报告
+    3. 汇总结果并写入报告
     """
     suite = suite_repo.db_get(db, suite_id, project_id)
     if not suite:
@@ -74,13 +73,13 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
     suite = SimpleNamespace(
         id=suite.id, name=suite.name, type=suite.type,
         scenario_ids=tuple(suite.scenario_ids or ()),
-        case_ids=tuple(suite.case_ids or ()), tags=tuple(suite.tags or ()),
+        case_ids=tuple(suite.case_ids or ()),
     )
     started_at = datetime.utcnow()
     started = perf_counter()
 
     results = []
-    executed_case_ids = set()  # 去重：避免 case_ids 和 tags 重复执行同一用例
+    executed_case_ids = set()  # 去重：避免场景和独立用例重复执行
 
     # 1. 运行场景
     for scenario_id in suite.scenario_ids or []:
@@ -154,38 +153,7 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
 
         executed_case_ids.add(case_id)
 
-    # 3. 按 tags 筛选用例并运行
-    if suite.tags:
-        # 与 execution.run_regression 一致:db_list 拉本项目用例后在内存里按 tag 过滤
-        # (case_repo 无 db_list_by_tags;用例量级小,内存过滤足够且避免 JSON 列查询的方言差异)
-        all_cases = case_repo.db_list(db, project_id)
-        tag_set = set(suite.tags)
-        tagged_cases = [c for c in all_cases if c.tags and tag_set & set(c.tags)]
-        for case in tagged_cases:
-            if case.id in executed_case_ids:
-                continue  # 去重
-
-            case_result = execution.run_case(db, case.id, env_id, project_id)
-
-            if isinstance(case_result, dict) and "error" in case_result:
-                passed = False
-            elif isinstance(case_result, list):
-                passed = all(r["passed"] for r in case_result)
-            else:
-                passed = case_result.get("passed", False)
-
-            results.append({
-                "type": "case",
-                "id": case.id,
-                "name": case.name,
-                "passed": passed,
-                "tags": case.tags,
-                "detail": case_result,
-            })
-
-            executed_case_ids.add(case.id)
-
-    # 4. 汇总统计
+    # 3. 汇总统计
     duration_ms = round((perf_counter() - started) * 1000)
     total = len(results)
     passed_count = sum(1 for r in results if r["passed"])

@@ -1,7 +1,5 @@
 from app.core.celery_app import celery_app
 from app.database import SessionLocal
-from app.services import execution as execution_service
-from app.services import suite as suite_service
 from app.services import schedule as schedule_service
 from app.core.execution_context import triggered_by
 from app.repositories import schedule as schedule_repo
@@ -21,47 +19,27 @@ def reconcile_schedule_outbox():
 
 
 @celery_app.task
-def scheduled_regression(project_id=None, tag=None, suite_id=None, env_id=None, schedule_id=None):
-    """
-    Celery Beat 定时触发的回归任务。
-
-    执行优先级:
-    1. 如果 suite_id 有值，运行测试套件
-    2. 否则按 tag 运行回归（旧逻辑，向后兼容）
-
-    多项目全链路已就位:
-    - project_id: sync_schedule 从 schedule.project_id 塞进 args 带过来
-    - run_regression/run_suite 内部严格按项目过滤
-    - 生成的 report 也带上正确的 project_id
-    """
+def scheduled_regression(*, project_id=None, schedule_id=None):
+    """Execute the current persisted selection; queued messages contain no targets."""
+    if project_id is None or schedule_id is None:
+        raise ValueError("定时执行必须指定所属项目和定时任务")
     db = SessionLocal()
     try:
-        if schedule_id is not None:
-            current = schedule_repo.db_get(db, schedule_id, project_id)
-            if current is None or not current.enabled:
-                return {"skipped": True, "reason": "定时任务已停用或删除"}
-            # Resolve current configuration after dequeue: stale Beat arguments
-            # must not revive a disabled/deleted plan or execute old targets.
-            tag, suite_id, env_id = current.tag, current.suite_id, current.env_id
-            if current.selection is not None:
-                if env_id is None:
-                    raise ValueError("定时任务未配置执行环境，请编辑后重新启用")
-                selection = RegressionSelection(**current.selection, env_id=env_id)
-                plan = regression_service.preview(db, project_id, selection)
-                with triggered_by("scheduled"):
-                    return regression_service.run(db, project_id, RegressionRun(
-                        **selection.model_dump(), preview_key=plan["preview_key"], notify=current.notify), report_name=current.name)
-        if env_id is None:
+        current = schedule_repo.db_get(db, schedule_id, project_id)
+        if current is None or not current.enabled:
+            return {"skipped": True, "reason": "定时任务已停用或删除"}
+        if current.env_id is None:
             raise ValueError("定时任务未配置执行环境，请编辑后重新启用")
-        execution_service._env_context(db, env_id, project_id)
-        if suite_id is not None:
-            # 新逻辑：运行测试套件
-            with triggered_by("scheduled"):
-                return suite_service.run_suite(db, suite_id, project_id, env_id=env_id)
+        if current.selection is not None:
+            targets = current.selection
+        elif current.suite_id is not None:
+            targets = {"mode": "suite", "ids": [current.suite_id]}
         else:
-            # 旧逻辑：按 tag 运行回归
-            with triggered_by("scheduled"):
-                return execution_service.run_regression(db, tag=tag, notify=True, project_id=project_id, env_id=env_id)
+            raise ValueError("定时任务未选择测试内容，请编辑后重新启用")
+        selection = RegressionSelection(**targets, env_id=current.env_id)
+        plan = regression_service.preview(db, project_id, selection)
+        with triggered_by("scheduled"):
+            return regression_service.run(db, project_id, RegressionRun(
+                **selection.model_dump(), preview_key=plan["preview_key"], notify=current.notify), report_name=current.name)
     finally:
         db.close()
-

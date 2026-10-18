@@ -21,7 +21,7 @@ function view(t, overrides = {}) {
     'useExecutionEnvironment', 'EnvironmentSelect', 'regressionRows', 'getProjectNotifications', 'useRoute', 'useRouter', 'Schedules', script.replace('export default', 'return'))(
     { ...Vue, onMounted() {}, onBeforeUnmount(fn) { callbacks.push(fn) } }, () => auth,
     overrides.options || (async () => ({ suites: [{ id: 1, name: '订单套件' }], cases: [
-      { id: 2, name: '创建订单', tags: ['order'], interface_name: '创建' }, { id: 3, name: '查询用户', tags: ['user'], interface_name: '用户' } ] })),
+      { id: 2, name: '创建订单', interface_name: '创建' }, { id: 3, name: '查询用户', interface_name: '用户' } ] })),
     async selection => { calls.push({ type: 'preview', selection }); return overrides.preview ? overrides.preview(selection) : ready('key') },
     async selection => { calls.push({ type: 'run', selection }); return overrides.run ? overrides.run(selection) : { report_id: 'run-1', results: [] } },
     () => ({ envs: Vue.ref([]), selectedEnv, loadEnvironments: async () => [] }), null, regressionRows,
@@ -42,12 +42,12 @@ test('nothing runs until a nonempty selection has a valid current preview', asyn
   assert.deepEqual(calls.at(-1).selection, { mode: 'suite', ids: [1], env_id: 1, preview_key: 'key', notify: false })
 })
 
-test('search and tag filters select visible cases without silently discarding checked cases', async t => {
+test('name searches select visible cases without silently discarding checked cases', async t => {
   const { state } = view(t)
   await state.loadOptions(); state.changeMode('case')
-  state.tagFilter.value = 'order'; state.selectVisible()
+  state.search.value = '创建'; state.selectVisible()
   assert.deepEqual(state.selectedIds.value, [2])
-  state.tagFilter.value = ''; state.search.value = '用户'; state.selectVisible()
+  state.search.value = '用户'; state.selectVisible()
   assert.deepEqual(state.selectedIds.value, [2, 3])
   state.changeMode('suite')
   assert.deepEqual(state.selectedIds.value, [])
@@ -131,13 +131,12 @@ test('scheduled execution reuses explicit selection and passes it to timing with
   assert.equal(calls.some(item => item.type === 'run'), false)
 })
 
-test('editing a legacy tag plan resolves current candidates explicitly, not all cases', async t => {
+test('an unconfigured schedule never silently selects all cases', async t => {
   const { state } = view(t)
   await state.loadOptions()
-  state.editSchedule({ id: 10, tag: 'order', env_id: 1 })
+  state.editSchedule({ id: 10, env_id: 1 })
   assert.equal(state.mode.value, 'case')
-  assert.deepEqual(state.selectedIds.value, [2])
-  assert.equal(state.editingSchedule.value.tag, 'order')
+  assert.deepEqual(state.selectedIds.value, [])
 })
 
 test('switching project closes the schedule editor and drops its old references', async t => {

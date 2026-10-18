@@ -70,7 +70,7 @@
         <p v-if="saveError" class="suite-save-error" role="alert">{{ saveError }}</p>
         </fieldset>
       </form>
-      <template #foot><span class="suite-selection-count">已选 {{ selection.scenario_ids.length }} 个场景、{{ selection.case_ids.length }} 个独立用例<span v-if="selection.tags.length"> · {{ selection.tags.length }} 个动态标签</span></span><button type="button" @click="closeDialog" class="btn btn-ghost" :disabled="saving">取消</button><button type="submit" form="suite-editor-form" class="btn btn-primary" :disabled="saving || !pickerReady">{{ saving ? '保存中…' : showEditDialog ? '保存修改' : '创建套件' }}</button></template>
+      <template #foot><span class="suite-selection-count">已选 {{ selection.scenario_ids.length }} 个场景、{{ selection.case_ids.length }} 个独立用例</span><button type="button" @click="closeDialog" class="btn btn-ghost" :disabled="saving">取消</button><button type="submit" form="suite-editor-form" class="btn btn-primary" :disabled="saving || !pickerReady">{{ saving ? '保存中…' : showEditDialog ? '保存修改' : '创建套件' }}</button></template>
     </Modal>
 
     <!-- 运行对话框 -->
@@ -129,7 +129,7 @@ export default {
         name: '',
         description: '',
       },
-      selection: { scenario_ids: [], case_ids: [], tags: [] },
+      selection: { scenario_ids: [], case_ids: [] },
       pickerReady: false, saving: false, saveError: '',
       suitesVersion: 0, envVersion: 0, saveVersion: 0,
     };
@@ -192,14 +192,13 @@ export default {
       if (this.saving || !this.pickerReady) return;
       this.saveError = '';
       if (!this.form.name.trim()) { this.saveError = '请填写套件名称'; return; }
-      if (this.selection.scenario_ids.length > 100 || this.selection.case_ids.length > 100 || this.selection.tags.length > 20) { this.saveError = '最多选择 100 个场景、100 个独立用例和 20 个标签'; return; }
+      if (this.selection.scenario_ids.length > 100 || this.selection.case_ids.length > 100) { this.saveError = '最多选择 100 个场景、100 个独立用例'; return; }
       const context = this.projectIdentity, version = ++this.saveVersion;
       const payload = {
         name: this.form.name.trim(),
         description: this.form.description?.trim() || null,
         scenario_ids: this.selection.scenario_ids.length ? [...this.selection.scenario_ids] : null,
         case_ids: this.selection.case_ids.length ? [...this.selection.case_ids] : null,
-        tags: this.selection.tags.length ? [...this.selection.tags] : null,
       };
       this.saving = true;
       try {
@@ -225,7 +224,7 @@ export default {
       this.editingId = suite.id;
       this.form.name = suite.name;
       this.form.description = suite.description || '';
-      this.selection = { scenario_ids: [...(suite.scenario_ids || [])], case_ids: [...(suite.case_ids || [])], tags: [...(suite.tags || [])] };
+      this.selection = { scenario_ids: [...(suite.scenario_ids || [])], case_ids: [...(suite.case_ids || [])] };
       this.pickerReady = false; this.saveError = '';
       this.showEditDialog = true;
     },
@@ -269,11 +268,11 @@ export default {
       this.showEditDialog = false;
       this.editingId = null;
       this.form = { name: '', description: '' };
-      this.selection = { scenario_ids: [], case_ids: [], tags: [] };
+      this.selection = { scenario_ids: [], case_ids: [] };
       this.pickerReady = false; this.saveError = '';
     },
     composition(suite) {
-      return [suite.scenario_ids?.length ? suite.scenario_ids.length + ' 场景' : '', suite.case_ids?.length ? suite.case_ids.length + ' 独立用例' : '', suite.tags?.length ? suite.tags.length + ' 动态标签' : ''].filter(Boolean).join(' · ') || '空套件';
+      return [suite.scenario_ids?.length ? suite.scenario_ids.length + ' 场景' : '', suite.case_ids?.length ? suite.case_ids.length + ' 独立用例' : ''].filter(Boolean).join(' · ') || '空套件';
     },
     closeMenusOutside(event) {
       if (typeof document === 'undefined') return;

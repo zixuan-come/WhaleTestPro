@@ -263,7 +263,7 @@ def ensure_operational_consistency_schema(bind) -> None:
                     "(`schedule_id`, `action`, `payload`, `attempts`) "
                     "SELECT `id`, 'sync', JSON_OBJECT("
                     "'id', `id`, 'project_id', `project_id`, "
-                    "'cron', `cron`, 'tag', `tag`, "
+                    "'cron', `cron`, "
                     f"'suite_id', {suite_value}, 'enabled', `enabled`"
                     "), 0 FROM `schedule` "
                     "ON DUPLICATE KEY UPDATE "
@@ -483,6 +483,77 @@ def run_all_migrations(*binds) -> None:
         ensure_traffic_capture_schema(bind)
         ensure_perf_run_schema(bind)
         ensure_schedule_selection_schema(bind)
+        ensure_tags_removed_schema(bind)
+
+
+def ensure_tags_removed_schema(bind) -> None:
+    """Retire tag columns; preserve explicit assets and any legacy target rules."""
+    from sqlalchemy import MetaData, Table, select
+    import json
+
+    def decoded(value):
+        return json.loads(value) if isinstance(value, str) else value
+
+    # Convert rules before any MySQL DDL (which commits implicitly). Re-running
+    # after a partial column drop is safe: explicit IDs are deduplicated.
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        tables = {name: Table(name, MetaData(), autoload_with=connection)
+                  for name in ("test_case", "test_suite", "schedule", "schedule_sync_outbox")
+                  if inspector.has_table(name)}
+        cases = tables.get("test_case")
+        legacy_columns = any(column in tables[name].c for name, column in
+                             (("test_case", "tags"), ("test_suite", "tags"), ("schedule", "tag")) if name in tables)
+        fields = [cases.c.id, cases.c.project_id] if cases is not None else []
+        if cases is not None and "tags" in cases.c:
+            fields.append(cases.c.tags)
+        rows = list(connection.execute(select(*fields).order_by(cases.c.id)).mappings()) if fields and legacy_columns else []
+
+        def matching(project_id, wanted):
+            wanted = set(wanted)
+            return [row["id"] for row in rows if row.get("project_id") == project_id
+                    and wanted.intersection(decoded(row.get("tags")) or [])]
+
+        suites = tables.get("test_suite")
+        if suites is not None and "tags" in suites.c:
+            for row in connection.execute(select(suites)).mappings().all():
+                tags = decoded(row["tags"]) or []
+                if not tags:
+                    continue
+                ids = list(dict.fromkeys([*(decoded(row["case_ids"]) or []), *matching(row["project_id"], tags)]))
+                if len(ids) > 100:
+                    raise RuntimeError(f"套件 #{row['id']} 转换后超过 100 个用例，请先拆分套件再升级")
+                connection.execute(suites.update().where(suites.c.id == row["id"]).values(case_ids=ids))
+        schedules = tables.get("schedule")
+        if schedules is not None and "tag" in schedules.c:
+            for row in connection.execute(select(schedules)).mappings().all():
+                if row.get("selection") or row.get("suite_id"):
+                    continue
+                ids = (matching(row["project_id"], [row["tag"]]) if row["tag"] else
+                       [case["id"] for case in rows if case.get("project_id") == row["project_id"]])
+                if len(ids) > 1000:
+                    raise RuntimeError(f"定时任务 #{row['id']} 转换后超过 1000 个用例，请先拆分任务再升级")
+                values = {"selection": {"mode": "case", "ids": ids} if ids else None,
+                          "notify": True, "sync_status": "pending"}
+                if not ids:
+                    values["enabled"] = False
+                connection.execute(schedules.update().where(schedules.c.id == row["id"]).values(**values))
+        outbox = tables.get("schedule_sync_outbox")
+        if outbox is not None:
+            for row in connection.execute(select(outbox)).mappings().all():
+                payload = decoded(row["payload"])
+                if isinstance(payload, dict) and "tag" in payload:
+                    payload.pop("tag")
+                    connection.execute(outbox.update().where(outbox.c.schedule_id == row["schedule_id"]).values(payload=payload))
+
+    for name, column in (("test_case", "tags"), ("test_suite", "tags"), ("schedule", "tag")):
+        with bind.begin() as connection:
+            inspector = inspect(connection)
+            if inspector.has_table(name) and column in {c["name"] for c in inspector.get_columns(name)}:
+                connection.execute(text(f"ALTER TABLE {name} DROP COLUMN {column}"))
+    if bind.dialect.name == "mysql":
+        with bind.begin() as connection:
+            _record_migration(connection, "020_remove_case_tags")
 
 
 def ensure_schedule_selection_schema(bind) -> None:

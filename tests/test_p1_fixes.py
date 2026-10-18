@@ -256,9 +256,13 @@ def test_scheduled_execution_receives_environment(db, monkeypatch):
     from app.tasks import schedule as tasks
     calls = []
     monkeypatch.setattr(tasks, "SessionLocal", lambda: db)
-    monkeypatch.setattr(tasks.execution_service, "run_regression", lambda *args, **kwargs: calls.append(kwargs) or {"passed": True})
-    assert tasks.scheduled_regression.run(1, "smoke", None, 1)["passed"]
-    assert calls[0]["env_id"] == 1
+    monkeypatch.setattr(tasks.schedule_repo, "db_get", lambda *args: SimpleNamespace(
+        name="daily", enabled=True, env_id=1, selection={"mode": "case", "ids": [1]}, notify=False))
+    monkeypatch.setattr(tasks.regression_service, "preview", lambda *args: {"preview_key": "a" * 64})
+    monkeypatch.setattr(tasks.regression_service, "run", lambda db, pid, selection, **kwargs:
+                        calls.append(selection) or {"passed": True})
+    assert tasks.scheduled_regression.run(project_id=1, schedule_id=1)["passed"]
+    assert calls[0].env_id == 1 and calls[0].ids == [1]
 
 
 def test_schedule_environment_migration_is_repeatable():
@@ -311,16 +315,16 @@ def test_schedule_reference_prevents_environment_deletion(db):
 def test_redbeat_definition_and_index_are_checked(drift, monkeypatch):
     import redbeat.schedulers
     from app.core import scheduler
-    job = SimpleNamespace(id=1, project_id=1, tag=None, suite_id=None, env_id=1,
+    job = SimpleNamespace(id=1, project_id=1, suite_id=None, env_id=1,
                           enabled=True, cron="0 0 * * *")
     deleted = []
-    entry = SimpleNamespace(task=scheduler.TASK, args=[1, None, None, 1],
-                            kwargs={"schedule_id": 1},
+    entry = SimpleNamespace(task=scheduler.TASK, args=[],
+                            kwargs={"project_id": 1, "schedule_id": 1},
                             schedule=scheduler._parse_cron(job.cron), key="redbeat:schedule-1",
                             app=SimpleNamespace(redbeat_conf=SimpleNamespace(schedule_key="redbeat:zset")),
                             delete=lambda: deleted.append(True))
     if drift == "arguments":
-        entry.args[-1] = 999
+        entry.kwargs["project_id"] = 999
     elif drift == "missing-environment":
         job.env_id = None
     monkeypatch.setattr(scheduler.RedBeatSchedulerEntry, "from_key", lambda *a, **k: entry)
