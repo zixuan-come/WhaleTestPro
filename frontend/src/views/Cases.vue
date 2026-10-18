@@ -108,20 +108,6 @@ const advancedConfigCount = computed(() => [
   form.datasets,
 ].filter(jsonFieldHasValue).length)
 
-function hasAdvancedConfig(testCase) {
-  return [
-    testCase.assertions,
-    testCase.extract_rules,
-    testCase.setup_sql,
-    testCase.teardown_sql,
-    testCase.datasets,
-  ].some(value => {
-    if (Array.isArray(value)) return value.length > 0
-    if (value && typeof value === 'object') return Object.keys(value).length > 0
-    return value != null && value !== ''
-  })
-}
-
 function ifaceLabel(id) {
   const it = ifaceMap.value[id]
   return it ? `${(it.method || 'GET').toUpperCase()} ${it.name}` : `#${id}`
@@ -181,7 +167,7 @@ function openEdit(testCase) {
   form.datasets = formatJsonField(testCase.datasets)
   independentRequest.value = testCase.request_overrides != null
   requestForm.value = requestDraft(requestConfig(selectedInterface.value || {}, testCase.request_overrides))
-  showAdvanced.value = props.detailMode || hasAdvancedConfig(testCase)
+  showAdvanced.value = false
   formErr.value = ''
   showModal.value = true
   markClean()
