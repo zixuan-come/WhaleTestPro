@@ -5,6 +5,7 @@ import { ref, reactive, computed, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import {
   listPerfTasks, createPerfTask, deletePerfTask, runPerfTask, stopPerfTask,
+  updatePerfTask, listPerfRuns, getPerfRun, clearPerfRuns,
 } from '../api/perf'
 import { listInterfaces } from '../api/interface'
 import { listEnvironments } from '../api/environment'
@@ -30,6 +31,35 @@ const error = ref('')
 const showModal = ref(false)
 const showDetail = ref(false)
 const detailTask = ref(null)
+const detailFollowsLatest = ref(true)
+const detailExecutionId = ref(null)
+let detailVersion = 0, historyVersion = 0
+const editingId = ref(null)
+const showHistory = ref(false)
+const historyTask = ref(null)
+const historyRows = ref([])
+const historyTotal = ref(0)
+const historyOffset = ref(0)
+const historyLoading = ref(false)
+const historyError = ref('')
+const selectedRuns = ref([])
+const clearingRuns = ref(false)
+const HISTORY_PAGE_SIZE = 10
+const transactionStats = computed(() => {
+  const s = detailTask.value?.iteration_stats
+  if (typeof s?.iterations !== 'number' || typeof s?.failures !== 'number') return null
+  const elapsed = s.elapsed_seconds
+  return { count: s.iterations, failures: s.failures,
+    average: s.avg_tps ?? s.iteration_rps,
+    success: s.success_tps ?? (elapsed > 0 ? (s.iterations - s.failures) / elapsed : null),
+    failRatio: s.fail_ratio ?? (s.iterations > 0 ? s.failures / s.iterations : 0),
+    current: detailTask.value.history_samples?.at(-1)?.tps,
+  }
+})
+const errorsExpanded = ref(false)
+watch(() => Boolean(detailTask.value?.error_summary?.length), (hasErrors) => {
+  if (hasErrors) errorsExpanded.value = true
+})
 const saving = ref(false)
 const formErr = ref('')
 const runningId = ref(null)      // 正在触发运行的任务 id
@@ -59,15 +89,18 @@ const historyChart = computed(() => {
   const padY = 18
   const plotW = width - padX * 2
   const plotH = 140
-  const maxRpsValue = Math.max(...samples.map(s => Number(s.rps) || 0), 1)
+  const maxRpsValue = Math.max(...samples.map(s => Math.max(Number(s.rps) || 0, Number(s.tps) || 0)), 1)
   const maxLatency = Math.max(...samples.map(s => Number(s.avg_response_ms) || 0), 1)
   const toPoints = (key, maxValue) => samples.map((sample, index) => {
+    if (key === 'tps' && sample.tps == null) return null
     const x = padX + (index / (samples.length - 1)) * plotW
     const y = padY + plotH - ((Number(sample[key]) || 0) / maxValue) * plotH
     return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
+  }).filter(Boolean).join(' ')
   return {
     rpsPoints: toPoints('rps', maxRpsValue),
+    tpsPoints: samples.some(s => s.tps != null) ? toPoints('tps', maxRpsValue) : null,
+    maxTps: Math.max(...samples.map(s => Number(s.tps) || 0)),
     latencyPoints: toPoints('avg_response_ms', maxLatency),
     maxRps: maxRpsValue,
     maxLatency,
@@ -109,6 +142,7 @@ async function load() {
 }
 
 function openCreate() {
+  editingId.value = null
   form.name = ''
   form.interface_id = ''
   form.env_id = ''
@@ -182,6 +216,7 @@ function closeModal() {
 }
 
 async function save() {
+  const version = pageVersion
   formErr.value = ''
   if (!form.name.trim()) { formErr.value = '请填写任务名称'; return }
   if (!form.target_host.trim()) { formErr.value = '请填写目标 Host'; return }
@@ -192,7 +227,7 @@ async function save() {
   saving.value = true
   try {
     const plan = buildPerfPlan(form, steps.value)
-    await createPerfTask({
+    const payload = {
       name: form.name.trim(),
       target_host: form.target_host.trim(),
       target_path: plan.steps[0].path.slice(0, 255),
@@ -200,13 +235,16 @@ async function save() {
       users: Number(form.users),
       spawn_rate: Number(form.spawn_rate),
       duration: Number(form.duration),
-    })
+    }
+    if (editingId.value) await updatePerfTask(editingId.value, payload)
+    else await createPerfTask(payload)
+    if (version !== pageVersion) return
     showModal.value = false
     await load()
   } catch (e) {
-    formErr.value = e.message || '保存失败'
+    if (version === pageVersion) formErr.value = e.message || '保存失败'
   } finally {
-    saving.value = false
+    if (version === pageVersion) saving.value = false
   }
 }
 
@@ -234,7 +272,7 @@ async function onStop(task) {
   const version = pageVersion
   stoppingId.value = task.id
   try {
-    const updated = await stopPerfTask(task.id)
+    const updated = await stopPerfTask(task.id, task.celery_task_id)
     if (version !== pageVersion) return
     ++refreshSerial
     const i = items.value.findIndex(t => t.id === task.id)
@@ -247,10 +285,72 @@ async function onStop(task) {
   }
 }
 
-function openDetail(task) { detailTask.value = task; showDetail.value = true }
+function openDetail(task, followsLatest = true) {
+  ++detailVersion
+  detailFollowsLatest.value = followsLatest
+  detailExecutionId.value = task.celery_task_id
+  detailTask.value = task
+  errorsExpanded.value = Boolean(task.error_summary?.length)
+  showDetail.value = true
+}
+
+async function openLatestResult(task) {
+  if (['queued', 'running'].includes(task.status)) { openDetail(task); return }
+  if (!task.latest_run_id) { showMessage('暂无执行记录，请先运行任务', 'info'); return }
+  const version = ++detailVersion, page = pageVersion
+  try {
+    const run = await getPerfRun(task.id, task.latest_run_id)
+    if (version === detailVersion && page === pageVersion) openDetail(run.result, false)
+  } catch (e) { if (version === detailVersion && page === pageVersion) showMessage(e.message || '读取结果失败', 'error') }
+}
+
+function openEdit(task) {
+  openCreate()
+  editingId.value = task.id
+  Object.assign(form, { name: task.name, target_host: task.target_host, users: task.users, spawn_rate: task.spawn_rate, duration: task.duration })
+  const plan = task.load_config
+  if (plan) {
+    Object.assign(form, { mode: plan.mode, variables: JSON.stringify(plan.variables || {}, null, 2), datasets: JSON.stringify(plan.datasets || [], null, 2), stop_on_failure: plan.stop_on_failure, timeout_seconds: plan.timeout_seconds, wait_seconds: plan.wait_seconds })
+    steps.value = plan.steps.map(step => ({ ...newPerfStep(), ...step, headers: JSON.stringify(step.headers || {}, null, 2), params: JSON.stringify(step.params || {}, null, 2), body: step.body_type === 'raw' ? step.body : step.body_type === 'none' ? '' : JSON.stringify(step.body, null, 2), expected_status: step.expected_status ?? '', extract_rules: JSON.stringify(step.extract_rules || {}, null, 2), assertions: JSON.stringify(step.assertions || [], null, 2) }))
+  } else steps.value = [{ ...newPerfStep(), name: task.name, path: task.target_path }]
+}
+
+function runTime(value) {
+  if (!value) return '—'
+  return new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : value + 'Z').toLocaleString('zh-CN', { hour12: false })
+}
+async function loadHistory(offset = historyOffset.value) {
+  const version = ++historyVersion, page = pageVersion
+  historyOffset.value = offset; historyLoading.value = true; historyError.value = ''; selectedRuns.value = []
+  try {
+    const result = await listPerfRuns(historyTask.value.id, { offset, limit: HISTORY_PAGE_SIZE })
+    if (version !== historyVersion || page !== pageVersion) return
+    historyRows.value = result.items; historyTotal.value = result.total
+    if (!result.items.length && offset > 0) return loadHistory(Math.max(0, offset - HISTORY_PAGE_SIZE))
+  } catch (e) { if (version === historyVersion && page === pageVersion) historyError.value = e.message || '历史记录加载失败' }
+  finally { if (version === historyVersion && page === pageVersion) historyLoading.value = false }
+}
+function closeHistory() { ++historyVersion; showHistory.value = false; historyLoading.value = false }
+function openHistory(task) { historyTask.value = task; historyRows.value = []; historyTotal.value = 0; showHistory.value = true; loadHistory(0) }
+function viewRun(run) { closeHistory(); openDetail(run.result, ['queued', 'running'].includes(run.status)) }
+async function clearHistory(ids = null) {
+  if (clearingRuns.value) return
+  const taskId = historyTask.value.id, page = pageVersion
+  const accepted = await confirmAction(`确认清理${ids ? '选中的 ' + ids.length + ' 条' : '全部已结束的'}执行记录？任务配置仍然保留，清理后无法恢复。`)
+  if (!accepted || page !== pageVersion || !showHistory.value || historyTask.value.id !== taskId) return
+  clearingRuns.value = true
+  try {
+    const result = await clearPerfRuns(taskId, ids ? { run_ids: ids } : { all_finished: true })
+    if (page !== pageVersion) return
+    showMessage(`已清理 ${result.deleted} 条执行记录，任务配置已保留`, 'success')
+    await refresh()
+    if (showHistory.value && historyTask.value.id === taskId) await loadHistory()
+  } catch (e) { if (page === pageVersion) showMessage(e.message || '清理失败', 'error') }
+  finally { if (page === pageVersion) clearingRuns.value = false }
+}
 
 async function onDelete(task) {
-  if (!(await confirmAction(`确认删除压测任务「${task.name}」?`))) return
+  if (!(await confirmAction(`确认删除压测任务「${task.name}」及其全部执行记录？`))) return
   try {
     await deletePerfTask(task.id)
     items.value = items.value.filter(t => t.id !== task.id)
@@ -271,9 +371,9 @@ async function refresh() {
     if (version !== pageVersion || serial !== refreshSerial) return
     pollError.value = ''
     items.value = tasks
-    if (showDetail.value && detailTask.value) {
+    if (showDetail.value && detailTask.value && detailFollowsLatest.value) {
       const latest = tasks.find(t => t.id === detailTask.value.id)
-      if (latest) detailTask.value = latest
+      if (latest && latest.celery_task_id === detailExecutionId.value) detailTask.value = latest
     }
   } catch {
     if (version === pageVersion && serial === refreshSerial) pollError.value = '实时数据刷新失败，已保留上次采样，将继续重试。'
@@ -287,6 +387,7 @@ watch(runningCount, (n) => { n > 0 ? startPoll() : stopPoll() })
 
 watch(() => auth.currentProjectId, () => {
   ++pageVersion; ++refreshSerial; refreshPending = null; stopPoll()
+  ++detailVersion; closeHistory(); clearingRuns.value = false; editingId.value = null; saving.value = false
   items.value = []; detailTask.value = null; showDetail.value = false
   interfaces.value = []; cases.value = []; scenarios.value = []; envs.value = []
   runningId.value = null; stoppingId.value = null; pollError.value = ''; showModal.value = false
@@ -347,11 +448,13 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
         <span class="c-p99">{{ fmtMs(t.p99_response_ms) }}</span>
         <span class="c-fail" :class="{ bad: t.fail_ratio > 0 }">{{ fmtFail(t.fail_ratio) }}</span>
         <span class="c-act">
-          <button v-if="t.status === 'pending'" class="icon-btn run" title="运行" :disabled="runningId === t.id" @click="onRun(t)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
+          <button v-if="!['queued', 'running'].includes(t.status)" class="btn btn-ghost live-detail-button" :disabled="runningId != null || runningCount > 0" @click="onRun(t)">
+            {{ t.status === 'pending' ? '运行' : '再次运行' }}
           </button>
           <button v-if="['queued', 'running'].includes(t.status)" class="icon-btn stop" title="停止" :disabled="stoppingId === t.id" @click="onStop(t)">■</button>
-          <button class="btn btn-ghost live-detail-button" @click="openDetail(t)">{{ ['queued','running'].includes(t.status) ? '实时结果' : '结果' }}</button>
+          <button v-if="t.history_count || ['queued','running'].includes(t.status)" class="btn btn-ghost live-detail-button" @click="openLatestResult(t)">{{ ['queued','running'].includes(t.status) ? '实时结果' : '查看结果' }}</button>
+          <button class="btn btn-ghost live-detail-button" @click="openHistory(t)">历史记录</button>
+          <button class="icon-btn" title="修改配置" aria-label="修改配置" :disabled="['queued','running'].includes(t.status)" @click="openEdit(t)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m16 3 5 5-12 12-6 1 1-6Z" /></svg></button>
           <button class="icon-btn del" title="删除" :disabled="['queued', 'running'].includes(t.status)" @click="onDelete(t)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
           </button>
@@ -362,28 +465,79 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
 
 <Modal v-if="showDetail" :title="detailLive ? '压测实时结果' : '压测结果详情'" :max-width="920" hide-scrollbar @close="showDetail = false">
     <div v-if="detailTask" class="perf-detail">
-      <div class="detail-head"><div><strong>{{ detailTask.name }}</strong><small>{{ detailTask.target_host }}{{ detailTask.target_path }}</small></div><span class="badge" :class="statusClass(detailTask.status)"><span class="dot"></span>{{ statusText(detailTask.status) }}</span></div>
-      <div v-if="detailTask.failure_reason" class="form-err">{{ detailTask.failure_reason }}</div>
-      <div class="live-status" role="status"><span>{{ detailLive ? '每 3 秒自动刷新，无需停止压测' : '已保留最后采样与累计统计' }}</span><span>{{ latestSample ? '采样时间 ' + sampleTime(latestSample.sampled_at) + ' · 已运行 ' + Math.round(latestSample.elapsed_s) + ' 秒' : '等待首批采样' }}</span></div>
-      <div v-if="pollError" class="form-err" role="alert">{{ pollError }} <button class="btn btn-ghost" @click="refresh">重试</button></div>
-      <div class="live-counts"><span>累计请求 <strong>{{ requestTotals.requests }}</strong></span><span>失败请求 <strong>{{ requestTotals.failures }}</strong></span><span>当前用户 <strong>{{ latestSample?.users ?? '—' }}</strong></span></div>
-      <div class="plan-hint">{{ detailTask.load_config?.mode === 'chain' ? '有序链路' : '单接口' }} · RPS / P95 / P99 是 HTTP 请求统计，不是整轮链路指标。</div>
-      <div v-if="detailTask.iteration_stats" class="iteration-metrics">
-        <span>完成轮次 {{ detailTask.iteration_stats.iterations }}</span>
-        <span>失败轮次 {{ detailTask.iteration_stats.failures }}</span>
-        <span>轮次吞吐 {{ fmtRps(detailTask.iteration_stats.iteration_rps) }} /s</span>
-        <span>整轮平均 {{ fmtMs(detailTask.iteration_stats.avg_duration_ms) }}</span>
+      <div class="detail-head">
+        <div class="detail-heading">
+          <strong>{{ detailTask.name }}</strong>
+          <div class="detail-meta"><span>{{ detailTask.load_config?.mode === 'chain' ? '有序链路' : '单接口' }}</span><span>并发 {{ detailTask.users ?? '—' }}</span><span>持续 {{ detailTask.duration ?? '—' }} 秒</span></div>
+          <small>{{ detailTask.target_host }}{{ detailTask.target_path }}</small>
+        </div>
+        <span class="badge" :class="statusClass(detailTask.status)"><span class="dot"></span>{{ statusText(detailTask.status) }}</span>
+        <div class="live-status" role="status"><span>{{ detailLive ? '每 3 秒自动刷新' : '已保留最后采样与累计统计' }}</span><span>{{ latestSample ? '最后采样 ' + sampleTime(latestSample.sampled_at) + ' · 已运行 ' + Math.round(latestSample.elapsed_s) + ' 秒' : '等待首批采样' }}</span></div>
       </div>
-      <ol v-if="detailTask.load_config" class="plan-summary"><li v-for="(step, index) in detailTask.load_config.steps" :key="index">step_{{ String(index + 1).padStart(2, '0') }} · {{ step.name }} · {{ step.method }} {{ step.path.split('?')[0] }}</li></ol>
-      <div class="detail-metrics"><div><span>RPS</span><strong>{{ fmtRps(detailTask.rps) }}</strong></div><div><span>平均耗时</span><strong>{{ fmtMs(detailTask.avg_response_ms) }}</strong></div><div><span>P95</span><strong>{{ fmtMs(detailTask.p95_response_ms) }}</strong></div><div><span>P99</span><strong>{{ fmtMs(detailTask.p99_response_ms) }}</strong></div><div><span>失败率</span><strong>{{ fmtFail(detailTask.fail_ratio) }}</strong></div></div>
-      <div class="detail-section"><div class="detail-title">接口维度统计</div><div v-if="detailTask.request_stats?.length" class="detail-table detail-table-wide"><div class="detail-row detail-row-wide detail-row-head"><span>接口</span><span>请求数</span><span>失败数</span><span>失败率</span><span>RPS</span><span>平均耗时</span><span>P95</span><span>P99</span></div><div v-for="row in detailTask.request_stats" :key="`${row.method}-${row.name}`" class="detail-row detail-row-wide"><span>{{ row.method }} {{ statLabel(detailTask, row) }}</span><span>{{ row.num_requests ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ row.num_failures ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ fmtFail(row.num_requests ? row.num_failures / row.num_requests : 0) }}</span><span>{{ fmtRps(row.rps) }}</span><span>{{ fmtMs(row.avg_response_ms) }}</span><span>{{ fmtMs(row.p95_response_ms) }}</span><span>{{ fmtMs(row.p99_response_ms) }}</span></div></div><div v-else class="state">暂无按接口统计。</div></div>
-      <div class="detail-section"><div class="detail-title">历史趋势</div><div v-if="historyChart" class="history-chart"><div class="history-chart-head"><span>压测趋势</span><small>RPS 左轴 · 平均耗时右轴 · 运行至 {{ historyChart.lastElapsed }}s</small></div><svg viewBox="0 0 640 190" role="img" aria-label="压测历史趋势图" preserveAspectRatio="none"><line x1="42" y1="18" x2="42" y2="158" /><line x1="598" y1="18" x2="598" y2="158" /><line x1="42" y1="158" x2="598" y2="158" /><line class="grid-line" x1="42" y1="88" x2="598" y2="88" /><text x="6" y="22">{{ fmtRps(historyChart.maxRps) }}</text><text x="10" y="162">0</text><text x="602" y="22">{{ fmtMs(historyChart.maxLatency) }}</text><text x="612" y="162">0 ms</text><polyline class="trend-rps" :points="historyChart.rpsPoints" /><polyline class="trend-latency" :points="historyChart.latencyPoints" /></svg><div class="history-legend"><span><i class="legend-rps"></i>RPS（峰值 {{ fmtRps(historyChart.maxRps) }}）</span><span><i class="legend-latency"></i>平均耗时（峰值 {{ fmtMs(historyChart.maxLatency) }}）</span></div></div><div v-else class="state">等待至少两次采样后显示趋势，运行中自动更新。</div></div><div class="detail-section"><div class="detail-title">历史采样明细</div><div v-if="detailTask.history_samples?.length" class="history-list"><div v-for="sample in detailTask.history_samples" :key="sample.elapsed_s" class="history-row"><span>{{ sample.elapsed_s }}s</span><span>RPS {{ fmtRps(sample.rps) }}</span><span>平均 {{ fmtMs(sample.avg_response_ms) }}</span><span>P95 {{ fmtMs(sample.p95_response_ms) }}</span><span>失败 {{ fmtFail(sample.fail_ratio) }}</span></div></div><div v-else class="state">暂无历史采样。</div></div>
-      <div class="detail-section"><div class="detail-title">错误分布</div><div v-if="detailTask.error_summary?.length" class="error-list"><div v-for="err in detailTask.error_summary" :key="err.name + err.message" class="error-row"><span>{{ err.name }}</span><strong>{{ err.error_count }}</strong><small>{{ err.message || '未提供错误信息' }}</small></div></div><div v-else class="state">本次压测没有记录错误。</div></div>
+      <div v-if="detailTask.failure_reason" class="form-err">{{ detailTask.failure_reason }}</div>
+      <div v-if="pollError" class="form-err" role="alert">{{ pollError }} <button class="btn btn-ghost" @click="refresh">重试</button></div>
+      <section class="detail-section" aria-label="请求统计概览">
+        <div class="detail-metrics"><div><span>RPS</span><strong>{{ fmtRps(detailTask.rps) }}</strong></div><div><span>平均耗时</span><strong>{{ fmtMs(detailTask.avg_response_ms) }}</strong></div><div><span>P95</span><strong>{{ fmtMs(detailTask.p95_response_ms) }}</strong></div><div><span>P99</span><strong>{{ fmtMs(detailTask.p99_response_ms) }}</strong></div><div><span>失败率</span><strong>{{ fmtFail(detailTask.fail_ratio) }}</strong></div></div>
+        <div class="live-counts"><span>累计请求 <strong>{{ requestTotals.requests }}</strong></span><span>失败请求 <strong :class="{ bad: requestTotals.failures > 0 }">{{ requestTotals.failures }}</strong></span><span v-if="detailLive">当前用户 <strong>{{ latestSample?.users ?? '—' }}</strong></span></div>
+      </section>
+      <section v-if="transactionStats" class="detail-section transaction-section">
+        <div class="detail-title">事务统计 · TPS</div>
+        <div class="detail-metrics transaction-metrics"><div><span>平均 TPS</span><strong>{{ fmtRps(transactionStats.average) }}</strong></div><div><span>成功 TPS</span><strong>{{ fmtRps(transactionStats.success) }}</strong></div><div><span>最近区间 TPS</span><strong>{{ fmtRps(transactionStats.current) }}</strong></div><div><span>事务失败率</span><strong>{{ fmtFail(transactionStats.failRatio) }}</strong></div></div>
+        <div class="live-counts"><span>完成事务 <strong>{{ transactionStats.count ?? '—' }}</strong></span><span>失败事务 <strong>{{ transactionStats.failures ?? '—' }}</strong></span><span>整轮平均 <strong>{{ fmtMs(detailTask.iteration_stats.avg_duration_ms) }}</strong></span></div>
+        <p class="detail-note">{{ detailTask.load_config?.mode === 'chain' ? '整条链路执行一轮计为一个事务' : '单接口执行一轮计为一个事务' }}；平均 TPS 包含失败事务，成功 TPS 仅计全部检查通过的事务。RPS 按 HTTP 请求统计。</p>
+      </section>
+      <section class="detail-section">
+        <div class="detail-title">接口维度统计</div>
+        <div v-if="detailTask.request_stats?.length" class="detail-table detail-table-wide" tabindex="0" aria-label="接口维度统计，窄屏可左右滚动">
+          <div class="detail-row detail-row-wide detail-row-head"><span>接口</span><span>请求数</span><span>失败数</span><span>失败率</span><span>RPS</span><span>平均耗时</span><span>P95</span><span>P99</span></div>
+          <div v-for="row in detailTask.request_stats" :key="row.method + '-' + row.name" class="detail-row detail-row-wide">
+            <span class="detail-interface"><span class="method-tag">{{ row.method }}</span><span :title="statLabel(detailTask, row)">{{ statLabel(detailTask, row) }}</span></span>
+            <span>{{ row.num_requests ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ row.num_failures ?? 0 }}</span><span :class="{ bad: row.num_failures > 0 }">{{ fmtFail(row.num_requests ? row.num_failures / row.num_requests : 0) }}</span><span>{{ fmtRps(row.rps) }}</span><span>{{ fmtMs(row.avg_response_ms) }}</span><span>{{ fmtMs(row.p95_response_ms) }}</span><span>{{ fmtMs(row.p99_response_ms) }}</span>
+          </div>
+        </div>
+        <div v-else class="state">暂无按接口统计。</div>
+      </section>
+      <div class="detail-section"><div class="detail-title">历史趋势</div><div v-if="historyChart" class="history-chart"><div class="history-chart-head"><span>压测趋势</span><small>{{ historyChart.tpsPoints ? 'RPS / TPS 左轴' : 'RPS 左轴' }} · 平均耗时右轴 · 运行至 {{ historyChart.lastElapsed }}s</small></div><svg viewBox="0 0 640 190" role="img" aria-label="压测历史趋势图" preserveAspectRatio="none"><line x1="42" y1="18" x2="42" y2="158" /><line x1="598" y1="18" x2="598" y2="158" /><line x1="42" y1="158" x2="598" y2="158" /><line class="grid-line" x1="42" y1="88" x2="598" y2="88" /><text x="6" y="22">{{ fmtRps(historyChart.maxRps) }}</text><text x="10" y="162">0</text><text x="602" y="22">{{ fmtMs(historyChart.maxLatency) }}</text><text x="612" y="162">0 ms</text><polyline class="trend-rps" :points="historyChart.rpsPoints" /><polyline v-if="historyChart.tpsPoints" class="trend-tps" :points="historyChart.tpsPoints" /><polyline class="trend-latency" :points="historyChart.latencyPoints" /></svg><div class="history-legend"><span><i class="legend-rps"></i>RPS（峰值 {{ fmtRps(historyChart.maxRps) }}）</span><span v-if="historyChart.tpsPoints"><i class="legend-tps"></i>TPS（峰值 {{ fmtRps(historyChart.maxTps) }}）</span><span><i class="legend-latency"></i>平均耗时（峰值 {{ fmtMs(historyChart.maxLatency) }}）</span></div></div><div v-else class="state">等待至少两次采样后显示趋势，运行中自动更新。</div></div>
+      <details :key="'config-' + detailTask.id" class="detail-disclosure config-disclosure">
+        <summary><span>执行配置</span><small>{{ detailTask.load_config?.steps?.length ? '共 ' + detailTask.load_config.steps.length + ' 个步骤' : '目标接口' }}</small></summary>
+        <div class="disclosure-body">
+          <ol v-if="detailTask.load_config?.steps?.length" class="plan-summary">
+            <li v-for="(step, index) in detailTask.load_config.steps" :key="index"><span class="step-number">{{ String(index + 1).padStart(2, '0') }}</span><div class="step-summary"><strong>{{ step.name || '未命名步骤' }}</strong><div><span class="method-tag">{{ step.method }}</span><code>{{ step.path.split('?')[0] }}</code></div></div></li>
+          </ol>
+          <div v-else class="legacy-target"><span class="method-tag">{{ detailTask.method || '—' }}</span><code>{{ detailTask.target_path || '/' }}</code></div>
+        </div>
+      </details>
+      <details :key="'samples-' + detailTask.id" class="detail-disclosure samples-disclosure">
+        <summary><span>历史采样明细</span><small>{{ detailTask.history_samples?.length || 0 }} 条</small></summary>
+        <div class="disclosure-body"><div v-if="detailTask.history_samples?.length" class="history-list"><div v-for="sample in detailTask.history_samples" :key="sample.elapsed_s" class="history-row"><span>{{ sample.elapsed_s }}s</span><span>RPS {{ fmtRps(sample.rps) }}</span><span>平均 {{ fmtMs(sample.avg_response_ms) }}</span><span>P95 {{ fmtMs(sample.p95_response_ms) }}</span><span>失败 {{ fmtFail(sample.fail_ratio) }}</span><span v-if="sample.tps != null">TPS {{ fmtRps(sample.tps) }}</span></div></div><div v-else class="state">暂无历史采样。</div></div>
+      </details>
+      <details :key="'errors-' + detailTask.id" class="detail-disclosure errors-disclosure" :open="errorsExpanded" @toggle="errorsExpanded = $event.target.open">
+        <summary><span>错误分布</span><small :class="{ bad: detailTask.error_summary?.length }">{{ detailTask.error_summary?.length || 0 }} 类</small></summary>
+        <div class="disclosure-body"><div v-if="detailTask.error_summary?.length" class="error-list"><div v-for="err in detailTask.error_summary" :key="err.name + err.message" class="error-row"><span>{{ statLabel(detailTask, err) }}</span><strong>{{ err.error_count }}</strong><small>{{ err.message || '未提供错误信息' }}</small></div></div><div v-else class="state">本次压测没有记录错误。</div></div>
+      </details>
     </div>
-    <template #foot><span class="grafana-help">平台内可查看实时结果；Grafana 使用独立账号。</span><button v-if="detailLive" class="btn btn-ghost" :disabled="stoppingId === detailTask.id" @click="onStop(detailTask)">{{ stoppingId === detailTask.id ? '停止中…' : '停止压测' }}</button><button class="btn btn-primary" @click="showDetail = false">关闭</button></template>
+    <template #foot><button v-if="detailLive" class="btn btn-ghost" :disabled="stoppingId === detailTask.id" @click="onStop(detailTask)">{{ stoppingId === detailTask.id ? '停止中…' : '停止压测' }}</button><button class="btn btn-primary" @click="showDetail = false">关闭</button></template>
   </Modal>
   <!-- 新建压测弹层 -->
-  <Modal v-if="showModal" title="新建压测任务" :max-width="820" :busy="saving" @close="closeModal">
+  <Modal v-if="showHistory" :title="'执行历史 · ' + historyTask.name" :max-width="900" hide-scrollbar :busy="clearingRuns" @close="closeHistory">
+    <div class="perf-history">
+      <div class="history-toolbar"><span>共 {{ historyTotal }} 条记录 · 清理后保留任务配置</span><button class="btn btn-ghost" :disabled="clearingRuns || historyLoading || !historyTotal" @click="clearHistory()">清理已结束记录</button></div>
+      <div v-if="historyError" class="form-err" role="alert">{{ historyError }} <button class="btn btn-ghost" @click="loadHistory()">重试</button></div>
+      <div v-else-if="historyLoading" class="state">加载中…</div>
+      <div v-else-if="!historyRows.length" class="state">暂无执行记录，运行任务后将在这里保留每轮结果。</div>
+      <div v-else class="run-list">
+        <div v-for="run in historyRows" :key="run.id" class="run-item">
+          <input v-model="selectedRuns" type="checkbox" :value="run.id" :aria-label="'选择执行记录 ' + run.id" :disabled="clearingRuns || ['queued','running'].includes(run.status)" />
+          <div class="run-info"><strong>#{{ run.id }} · {{ runTime(run.result.queued_at || run.result.started_at || run.created_at) }}</strong><small>{{ run.result.users }} VU · {{ run.result.duration }} 秒 · RPS {{ fmtRps(run.result.rps) }} · 平均 TPS {{ fmtRps(run.result.iteration_stats?.avg_tps ?? run.result.iteration_stats?.iteration_rps) }}</small></div>
+          <span class="badge" :class="statusClass(run.status)"><span class="dot"></span>{{ statusText(run.status) }}</span>
+          <div class="run-actions"><button class="btn btn-ghost" @click="viewRun(run)">查看结果</button><button class="btn btn-ghost" :disabled="clearingRuns || ['queued','running'].includes(run.status)" @click="clearHistory([run.id])">清理</button></div>
+        </div>
+      </div>
+      <div v-if="historyTotal > HISTORY_PAGE_SIZE" class="history-pagination"><button class="btn btn-ghost" :disabled="historyLoading || clearingRuns || historyOffset === 0" @click="loadHistory(historyOffset - HISTORY_PAGE_SIZE)">上一页</button><span>{{ Math.floor(historyOffset / HISTORY_PAGE_SIZE) + 1 }} / {{ Math.ceil(historyTotal / HISTORY_PAGE_SIZE) }}</span><button class="btn btn-ghost" :disabled="historyLoading || clearingRuns || historyOffset + HISTORY_PAGE_SIZE >= historyTotal" @click="loadHistory(historyOffset + HISTORY_PAGE_SIZE)">下一页</button></div>
+    </div>
+    <template #foot><span class="history-selected">已选 {{ selectedRuns.length }} 条</span><button class="btn btn-ghost" :disabled="!selectedRuns.length || clearingRuns || historyLoading" @click="clearHistory([...selectedRuns])">清理选中</button><button class="btn btn-primary" :disabled="clearingRuns" @click="closeHistory">关闭</button></template>
+  </Modal>
+  <Modal v-if="showModal" :title="editingId ? '修改压测配置' : '新建压测任务'" :max-width="820" :busy="saving" @close="closeModal">
     <div class="field">
       <label>任务名称</label>
       <input v-model="form.name" placeholder="如:下单接口 200 并发" />
@@ -460,7 +614,7 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
 
     <template #foot>
       <button class="btn btn-ghost" @click="closeModal" :disabled="saving">取消</button>
-      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '创建中…' : '创建' }}</button>
+      <button class="btn btn-primary" @click="save" :disabled="saving">{{ saving ? '保存中…' : editingId ? '保存配置' : '创建' }}</button>
     </template>
   </Modal>
 </template>
@@ -550,6 +704,94 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
   .row { grid-template-columns:1fr 72px 64px 76px; gap:8px; padding:12px 14px; }
   .c-load, .c-fail { display:none; }
   .grid2, .grid3 { grid-template-columns:1fr; }
+}
+
+/* Result overview and disclosures share the modal content edge. */
+.perf-detail { gap:20px; min-width:0; }
+.perf-detail .detail-head { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:12px; padding:14px 16px; }
+.detail-heading { min-width:0; }
+.perf-detail .detail-head strong { font-size:15px; line-height:1.5; overflow-wrap:anywhere; }
+.detail-meta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:5px; font-size:12px; color:var(--text-muted); }
+.perf-detail .detail-head small { line-height:1.6; }
+.perf-detail .live-status { grid-column:1/-1; padding-top:10px; border-top:1px solid var(--border); gap:4px 12px; font-size:11px; }
+.perf-detail .live-counts { padding:3px 0 0; border:0; background:none; border-radius:0; gap:8px 24px; }
+.perf-detail .detail-metrics>div { padding:12px; }
+.perf-detail .detail-metrics strong { font-family:ui-monospace,Consolas,monospace; font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
+.perf-detail .detail-title { font-size:13px; color:var(--text); }
+.perf-detail .iteration-metrics { padding:10px 12px; gap:8px 18px; }
+.iteration-metrics strong { margin-left:4px; font-variant-numeric:tabular-nums; }
+.detail-note { margin:0; font-size:11px; color:var(--text-muted); line-height:1.7; }
+.perf-detail .detail-row { align-items:center; padding:11px 12px; font-variant-numeric:tabular-nums; }
+.detail-row .detail-interface { display:flex; align-items:center; gap:7px; min-width:0; white-space:normal; }
+.detail-row .detail-interface>span:last-child { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.perf-detail .detail-table-wide { scrollbar-width:none; -ms-overflow-style:none; }
+.perf-detail .detail-table-wide::-webkit-scrollbar { display:none; }
+.perf-detail .detail-table-wide:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.method-tag { display:inline-flex; flex-shrink:0; align-items:center; padding:2px 5px; border-radius:4px; background:var(--surface-2); color:var(--primary); font-size:10px; line-height:1.5; font-weight:700; }
+.detail-disclosure { border:1px solid var(--border); border-radius:9px; min-width:0; overflow:hidden; }
+.detail-disclosure + .detail-disclosure { margin-top:-10px; }
+.detail-disclosure summary { display:flex; align-items:center; gap:10px; padding:12px 14px; list-style:none; cursor:pointer; font-size:13px; font-weight:600; line-height:20px; transition:background .15s; }
+.detail-disclosure summary::-webkit-details-marker { display:none; }
+.detail-disclosure summary::before { content:''; width:6px; height:6px; border-right:1.5px solid var(--text-muted); border-bottom:1.5px solid var(--text-muted); transform:rotate(-45deg); margin-right:2px; flex-shrink:0; }
+.detail-disclosure[open]>summary::before { transform:rotate(45deg); }
+.detail-disclosure summary:hover { background:var(--surface-2); }
+.detail-disclosure summary:focus-visible { outline:2px solid var(--primary); outline-offset:-3px; }
+.detail-disclosure summary small { margin-left:auto; font-size:11px; font-weight:400; color:var(--text-muted); }
+.disclosure-body { border-top:1px solid var(--border); padding:12px 14px; }
+.perf-detail .plan-summary { list-style:none; margin:0; padding:0; font:inherit; color:var(--text); }
+.perf-detail .plan-summary li { display:flex; align-items:flex-start; gap:12px; padding:10px 0; }
+.perf-detail .plan-summary li + li { border-top:1px solid var(--border); }
+.perf-detail .plan-summary li:first-child { padding-top:0; }
+.perf-detail .plan-summary li:last-child { padding-bottom:0; }
+.step-number { display:grid; place-items:center; width:26px; height:26px; border-radius:6px; background:var(--surface-2); font-size:11px; color:var(--text-muted); flex-shrink:0; font-variant-numeric:tabular-nums; }
+.step-summary { min-width:0; font-size:12px; line-height:1.7; }
+.step-summary strong { display:block; font-weight:600; overflow-wrap:anywhere; }
+.step-summary>div,.legacy-target { display:flex; align-items:baseline; gap:8px; margin-top:4px; }
+.step-summary code,.legacy-target code { color:var(--text-muted); font:11px/1.7 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; min-width:0; }
+.perf-detail .history-list { max-height:none; overflow:visible; }
+.perf-detail .error-row small { white-space:normal; overflow-wrap:anywhere; }
+.perf-detail .error-row>span { overflow-wrap:anywhere; min-width:0; }
+.perf-detail .bad { color:var(--fail-fg); }
+.perf-detail .history-chart-head { flex-wrap:wrap; gap:5px 12px; }
+.perf-detail .history-chart-head small { font:inherit; font-size:11px; }
+@media(max-width:640px) {
+  .perf-detail { gap:16px; }
+  .perf-detail .detail-head { padding:12px; }
+  .perf-detail .detail-metrics>div { padding:10px; }
+  .perf-detail .detail-disclosure + .detail-disclosure { margin-top:-6px; }
+  .detail-disclosure summary { padding:11px 12px; }
+  .disclosure-body { padding:12px; }
+  .perf-detail .history-chart { padding:10px; }
+  .perf-detail .history-row { grid-template-columns:48px 1fr 1fr; }
+  .perf-detail .history-row span:nth-child(n+4) { display:block; }
+}
+
+
+.perf-detail .transaction-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.history-chart .trend-tps { stroke:var(--pass-fg); stroke-dasharray:3 4; }
+.legend-tps { background:var(--pass-fg); }
+.row { grid-template-columns:minmax(100px,1.3fr) minmax(80px,1.5fr) 90px 78px 54px 64px 54px 54px 60px 270px; }
+.c-act { flex-wrap:wrap; }
+.c-name { min-width:0; overflow-wrap:anywhere; }
+.perf-history { display:flex; flex-direction:column; gap:14px; }
+.history-toolbar,.history-pagination { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--text-muted); }
+.run-list { border:1px solid var(--border); border-radius:9px; overflow:hidden; }
+.run-item { display:grid; grid-template-columns:18px minmax(0,1fr) auto auto; gap:12px; align-items:center; padding:12px; border-bottom:1px solid var(--border); }
+.run-item:last-child { border-bottom:0; }
+.run-item input { accent-color:var(--primary); cursor:pointer; }
+.run-info strong { display:block; font-size:12px; font-weight:600; }
+.run-info small { display:block; margin-top:5px; font-size:11px; color:var(--text-muted); line-height:1.6; overflow-wrap:anywhere; }
+.run-actions { display:flex; gap:6px; }
+.run-actions .btn { padding:5px 8px; font-size:11px; }
+.history-selected { margin-right:auto; align-self:center; font-size:12px; color:var(--text-muted); }
+@media(max-width:1200px) { .row { grid-template-columns:minmax(90px,1fr) 90px 78px 54px 60px 270px; } .c-target,.c-ms,.c-p95,.c-p99 { display:none; } }
+@media(max-width:640px) {
+ .row { grid-template-columns:minmax(0,1fr) 78px 60px; gap:8px; }
+ .c-act { grid-column:1/-1; justify-content:flex-start; }
+ .c-load,.c-fail { display:none; }
+ .perf-detail .transaction-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .run-item { grid-template-columns:18px minmax(0,1fr) auto; gap:8px; }
+ .run-actions { grid-column:2/-1; justify-content:flex-end; }
 }
 </style>
 
