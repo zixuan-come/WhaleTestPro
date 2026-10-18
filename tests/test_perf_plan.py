@@ -210,11 +210,12 @@ def test_worker_metrics_replace_cumulative_reports_and_ignore_old_run(plugin, mo
 @pytest.mark.parametrize("configuration_failures", [0, 1])
 def test_backend_publishes_owned_snapshot_and_saves_iteration_metrics(monkeypatch, configuration_failures):
     import app.models.project
-    from app.models.perf import PerfTask
+    from app.models.perf import PerfTask, PerfRun
     from app.services import perf
     from sqlalchemy.orm import sessionmaker
     engine = create_engine("sqlite:///:memory:")
     PerfTask.__table__.create(engine)
+    PerfRun.__table__.create(engine)
     app.models.project.Project.__table__.create(engine)
     db = sessionmaker(bind=engine)()
     db.add(app.models.project.Project(id=1, name="isolated-snapshot-project", team_id=1))

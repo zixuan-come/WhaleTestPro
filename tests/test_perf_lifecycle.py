@@ -11,13 +11,14 @@ import app.models.team_member
 import app.models.team_invitation
 import app.models.team
 import app.models.project  # 注册 perf_tasks.project_id 指向的表元数据
-from app.models.perf import PerfTask
+from app.models.perf import PerfTask, PerfRun
 from app.repositories import perf as perf_repo
 
 
 def test_stale_perf_tasks_are_failed_without_touching_fresh_heartbeat():
     engine = create_engine("sqlite:///:memory:")
     PerfTask.__table__.create(engine)
+    PerfRun.__table__.create(engine)
     db = sessionmaker(bind=engine)()
     now = datetime(2026, 10, 6, 12, 0, 0)
     try:
@@ -98,6 +99,7 @@ def test_stale_perf_tasks_are_failed_without_touching_fresh_heartbeat():
 
 def test_run_route_uses_same_celery_id_for_database_and_message(monkeypatch):
     from app.routers import perf as perf_router
+    monkeypatch.setattr(perf_router.perf_repo, "annotate_runs", lambda db, tasks: tasks)
 
     task = SimpleNamespace(id=7, status="queued", celery_task_id="fixed-task-id")
     queued_calls = []
@@ -230,6 +232,7 @@ def perf_control(monkeypatch):
 
     engine = create_engine("sqlite:///:memory:")
     PerfTask.__table__.create(engine)
+    PerfRun.__table__.create(engine)
     db = sessionmaker(bind=engine)()
     tasks = [
         PerfTask(name=name, target_host=f"http://{name}.invalid", target_path=f"/{name}",

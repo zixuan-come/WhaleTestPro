@@ -1,4 +1,5 @@
-from sqlalchemy import Column, DateTime, Integer, String, Float, ForeignKey, JSON
+from datetime import datetime
+from sqlalchemy import Column, DateTime, Integer, String, Float, ForeignKey, JSON, UniqueConstraint
 from app.database import Base
 
 
@@ -30,6 +31,20 @@ class PerfTask(Base):
     history_samples = Column(JSON, nullable=True)
     fail_ratio = Column(Float, nullable=True)
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
+
+
+class PerfRun(Base):
+    __tablename__ = "perf_runs"
+    __table_args__ = (UniqueConstraint("task_id", "execution_key", name="uq_perf_run_execution"),
+                      {"sqlite_autoincrement": True})
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("perf_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("project.id"), nullable=False, index=True)
+    execution_key = Column(String(255), nullable=False)
+    status = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    snapshot = Column(JSON, nullable=False)
 
 
 

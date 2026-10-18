@@ -229,7 +229,7 @@ def test_perf_run_marks_failed_on_worker_error(monkeypatch):
         monkeypatch.setattr(getattr(perf_service.metrics, name), "set", lambda value: None)
 
     with pytest.raises(RuntimeError, match="locust unavailable"):
-        perf_service.s_run(object(), 7, 11)
+        perf_service.s_run(SimpleNamespace(info={}), 7, 11)
 
     assert updates[0]["status"] == "running"
     assert updates[-1]["status"] == "failed"
@@ -363,6 +363,8 @@ def test_traffic_record_schema_accepts_array_bodies():
 def test_perf_cancel_marks_task_cancelled(monkeypatch):
     from types import SimpleNamespace
     from app.services import perf as perf_service
+    monkeypatch.setattr(perf_service.project_repo, 'db_lock_project', lambda *_: object())
+    monkeypatch.setattr(perf_service.perf_repo, 'db_get_for_update', lambda *_: task)
 
     task = SimpleNamespace(id=8, status='running')
     updates = []
@@ -383,6 +385,7 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
 
 def test_perf_mark_queued_rejects_second_run(monkeypatch):
     from app.services import perf as perf_service
+    monkeypatch.setattr(perf_service.perf_repo, '_sync_run', lambda *_: None)
     monkeypatch.setattr(perf_service.settings, "LOCUST_CONTROL_TOKEN", "isolated-control-token")
 
     tasks = {
@@ -457,7 +460,7 @@ def test_perf_run_uses_scoped_target_key_and_releases_lock(monkeypatch):
     monkeypatch.setattr(perf_service.requests, "post", post)
     monkeypatch.setattr(perf_service.requests, "get", lambda *args, **kwargs: Response())
 
-    assert perf_service.s_run(object(), 12, 3) is task
+    assert perf_service.s_run(SimpleNamespace(info={}), 12, 3) is task
 
     assert "locust:target_path" not in swarm_state
     assert swarm_state[perf_service.ACTIVE_RUN_KEY] == run_id
@@ -558,7 +561,7 @@ def test_perf_run_does_not_restart_cancelled_task(monkeypatch):
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda *args, **kwargs: updates.append(kwargs))
     monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: _FakeRedis())
 
-    result = perf_service.s_run(SimpleNamespace(rollback=lambda: None), 9, 11)
+    result = perf_service.s_run(SimpleNamespace(info={}, rollback=lambda: None), 9, 11)
 
     assert result is task
     assert updates == []

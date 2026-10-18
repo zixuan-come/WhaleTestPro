@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core import metrics
 from app.repositories import perf as perf_repo
 from app.repositories import project as project_repo
+from app.core.perf_history import RESULT_FIELDS, transaction_sample
 
 
 RUN_LOCK_KEY = "locust:run_lock"
@@ -170,16 +171,20 @@ def s_create(db: Session, perf, project_id: int):
 
 def s_get(db: Session, task_id: int, project_id: int):
     s_reconcile_stale(db, project_id=project_id)
-    return perf_repo.db_get(db, task_id, project_id)
+    task = perf_repo.db_get(db, task_id, project_id)
+    return perf_repo.annotate_runs(db, [task])[0] if task else None
 
 
 def s_list(db: Session, project_id: int):
     s_reconcile_stale(db, project_id=project_id)
-    return perf_repo.db_list(db, project_id)
+    return perf_repo.annotate_runs(db, perf_repo.db_list(db, project_id))
 
 
 def s_delete(db: Session, task_id: int, project_id: int):
-    task = perf_repo.db_get(db, task_id, project_id)
+    if project_repo.db_lock_project(db, project_id) is None:
+        db.rollback()
+        return None
+    task = perf_repo.db_get_for_update(db, task_id, project_id)
     if task is None:
         return None
     if task.status in {"queued", "running"}:
@@ -257,7 +262,22 @@ def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples, *, a
     }
 
 
-def s_run(
+def s_run(db: Session, task_id: int, project_id: int, celery_task_id: str | None = None):
+    # Every worker write is fenced by its execution ID, including late writes
+    # after a cancelled run has been cleared or this definition has run again.
+    previous = db.info.get("perf_execution")
+    if celery_task_id:
+        db.info["perf_execution"] = (task_id, project_id, celery_task_id)
+    try:
+        return _run(db, task_id, project_id, celery_task_id)
+    finally:
+        if previous is None:
+            db.info.pop("perf_execution", None)
+        else:
+            db.info["perf_execution"] = previous
+
+
+def _run(
     db: Session,
     task_id: int,
     project_id: int,
@@ -396,12 +416,13 @@ def s_run(
             heartbeat()
             _validate_iterations(iteration_stats, lease_id)
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
+            transactions = transaction_sample(iteration_stats, history_samples[-1] if history_samples else None)
             history_samples.append({"elapsed_s": elapsed, "sampled_at": _utcnow().isoformat() + "Z", "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
+            history_samples[-1].update(transactions)
             # Bound repeated JSON writes on long runs; request counters remain cumulative.
             del history_samples[:-MAX_LIVE_HISTORY_SAMPLES]
             live = _result_statistics(stats, None, {}, history_samples, allow_empty=True)
-            if load_config:
-                live["iteration_stats"] = iteration_stats
+            live["iteration_stats"] = iteration_stats
             # One conditional commit makes the complete sample visible to API readers.
             # A concurrent stop must never be overwritten or revived by a late sample.
             if perf_repo.db_update_if_status(db, task_id, project_id, "running", **live) is None:
@@ -430,8 +451,7 @@ def s_run(
         iteration_stats = _control_get_json(base, "/whale/iterations")
         heartbeat()
         _validate_iterations(iteration_stats, lease_id)
-        if load_config:
-            perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
+        perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
         stats = _control_get_json(base, "/stats/requests")
         heartbeat()
         result_stats = _result_statistics(stats, live_rps, live_endpoint_rps, history_samples)
@@ -480,7 +500,7 @@ def s_mark_queued(
     if task is None:
         db.rollback()
         return None
-    if task.status != "pending":
+    if task.status in {"queued", "running"}:
         db.rollback()
         raise PerfRunBusyError("压测任务已不再处于待执行状态，请刷新后重试")
     try:
@@ -497,18 +517,19 @@ def s_mark_queued(
         if not redis_client.set(RUN_LOCK_KEY, lease_id, nx=True, ex=_run_ttl(task.duration)):
             db.rollback()
             raise PerfRunBusyError("已有压测任务正在排队或运行")
+        perf_repo._sync_run(db, task_id, project_id)
+        redis_client.delete(f"locust:cancel:{project_id}:{task_id}")
+        reset = {field: None for field in RESULT_FIELDS if field not in {
+            "status", "celery_task_id", "queued_at"}}
         updated = perf_repo.db_update_if_status(
             db,
             task_id,
             project_id,
-            "pending",
+            task.status,
             status="queued",
             celery_task_id=celery_task_id,
             queued_at=_utcnow(),
-            started_at=None,
-            heartbeat_at=None,
-            finished_at=None,
-            failure_reason=None,
+            **reset,
         )
         if updated is None:
             _release_run_lock(redis_client, run_id, lease_id)
@@ -521,10 +542,17 @@ def s_mark_queued(
         raise
 
 
-def s_cancel(db: Session, task_id: int, project_id: int):
-    task = perf_repo.db_get(db, task_id, project_id)
-    if task is None:
+def s_cancel(db: Session, task_id: int, project_id: int, execution_id: str | None = None):
+    if project_repo.db_lock_project(db, project_id) is None:
+        db.rollback()
         return None
+    task = perf_repo.db_get_for_update(db, task_id, project_id)
+    if task is None:
+        db.rollback()
+        return None
+    if execution_id and task.celery_task_id != execution_id:
+        db.rollback()
+        raise PerfRunBusyError("执行记录已变化，请刷新后重试")
     if task.status not in {"queued", "running"}:
         return task
     redis_client = redis.from_url(settings.REDIS_URL)
@@ -609,3 +637,31 @@ def s_reconcile_stale(
     except Exception:
         pass
     return {"failed": len(failed)}
+
+
+def s_clear_runs(db, task_id, project_id, selection):
+    if project_repo.db_lock_project(db, project_id) is None:
+        db.rollback()
+        return None
+    task = perf_repo.db_get_for_update(db, task_id, project_id)
+    if task is None:
+        db.rollback()
+        return None
+    try:
+        if task.status in {"done", "failed", "cancelled"}:
+            # A cancelled worker may still own the singleton lease. Finish its
+            # cleanup before resetting the definition to pending, so recovery
+            # cannot lose the owner and leave all later runs blocked.
+            redis_client = redis.from_url(settings.REDIS_URL)
+            try:
+                lease = _decode_redis_value(redis_client.get(RUN_LOCK_KEY))
+            except redis.RedisError as exc:
+                raise PerfControlUnavailableError("无法检查压测执行锁，请稍后重试清理") from exc
+            run_id = _run_id(project_id, task_id)
+            if lease and lease.startswith(f"{run_id}:"):
+                if not _cleanup_run(redis_client, run_id, lease, needs_stop=True):
+                    raise PerfControlUnavailableError("上一轮执行仍在清理，请稍后重试")
+        return perf_repo.db_clear_runs(db, task, selection)
+    except Exception:
+        db.rollback()
+        raise

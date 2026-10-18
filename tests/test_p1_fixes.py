@@ -195,7 +195,7 @@ def test_duplicate_worker_cas_loser_preserves_lock(monkeypatch):
     monkeypatch.setattr(perf.perf_repo, "db_get_for_update", lambda *_: task)
     monkeypatch.setattr(perf.project_repo, "db_lock_project", lambda *_: object())
     monkeypatch.setattr(perf.perf_repo, "db_update_if_status", lambda *args, **kwargs: None)
-    assert perf.s_run(None, 7, 1, "winner") is task
+    assert perf.s_run(SimpleNamespace(info={}), 7, 1, "winner") is task
     assert cache.get(perf.RUN_LOCK_KEY) == "1:7:winner"
 
 

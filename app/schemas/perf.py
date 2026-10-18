@@ -1,7 +1,7 @@
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.schemas.base import NamedSchema
 from app.schemas.perf_plan import PerfLoadConfig
 
@@ -50,4 +50,27 @@ class PerfTaskOut(PerfTaskCreate):
     history_samples: list | None = None
     iteration_stats: dict | None = None
     fail_ratio: float | None = None
+    latest_run_id: int | None = None
+    history_count: int = 0
     model_config = ConfigDict(from_attributes=True)
+
+
+class PerfRunOut(BaseModel):
+    id: int
+    task_id: int
+    status: str
+    created_at: datetime
+    result: PerfTaskOut
+
+
+class PerfRunClear(BaseModel):
+    run_ids: list[int] = Field(default_factory=list, max_length=200)
+    all_finished: bool = False
+
+    @model_validator(mode="after")
+    def validate_selection(self):
+        if self.all_finished == bool(self.run_ids):
+            raise ValueError("请选择执行记录或清理全部已结束记录")
+        if any(value < 1 for value in self.run_ids) or len(set(self.run_ids)) != len(self.run_ids):
+            raise ValueError("执行记录ID必须为不重复的正整数")
+        return self

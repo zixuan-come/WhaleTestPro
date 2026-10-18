@@ -437,6 +437,33 @@ def ensure_perf_task_lifecycle_schema(bind) -> None:
             _record_migration(connection, PERF_TASK_LIFECYCLE_MIGRATION)
 
 
+def ensure_perf_run_schema(bind) -> None:
+    """Retain existing results as the first history entry; safe to rerun."""
+    from datetime import datetime
+    from sqlalchemy import select
+    from app.models.perf import PerfTask, PerfRun
+    from app.core.perf_history import run_snapshot, execution_key
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("perf_tasks"):
+            return
+        PerfRun.__table__.create(connection, checkfirst=True)
+        columns = {column["name"] for column in inspector.get_columns("perf_tasks")}
+        if not set(PerfTask.__table__.columns.keys()).issubset(columns):
+            return  # Minimal historical schemas are expanded by the bootstrap.
+        existing = set(connection.execute(select(PerfRun.task_id, PerfRun.execution_key)).all())
+        rows = connection.execute(select(PerfTask.__table__).where(PerfTask.status != "pending")).mappings()
+        for values in rows:
+            key = execution_key(values)
+            if (values["id"], key) not in existing:
+                connection.execute(PerfRun.__table__.insert().values(
+                    task_id=values["id"], project_id=values["project_id"], execution_key=key,
+                    status=values["status"], created_at=values["queued_at"] or values["started_at"] or datetime.utcnow(),
+                    snapshot=run_snapshot(values)))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "018_perf_run_history")
+
+
 def run_all_migrations(*binds) -> None:
     for bind in binds:
         ensure_project_team_schema(bind)
@@ -452,6 +479,7 @@ def run_all_migrations(*binds) -> None:
         ensure_execution_report_schema(bind)
         ensure_project_notification_schema(bind)
         ensure_traffic_capture_schema(bind)
+        ensure_perf_run_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:

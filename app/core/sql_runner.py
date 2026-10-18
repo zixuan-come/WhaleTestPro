@@ -12,7 +12,7 @@ _COMMENT = re.compile(r"--|#|/\*|\*/")
 _FORBIDDEN = re.compile(r"\b(?:alter|create|drop|grant|revoke|truncate|rename|replace|load|outfile|dumpfile|call|do|handler|lock|unlock)\b", re.IGNORECASE)
 _PROTECTED_TABLES = {
     "users", "project", "interface", "test_case", "test_report",
-    "environment", "mock", "perf_tasks", "schedule", "scenario", "scenario_report",
+    "environment", "mock", "perf_tasks", "perf_runs", "schedule", "scenario", "scenario_report",
     "scenario_report_step", "traffic_records", "team", "team_member", "team_invitation",
     "team_permission", "demo_orders",
 }

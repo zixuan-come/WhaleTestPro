@@ -178,6 +178,7 @@ def test_runtime_migrations_run_in_order(monkeypatch):
     monkeypatch.setattr(migrations, "ensure_execution_report_schema", lambda bind: calls.append((bind, "015")))
     monkeypatch.setattr(migrations, "ensure_project_notification_schema", lambda bind: calls.append((bind, "016")))
     monkeypatch.setattr(migrations, "ensure_traffic_capture_schema", lambda bind: calls.append((bind, "017")))
+    monkeypatch.setattr(migrations, "ensure_perf_run_schema", lambda bind: calls.append((bind, "018")))
     migrations.run_all_migrations("main", "shadow")
 
     assert calls == [
@@ -194,6 +195,7 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("main", "015"),
         ("main", "016"),
         ("main", "017"),
+        ("main", "018"),
         ("shadow", "005"),
         ("shadow", "006"),
         ("shadow", "007"),
@@ -207,4 +209,5 @@ def test_runtime_migrations_run_in_order(monkeypatch):
         ("shadow", "015"),
         ("shadow", "016"),
         ("shadow", "017"),
+        ("shadow", "018"),
     ]

@@ -4,7 +4,7 @@ from app.models.case import Case
 from app.models.environment import Environment
 from app.models.interface import Interface
 from app.models.mock import Mock
-from app.models.perf import PerfTask
+from app.models.perf import PerfTask, PerfRun
 from app.models.project import Project
 from app.models.team_member import TeamMember
 from app.models.report import TestReport
@@ -112,6 +112,7 @@ def db_delete(db: Session, project_id: int, check_perf=None) -> Project | None:
             Interface,
             Environment,
             Mock,
+            PerfRun,
             PerfTask,
             TestReport,
             ScenarioReport,

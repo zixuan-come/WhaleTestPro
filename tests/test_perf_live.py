@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 from sqlalchemy.orm import Session
 import pytest
-from app.models.perf import PerfTask
+from app.models.perf import PerfTask, PerfRun
 from tests.test_perf_lifecycle import perf_control
 
 
@@ -12,7 +12,7 @@ def test_samples_are_visible_to_another_reader_while_running(perf_control,monkey
     count=0;observed=[]
     def get(base,path):
         nonlocal count
-        if path=='/whale/iterations':return {'lease':cache.get(perf.RUN_LOCK_KEY),'configuration_failures':0}
+        if path=='/whale/iterations':return {'lease':cache.get(perf.RUN_LOCK_KEY),'configuration_failures':0,'iterations':count*5,'failures':1,'elapsed_seconds':count*2,'iteration_rps':2.5}
         count+=1
         return {'total_rps':count*2,'fail_ratio':0.1,'user_count':2,'stats':[
             {'name':'Aggregated','num_requests':count*10,'avg_response_time':20,'response_time_percentile_0.95':40,'response_time_percentile_0.99':60},
@@ -26,6 +26,8 @@ def test_samples_are_visible_to_another_reader_while_running(perf_control,monkey
         if 'history_samples' in fields and 'status' not in fields:
             with Session(db.get_bind()) as reader:
                 row=reader.get(PerfTask,task.id)
+                history=reader.query(PerfRun).filter_by(task_id=task.id,execution_key='live').one()
+                assert history.status=='running' and history.snapshot['request_stats']==row.request_stats
                 observed.append({'status':row.status,'rps':row.rps,'requests':row.request_stats[0]['num_requests'],'history':len(row.history_samples),'p95':row.p95_response_ms})
         return result
     monkeypatch.setattr(perf.perf_repo,'db_update_if_status',publish)
@@ -35,6 +37,9 @@ def test_samples_are_visible_to_another_reader_while_running(perf_control,monkey
     assert observed[-1]['history']==2 and observed[0]['p95']==40
     assert result.status=='done' and result.rps==6
     assert result.request_stats[0]['num_requests']==40
+    assert result.iteration_stats['iterations']==15
+    assert result.history_samples[-1]['tps']==2.5
+    assert result.history_samples[-1]['success_tps']==pytest.approx(14/6)
 
 
 def test_empty_warmup_is_publishable_but_empty_final_run_is_not(perf_control):
