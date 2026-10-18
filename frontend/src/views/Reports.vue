@@ -138,10 +138,10 @@ onBeforeUnmount(() => { loadVersion++; clearTimeout(searchTimer) })
 .report-tabs button { padding:8px 16px; border:0; border-radius:5px; background:transparent; color:var(--text-muted); font-family:inherit; font-size:13px; cursor:pointer; }
 .report-tabs button.active { color:#fff; background:var(--primary); }
 .report-tabs button:focus-visible, .report-row:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
-.cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:20px; }
-.card { padding:16px 18px; background:var(--surface); border:1px solid var(--border); border-radius:12px; }
-.card > span { display:block; margin-bottom:8px; color:var(--text-muted); font-size:12px; }
-.card strong { font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; }
+.cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:16px; }
+.card { min-width:0; padding:12px 18px; background:var(--surface); border:1px solid var(--border); border-radius:12px; }
+.card > span { display:block; margin-bottom:6px; color:var(--text-muted); font-size:12px; line-height:18px; }
+.card strong { display:block; font-size:24px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; }
 .card .pass { color:var(--pass-fg); }.card .fail { color:var(--fail-fg); }
 .panel-head .count, .running-count { margin-left:10px; color:var(--text-muted); font-size:11px; font-weight:400; }
 .report-filters { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 18px; border-bottom:1px solid var(--border); }

@@ -142,7 +142,7 @@ onMounted(load)
 <template>
   <div class="cards">
     <div class="card"><div class="k">项目总数</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">当前项目</div><div class="v">{{ auth.currentProjectName || '未选' }}</div></div>
+    <div class="card"><div class="k">当前项目</div><div class="v" :title="auth.currentProjectName || '未选'">{{ auth.currentProjectName || '未选' }}</div></div>
   </div>
 
   <div class="panel">
@@ -219,13 +219,13 @@ onMounted(load)
 </template>
 
 <style scoped>
-.cards { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:24px; max-width:520px; }
-.card { background:var(--surface); border:1px solid var(--border);
-  border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
+.cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-bottom:16px; max-width:520px; }
+.card { min-width:0; background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:12px 18px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
 .card:hover { border-color:var(--primary); }
-.card .k { font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:550; }
-.card .v { font-size:22px; font-weight:750; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.card .v.pri { color:var(--primary); font-size:27px; }
+.card .k { font-size:12px; line-height:18px; color:var(--text-muted); margin-bottom:6px; font-weight:550; }
+.card .v { font-size:18px; line-height:28.8px; font-weight:700; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.card .v.pri { color:var(--primary); font-size:24px; font-variant-numeric:tabular-nums; }
 
 .row { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,2fr) minmax(0,1.4fr) 280px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }

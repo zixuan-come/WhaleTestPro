@@ -114,7 +114,7 @@ onMounted(load)
 <template>
   <div class="cards">
     <div class="card"><div class="k">挡板规则</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">命中入口</div><div class="v mono">{{ hitUrlPrefix }}/*</div></div>
+    <div class="card"><div class="k">命中入口</div><div class="v mono" :title="`${hitUrlPrefix}/*`">{{ hitUrlPrefix }}/*</div></div>
   </div>
 
   <div class="panel">
@@ -199,14 +199,14 @@ onMounted(load)
 </template>
 
 <style scoped>
-.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
-.card { background:var(--surface); border:1px solid var(--border);
-  border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
+.cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:16px; }
+.card { min-width:0; background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; padding:12px 18px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
 .card:hover { border-color:var(--primary); }
-.card .k { font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:550; }
-.card .v { font-size:27px; font-weight:780; letter-spacing:-.5px; }
+.card .k { font-size:12px; line-height:18px; color:var(--text-muted); margin-bottom:6px; font-weight:550; }
+.card .v { font-size:24px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.5px; }
 .card .v.pri { color:var(--primary); }
-.card .v.mono { font-size:20px; font-family:ui-monospace,Consolas,monospace; }
+.card .v.mono { font-size:16px; line-height:28.8px; font-family:ui-monospace,Consolas,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .row { display:grid; grid-template-columns:80px 1.4fr 1.6fr 80px 80px 84px; align-items:center; gap:12px;
   padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
