@@ -117,9 +117,11 @@ def test_case_request_migration_is_additive_and_repeatable():
 
 
 def test_case_api_roundtrips_independent_values_and_filters_within_project(monkeypatch):
+    from app.models.traffic_capture import TrafficCapture
     bind=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool)
     Interface.__table__.create(bind)
     Case.__table__.create(bind)
+    TrafficCapture.__table__.create(bind)
     with Session(bind) as db:
         db.add_all([Interface(id=key,project_id=pid,name="order",method="GET",url="/orders/{id}",
                              path_params={"id":"1"},headers={"X-Base":"default"},body={"a":1}) for key,pid in [(1,10),(2,10),(3,99)]])
@@ -134,7 +136,7 @@ def test_case_api_roundtrips_independent_values_and_filters_within_project(monke
     for router in [case_router.router,interface_router.router]:
         for route in router.routes:
             for dep in route.dependant.dependencies:
-                if dep.name=='context':app.dependency_overrides[dep.call]=lambda:SimpleNamespace(project_id=10)
+                if dep.name=='context':app.dependency_overrides[dep.call]=lambda:SimpleNamespace(project_id=10,user=SimpleNamespace(id=1))
     calls=[]
     monkeypatch.setattr(execution,'_env_context',lambda *args:{'base_url':'http://orders.invalid'})
     monkeypatch.setattr(execution.report_repo,'db_create',lambda *args,**kw:None)

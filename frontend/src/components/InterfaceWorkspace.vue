@@ -142,6 +142,7 @@ async function saveAsCase(fromResult = false) {
       <section v-if="result" class="debug-result" aria-live="polite">
         <div class="result-heading"><h3>响应结果</h3><div class="result-meta"><strong :class="result.response?.status_code >= 400 || result.error ? 'failed' : 'passed'">{{ result.response?.status_code || '请求失败' }}</strong><span>{{ result.duration_ms }} ms</span></div><button v-if="lastRequest" type="button" class="btn btn-ghost" :disabled="running" @click="saveAsCase(true)">保存本次请求为用例</button></div>
         <p v-if="result.error" class="workspace-error">{{ result.error }}</p>
+        <p v-if="result.recording_warning" class="workspace-error" role="status">{{ result.recording_warning }}</p>
         <code v-if="result.request" class="actual-request">{{ result.request.method }} {{ result.request.url }}</code>
         <pre v-if="result.response">{{ JSON.stringify(result.response.body, null, 2) }}</pre>
       </section>

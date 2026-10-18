@@ -22,10 +22,11 @@ def replay(
     req = req or ReplayRequest()
     try:
         result = traffic_replay_service.s_replay(
-            db, record_id, context.project_id, req.env_id, req.field_rules
+            db, record_id, context.project_id, req.env_id, req.field_rules,
+            overrides=req.model_dump(exclude_unset=True, include={"headers", "params", "body"}),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="录制记录不存在")
     return success_response(result, message="流量回放完成")

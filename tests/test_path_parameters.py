@@ -153,8 +153,10 @@ def test_additive_migration_is_repeatable_and_preserves_existing_interface():
 
 
 def test_interface_api_saves_defaults_runs_overrides_and_accepts_legacy_null_body(monkeypatch):
+    from app.models.traffic_capture import TrafficCapture
     bind = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Interface.__table__.create(bind)
+    TrafficCapture.__table__.create(bind)
     application = FastAPI()
     application.include_router(interface_router.router)
 
@@ -166,7 +168,7 @@ def test_interface_api_saves_defaults_runs_overrides_and_accepts_legacy_null_bod
     for route in interface_router.router.routes:
         for dependency in route.dependant.dependencies:
             if dependency.name == "context":
-                application.dependency_overrides[dependency.call] = lambda: SimpleNamespace(project_id=23)
+                application.dependency_overrides[dependency.call] = lambda: SimpleNamespace(project_id=23,user=SimpleNamespace(id=1))
     calls = []
     monkeypatch.setattr(execution, "_env_context", lambda *args: {"base_url": "http://orders.invalid"})
 

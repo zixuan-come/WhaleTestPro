@@ -7,9 +7,9 @@ from app.core.recording_policy import RECORD_SKIP_PREFIXES
 def _visible_records(db):
     # Do not expose historical team/auth records incorrectly assigned to a
     # project. Keep the rows for administrator audit instead of deleting data.
-    return db.query(TrafficRecord).filter(not_(or_(
+    return db.query(TrafficRecord).filter(or_(TrafficRecord.source == "debug", not_(or_(
         *(TrafficRecord.path.startswith(prefix) for prefix in RECORD_SKIP_PREFIXES)
-    )))
+    ))))
 
 
 def db_create(db: Session, record, *, refresh=True):
@@ -29,7 +29,10 @@ def db_get(db: Session, record_id: int, project_id: int):
     ).first()
 
 
-def db_list(db: Session, project_id: int, limit: int = 100):
-    return _visible_records(db).filter(
+def db_list(db: Session, project_id: int, limit: int = 100, offset: int = 0, capture_id: str | None = None):
+    query = _visible_records(db).filter(
         TrafficRecord.project_id == project_id,
-    ).order_by(TrafficRecord.created_at.desc()).limit(limit).all()
+    )
+    if capture_id:
+        query = query.filter(TrafficRecord.capture_id == capture_id)
+    return query.order_by(TrafficRecord.created_at.desc(), TrafficRecord.id.desc()).offset(offset).limit(limit).all()

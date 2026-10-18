@@ -12,6 +12,7 @@ from app.models.scenario import Scenario
 from app.models.scenario_report import ScenarioReport, ScenarioReportStep
 from app.models.schedule import Schedule
 from app.models.traffic_record import TrafficRecord
+from app.models.traffic_capture import TrafficCapture
 from app.models.suite import TestSuite
 from app.models.execution_report import ExecutionReport
 from app.repositories import schedule_sync as schedule_sync_repo
@@ -116,6 +117,7 @@ def db_delete(db: Session, project_id: int, check_perf=None) -> Project | None:
             ScenarioReport,
             Scenario,
             TrafficRecord,
+            TrafficCapture,
             TestSuite,
         ):
             db.query(model).filter(model.project_id == project_id).delete(synchronize_session=False)

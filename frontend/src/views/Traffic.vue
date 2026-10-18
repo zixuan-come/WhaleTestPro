@@ -1,250 +1,203 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { listRecords, replayRecord } from '../api/traffic'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { listRecords, getRecord, replayRecord, captureState, startCapture, stopCapture } from '../api/traffic'
+import { listEnvironments } from '../api/environment'
+import { useAuthStore } from '../stores/auth'
+import { useFeedback } from '../composables/feedback'
 import Modal from '../components/Modal.vue'
+import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 
-const records = ref([])
-const loading = ref(true)
-const error = ref('')
-
-const replayingId = ref(null)   // 正在回放的记录 id
-const showResult = ref(false)
-const result = ref(null)        // 回放返回结果
-const resultErr = ref('')
-
-const total = computed(() => records.value.length)
-const getCount = computed(() => records.value.filter(r => (r.method || '').toUpperCase() === 'GET').length)
-const writeCount = computed(() => records.value.filter(r => ['POST', 'PUT', 'DELETE', 'PATCH'].includes((r.method || '').toUpperCase())).length)
-const pathCount = computed(() => new Set(records.value.map(r => r.path)).size)
-
-function methodClass(m) {
-  return 'm-' + (m || 'get').toLowerCase()
-}
-
-function statusClass(code) {
-  if (code == null) return 'b-skip'
-  if (code < 400) return 'b-pass'
-  return 'b-fail'
-}
-
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-function fmtVal(v) {
-  if (v === undefined) return '—'
-  if (v === null) return 'null'
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
+const auth = useAuthStore(), { showMessage } = useFeedback()
+const records = ref([]), capture = ref(null), environments = ref([])
+const loading = ref(false), busy = ref(false), error = ref(''), page = ref(0), hasNext = ref(false), scope = ref('mine')
+const selected = ref(null), modal = ref(''), modalLoading = ref(false), replaying = ref(false), modalError = ref(''), result = ref(null)
+const envId = ref(''), headers = ref(''), params = ref(''), body = ref(''), ignored = ref('')
+let generation = 0, modalGeneration = 0, timer
+const pageSize = 20
+const environment = computed(() => environments.value.find(item => String(item.id) === String(envId.value)))
+const targetUrl = computed(() => environment.value && selected.value ? environment.value.base_url.replace(/\/$/, '') + selected.value.path : '')
+const json = value => JSON.stringify(value ?? null, null, 2)
+const fmtTime = value => value ? new Date(value.endsWith('Z') ? value : value + 'Z').toLocaleString('zh-CN', { hour12: false }) : '—'
+const statusClass = code => code == null ? 'b-skip' : code < 400 ? 'b-pass' : 'b-fail'
 
 async function load() {
-  loading.value = true
-  error.value = ''
+  const version = ++generation, project = auth.currentProjectId
+  if (!project) { records.value = []; capture.value = null; loading.value = false; return }
+  loading.value = true; error.value = ''
   try {
-    records.value = await listRecords()
-  } catch (e) {
-    error.value = e.message || '加载失败'
-  } finally {
-    loading.value = false
-  }
+    const [state, envs] = await Promise.all([captureState(), listEnvironments()])
+    if (version !== generation) return
+    capture.value = state; environments.value = envs
+    if (scope.value === 'mine' && !state.capture_id) { records.value = []; hasNext.value = false; return }
+    const rows = await listRecords({ limit: pageSize + 1, offset: page.value * pageSize, ...(scope.value === 'mine' ? { capture_id: state.capture_id } : {}) })
+    if (version !== generation) return
+    records.value = rows.slice(0, pageSize); hasNext.value = rows.length > pageSize
+  } catch (err) { if (version === generation) error.value = err.message || '流量记录加载失败' }
+  finally { if (version === generation) loading.value = false }
 }
-
-async function onReplay(rec) {
-  replayingId.value = rec.id
-  resultErr.value = ''
-  result.value = null
+async function toggleCapture() {
+  if (busy.value || !auth.currentProjectId) return
+  busy.value = true; error.value = ''
+  const project = auth.currentProjectId
   try {
-    const res = await replayRecord(rec.id)
-    if (res && res.error) {
-      resultErr.value = res.error
-    } else {
-      result.value = res
-    }
-    showResult.value = true
-  } catch (e) {
-    resultErr.value = e.message || '回放失败'
-    showResult.value = true
-  } finally {
-    replayingId.value = null
-  }
+    const wasActive = capture.value?.active
+    const state = await (wasActive ? stopCapture() : startCapture())
+    if (project !== auth.currentProjectId) return
+    capture.value = state; scope.value = 'mine'; page.value = 0
+    showMessage(wasActive ? '录制已停止' : '录制已开始，请前往接口测试发送请求', 'success')
+    await load()
+  } catch (err) { if (project === auth.currentProjectId) error.value = err.message || '录制操作失败' }
+  finally { if (project === auth.currentProjectId) busy.value = false }
 }
-
-function closeResult() {
-  showResult.value = false
+function changeScope(value) { scope.value = value; page.value = 0; load() }
+function changePage(delta) { if (!loading.value) { page.value += delta; load() } }
+function closeModal() { if (replaying.value) return; ++modalGeneration; modal.value = ''; selected.value = null; result.value = null; headers.value = ''; params.value = ''; body.value = ''; modalError.value = '' }
+async function openRecord(record, mode) {
+  if (replaying.value) return
+  const version = ++modalGeneration, project = auth.currentProjectId
+  modal.value = mode; modalLoading.value = true; modalError.value = ''; selected.value = null; result.value = null; envId.value = ''; ignored.value = ''
+  try {
+    const detail = await getRecord(record.id)
+    if (version !== modalGeneration || project !== auth.currentProjectId) return
+    selected.value = detail; headers.value = json(detail.request_headers || {}); params.value = json(detail.request_params || {}); body.value = json(detail.request_body)
+  } catch (err) { if (version === modalGeneration) modalError.value = err.message || '请求详情加载失败' }
+  finally { if (version === modalGeneration) modalLoading.value = false }
 }
-
-onMounted(load)
+function parseObject(value, name) {
+  const parsed = JSON.parse(value)
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw Error(name + ' 必须为 JSON 对象')
+  return parsed
+}
+async function sendReplay() {
+  if (replaying.value || !selected.value) return
+  modalError.value = ''
+  if (!environment.value) { modalError.value = '请选择回放环境'; return }
+  let payload
+  try {
+    payload = { env_id: Number(envId.value), headers: parseObject(headers.value, 'Headers'), params: parseObject(params.value, 'Query'), body: JSON.parse(body.value), field_rules: Object.fromEntries(ignored.value.split(/[,，\n]/).map(s => s.trim()).filter(Boolean).map(key => [key, 'ignore'])) }
+    if (Object.values(payload.headers).some(value => typeof value !== 'string')) throw Error('Headers 的值必须是字符串')
+  } catch (err) { modalError.value = err instanceof SyntaxError ? '请求配置不是合法 JSON，请检查后再发送' : err.message; return }
+  const version = modalGeneration, project = auth.currentProjectId
+  replaying.value = true
+  try {
+    const response = await replayRecord(selected.value.id, payload)
+    if (version !== modalGeneration || project !== auth.currentProjectId) return
+    result.value = response
+  } catch (err) { if (version === modalGeneration) modalError.value = err.message || '回放失败' }
+  finally { if (version === modalGeneration) replaying.value = false }
+}
+watch(() => auth.currentProjectId, () => {
+  ++modalGeneration; modal.value = ''; selected.value = null; result.value = null; replaying.value = false; busy.value = false
+  headers.value = ''; params.value = ''; body.value = ''; envId.value = ''; environments.value = []; capture.value = null; records.value = []; page.value = 0
+  load()
+}, { immediate: true })
+timer = setInterval(() => { if (capture.value?.active && !loading.value && !busy.value && !modal.value) load() }, 5000)
+onBeforeUnmount(() => { clearInterval(timer); ++generation; ++modalGeneration })
 </script>
 
 <template>
-  <div class="cards">
-    <div class="card"><div class="k">录制总数</div><div class="v pri">{{ total }}</div></div>
-    <div class="card"><div class="k">查询类 GET</div><div class="v pass">{{ getCount }}</div></div>
-    <div class="card"><div class="k">写操作类</div><div class="v fail">{{ writeCount }}</div></div>
-    <div class="card"><div class="k">涉及接口</div><div class="v">{{ pathCount }}</div></div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-head">
-      录制流量
-      <span class="count">共 {{ total }} 条</span>
-    </div>
-
+  <section class="panel capture-panel">
+    <div class="capture-heading"><div><h2>录制接口请求</h2><p>开始录制 → 前往接口测试调试接口 → 停止录制 → 选择环境回放</p></div><span class="badge" :class="capture?.active ? 'b-pass' : 'b-skip'"><span class="dot"></span>{{ capture?.active ? '正在录制' : '未在录制' }}</span></div>
+    <div class="capture-actions"><button class="btn" :class="capture?.active ? 'btn-ghost' : 'btn-primary'" :disabled="busy || loading || !auth.currentProjectId" @click="toggleCapture">{{ busy ? '处理中…' : capture?.active ? '停止录制' : '开始录制' }}</button><RouterLink to="/interfaces" class="btn btn-ghost">前往接口测试</RouterLink><span v-if="capture?.capture_id" class="muted">最近一次 {{ capture.count }} 条 · {{ fmtTime(capture.started_at) }} 开始</span></div>
+    <p class="hint">只录制你在当前项目「接口调试」中发送的请求，切换页面后继续录制；一小时后自动结束，最多 1000 条。敏感字段会脱敏。</p>
+  </section>
+  <div v-if="error" class="form-err" role="alert">{{ error }} <button class="text-btn" @click="load">重试</button></div>
+  <section class="panel records-panel" :aria-busy="loading">
+    <div class="panel-head"><h2>流量记录</h2><div class="list-actions"><div class="scope-tabs" role="group" aria-label="记录范围"><button :class="{active:scope === 'mine'}" @click="changeScope('mine')">我的最近录制</button><button :class="{active:scope === 'all'}" @click="changeScope('all')">项目全部记录</button></div><button class="btn btn-ghost" :disabled="loading" @click="load">刷新</button></div></div>
     <div v-if="loading" class="state">加载中…</div>
-    <div v-else-if="error" class="state err">
-      {{ error }}
-      <button class="btn btn-ghost retry" @click="load">重试</button>
-    </div>
-    <div v-else-if="!records.length" class="state">暂无录制流量,给被测接口打真实请求后这里会记录下来</div>
-
+    <div v-else-if="!records.length" class="state"><strong>{{ scope === 'mine' ? '还没有录到请求' : '暂无流量记录' }}</strong><p>{{ capture?.active ? '前往接口测试，打开接口调试并发送请求，然后回到这里查看。' : '点击「开始录制」，再到接口调试发送请求。' }}</p></div>
     <template v-else>
-      <div class="row head">
-        <span class="c-method">方法</span>
-        <span class="c-path">路径</span>
-        <span class="c-status">状态</span>
-        <span class="c-time">录制时间</span>
-        <span class="c-act">回放</span>
-      </div>
-      <div v-for="(rec, i) in records" :key="rec.id" class="row">
-        <span class="c-method"><span class="tag-method" :class="methodClass(rec.method)">{{ (rec.method || 'GET').toUpperCase() }}</span></span>
-        <span class="c-path" :title="rec.path"><span class="id">#{{ i + 1 }}</span>{{ rec.path }}</span>
-        <span class="c-status"><span class="badge" :class="statusClass(rec.response_status)"><span class="dot"></span>{{ rec.response_status ?? '—' }}</span></span>
-        <span class="c-time">{{ fmtTime(rec.created_at) }}</span>
-        <span class="c-act">
-          <button class="btn btn-primary rep" :disabled="replayingId === rec.id" @click="onReplay(rec)">
-            {{ replayingId === rec.id ? '回放中…' : '回放' }}
-          </button>
-        </span>
+      <div class="traffic-row row-head"><span>接口 / 路径</span><span>状态码</span><span>耗时</span><span>录制时间</span><span>操作</span></div>
+      <div v-for="record in records" :key="record.id" class="traffic-row">
+        <div class="request-name"><span class="tag-method" :class="'m-' + record.method.toLowerCase()">{{ record.method }}</span><div><strong>{{ record.interface_name || record.path }}</strong><small :title="record.path">{{ record.path }}<span v-if="record.source !== 'debug'"> · 历史入站记录</span></small></div></div>
+        <span class="badge" :class="statusClass(record.response_status)">{{ record.response_status ?? '—' }}</span><span class="muted response-time">{{ record.duration_ms == null ? '—' : record.duration_ms + ' ms' }}</span><time class="muted">{{ fmtTime(record.created_at) }}</time>
+        <div class="row-actions"><button class="text-btn" @click="openRecord(record,'detail')">详情</button><button class="text-btn" @click="openRecord(record,'replay')">回放</button></div>
       </div>
     </template>
-  </div>
+    <div class="pagination"><span>第 {{ page + 1 }} 页 · 每页 20 条</span><div><button class="btn btn-ghost" :disabled="!page || loading" @click="changePage(-1)">上一页</button><button class="btn btn-ghost" :disabled="!hasNext || loading" @click="changePage(1)">下一页</button></div></div>
+  </section>
 
-  <!-- 回放结果弹层 -->
-  <Modal v-if="showResult" title="回放结果" :max-width="680" @close="closeResult">
-    <div v-if="resultErr" class="form-err">{{ resultErr }}</div>
-
-    <template v-else-if="result">
-      <div class="target">
-        <span class="tag-method" :class="methodClass(result.method)">{{ (result.method || 'GET').toUpperCase() }}</span>
-        <span class="path">{{ result.path }}</span>
-      </div>
-
-      <div class="status-cmp">
-        <div class="s-box">
-          <div class="s-k">录制状态</div>
-          <div class="s-v">{{ result.recorded_status ?? '—' }}</div>
-        </div>
-        <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-        <div class="s-box" :class="{ bad: result.recorded_status !== result.replayed_status }">
-          <div class="s-k">回放状态</div>
-          <div class="s-v">{{ result.replayed_status ?? '—' }}</div>
-        </div>
-      </div>
-
-      <div class="diff-summary" :class="result.diff?.same ? 'ok' : 'bad'">
-        <template v-if="result.diff?.same">
-          <span class="badge b-pass"><span class="dot"></span>响应完全一致</span>
-          <span class="txt">录制响应与本次回放逐字段比对无差异(动态字段已按规则智能忽略)</span>
+  <Modal v-if="modal" :title="modal === 'detail' ? '录制请求详情' : result ? '回放结果' : '配置回放'" :max-width="820" :busy="replaying" hide-scrollbar @close="closeModal">
+    <div class="traffic-modal">
+      <div v-if="modalLoading" class="state">加载请求详情…</div>
+      <div v-if="modalError" class="form-err" role="alert">{{ modalError }}</div>
+      <template v-if="selected">
+        <div class="request-summary"><span class="tag-method" :class="'m-' + selected.method.toLowerCase()">{{ selected.method }}</span><strong>{{ selected.interface_name || selected.path }}</strong><code>{{ selected.path }}</code></div>
+        <template v-if="modal === 'detail'">
+          <div class="detail-meta"><span>状态码 {{ selected.response_status ?? '—' }}</span><span>耗时 {{ selected.duration_ms ?? '—' }} ms</span><span>{{ fmtTime(selected.created_at) }}</span></div>
+          <details open><summary>Query 参数</summary><pre>{{ json(selected.request_params) }}</pre></details><details><summary>Headers</summary><pre>{{ json(selected.request_headers) }}</pre></details><details><summary>请求 Body</summary><pre>{{ json(selected.request_body) }}</pre></details><details open><summary>录制响应</summary><pre>{{ json(selected.response_body) }}</pre></details>
+        </template>
+        <template v-else-if="!result">
+          <label class="field"><span>回放环境 <span class="required">*</span></span><EnvironmentSelect v-model="envId" :environments="environments" placeholder="请选择回放环境" /></label><p v-if="targetUrl" class="target-url">目标：{{ targetUrl }}</p><p v-if="!environments.length" class="hint">当前项目没有环境，请先到环境管理创建。</p>
+          <p class="hint">回放会向所选环境发送一次真实请求；写入接口可能改变该环境的数据。X-Shadow 仅为提示，数据隔离需要被测系统支持。</p>
+          <details class="request-config" open><summary>请求配置</summary><p class="hint">沿用录制时的请求。请替换 *** 脱敏值，可填写环境变量，例如 Bearer ${token}。这里只修改本次回放。</p><label class="field"><span>Headers · JSON 对象</span><textarea v-model="headers" rows="3" spellcheck="false" /></label><label class="field"><span>Query · JSON 对象</span><textarea v-model="params" rows="3" spellcheck="false" /></label><label class="field"><span>Body · JSON，没有请求体填 null</span><textarea v-model="body" rows="4" spellcheck="false" /></label></details>
+          <label class="field"><span>额外忽略的响应字段（可选）</span><input v-model="ignored" placeholder="例如 request_id, trace_id，用逗号分隔" /></label><p class="hint">默认忽略 token；id 比较整数类型，created_at / updated_at 比较字符串类型。状态码始终比较。</p>
         </template>
         <template v-else>
-          <span class="badge b-fail"><span class="dot"></span>{{ result.diff?.diffs?.length || 0 }} 处差异</span>
-          <span class="txt">以下字段回放值与录制值不符</span>
+          <p class="target-url">回放目标：{{ result.target_url || targetUrl }}</p>
+          <div class="comparison-verdict" :class="result.diff?.same ? 'passed' : 'failed'"><strong>{{ result.diff?.same ? '比较通过' : '发现差异' }}</strong><span>录制状态码 {{ result.recorded_status }} → 回放状态码 {{ result.replayed_status }}</span></div>
+          <p class="hint">比较结果已应用动态字段规则，敏感字段已脱敏。</p>
+          <div v-for="(diff,index) in result.diff?.diffs || []" :key="index" class="diff-item"><strong>{{ diff.path }}</strong><span>{{ diff.reason || '值不同' }}</span><div><small>录制值</small><pre>{{ json(diff.recorded) }}</pre></div><div><small>回放值</small><pre>{{ json(diff.replayed) }}</pre></div></div>
+          <details><summary>录制响应</summary><pre>{{ json(result.recorded_body) }}</pre></details><details><summary>回放响应</summary><pre>{{ json(result.replayed_body) }}</pre></details>
         </template>
-      </div>
-
-      <div v-if="!result.diff?.same && result.diff?.diffs?.length" class="difftbl">
-        <div class="drow head">
-          <span class="d-path">字段路径</span>
-          <span class="d-rec">录制值</span>
-          <span class="d-rep">回放值</span>
-          <span class="d-reason">原因</span>
-        </div>
-        <div v-for="(d, i) in result.diff.diffs" :key="i" class="drow">
-          <span class="d-path" :title="d.path">{{ d.path }}</span>
-          <span class="d-rec" :title="fmtVal(d.recorded)">{{ fmtVal(d.recorded) }}</span>
-          <span class="d-rep" :title="fmtVal(d.replayed)">{{ fmtVal(d.replayed) }}</span>
-          <span class="d-reason">{{ d.reason || '值不同' }}</span>
-        </div>
-      </div>
-    </template>
-
-    <template #foot>
-      <button class="btn btn-ghost" @click="closeResult">关闭</button>
-    </template>
+      </template>
+    </div>
+    <template #foot><button class="btn btn-ghost" :disabled="replaying" @click="closeModal">关闭</button><button v-if="modal === 'detail' && selected" class="btn btn-primary" @click="modal = 'replay'">配置回放</button><button v-else-if="result" class="btn btn-ghost" @click="result = null">重新配置</button><button v-else-if="modal === 'replay' && selected" class="btn btn-primary" :disabled="replaying" @click="sendReplay">{{ replaying ? '回放中…' : '发送回放' }}</button></template>
   </Modal>
 </template>
 
 <style scoped>
-.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
-.card { background:var(--surface); border:1px solid var(--border);
-  border-radius:14px; padding:18px 20px; box-shadow:var(--shadow-sm); transition:border-color .15s; }
-.card:hover { border-color:var(--primary); }
-.card .k { font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:550; }
-.card .v { font-size:27px; font-weight:780; letter-spacing:-.5px; }
-.card .v.pass { color:var(--pass-fg); }
-.card .v.fail { color:var(--fail-fg); }
-.card .v.pri { color:var(--primary); }
-
-.row { display:grid; grid-template-columns:80px 1.7fr 88px 116px 84px; align-items:center; gap:12px;
-  padding:13px 20px; border-bottom:1px solid var(--border); font-size:13px; transition:background .15s; }
-.row:last-child { border-bottom:none; }
-.row:not(.head):hover { background:var(--surface-2); }
-.row.head { font-size:11.5px; font-weight:600; color:var(--text-muted);
-  text-transform:uppercase; letter-spacing:.5px; background:var(--surface-2); }
-.c-path { display:flex; align-items:center; gap:10px; font-weight:550;
-  font-family:ui-monospace,Consolas,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.c-path .id { color:var(--text-muted); font-size:12px; background:var(--surface-2);
-  padding:2px 8px; border-radius:6px; flex:none; }
-.c-time { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:12px; }
-.c-act { text-align:right; }
-.rep { height:30px; padding:0 14px; font-size:12.5px; }
-
-.state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
-.state.err { color:var(--fail-fg); }
-.retry { margin-left:12px; }
-
-/* ===== 弹层 ===== */
-.target { display:flex; align-items:center; gap:10px; margin-bottom:18px; font-family:ui-monospace,Consolas,monospace; font-size:13px; }
-.target .path { color:var(--text); word-break:break-all; }
-
-.status-cmp { display:flex; align-items:center; gap:14px; margin-bottom:18px; }
-.s-box { flex:1; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; text-align:center; }
-.s-box.bad { border-color:var(--fail-fg); background:var(--fail-bg); }
-.s-box .s-k { font-size:11.5px; color:var(--text-muted); margin-bottom:6px; }
-.s-box .s-v { font-size:22px; font-weight:750; font-family:ui-monospace,Consolas,monospace; }
-.arrow { width:22px; height:22px; color:var(--text-muted); flex:none; }
-
-.diff-summary { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; margin-bottom:14px; flex-wrap:wrap; }
-.diff-summary.ok { background:var(--pass-bg); }
-.diff-summary.bad { background:var(--fail-bg); }
-.diff-summary .txt { font-size:12px; color:var(--text-muted); }
-
-.difftbl { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-.drow { display:grid; grid-template-columns:1.4fr 1fr 1fr 1.3fr; gap:10px; padding:10px 14px;
-  border-bottom:1px solid var(--border); font-size:12px; align-items:center; }
-.drow:last-child { border-bottom:none; }
-.drow.head { background:var(--surface-2); font-weight:600; color:var(--text-muted); font-size:11px;
-  text-transform:uppercase; letter-spacing:.4px; }
-.drow span { font-family:ui-monospace,Consolas,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.drow.head span { font-family:inherit; }
-.d-rec { color:var(--text-muted); }
-.d-rep { color:var(--fail-fg); font-weight:600; }
-.d-reason { font-family:inherit !important; color:var(--text-muted); white-space:normal !important; }
-
-.form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
-
-/* ===== 响应式 ===== */
-@media (max-width:1100px) {
-  .cards { grid-template-columns:repeat(2,1fr); }
-}
-@media (max-width:640px) {
-  .cards { grid-template-columns:1fr; gap:12px; }
-  .row { grid-template-columns:64px 1fr 72px; gap:8px; padding:12px 14px; }
-  .c-status, .c-time { display:none; }
-  .difftbl { display:none; }  /* 手机端只看差异条数摘要,明细回桌面看 */
-}
+h2 { margin:0; font-size:15px; font-weight:650; }
+.capture-panel { padding:20px 22px; margin-bottom:20px; }
+.capture-heading,.capture-actions,.list-actions,.row-actions,.detail-meta,.pagination,.pagination>div { display:flex; align-items:center; gap:12px; }
+.capture-heading { justify-content:space-between; gap:16px; }
+.capture-heading p { margin:8px 0 0; font-size:13px; color:var(--text-muted); line-height:1.6; }
+.capture-actions { margin-top:16px; flex-wrap:wrap; }
+.hint,.muted { font-size:12px; color:var(--text-muted); line-height:1.65; }
+.hint { margin:10px 0 0; }
+.list-actions { flex-wrap:wrap; }
+.scope-tabs { display:flex; padding:3px; background:var(--surface-2); border-radius:8px; gap:3px; }
+.scope-tabs button { border:0; background:transparent; padding:6px 10px; border-radius:6px; color:var(--text-muted); cursor:pointer; font:inherit; font-size:12px; }
+.scope-tabs button.active { background:var(--surface); color:var(--primary); box-shadow:var(--shadow-sm); }
+.traffic-row { display:grid; grid-template-columns:minmax(150px,1fr) 64px 70px 160px 85px; align-items:center; gap:16px; padding:11px 20px; border-bottom:1px solid var(--border); font-size:12px; }
+.traffic-row:not(.row-head):hover { background:var(--surface-2); }
+.row-head { background:var(--surface-2); color:var(--text-muted); font-size:11px; }
+.request-name { display:flex; gap:10px; align-items:center; min-width:0; }
+.request-name>div { min-width:0; }
+.request-name strong,.request-name small { display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
+.request-name strong { font-size:13px; font-weight:550; }
+.request-name small { color:var(--text-muted); font-size:11px; margin-top:3px; }
+.traffic-row>.badge { justify-self:start; }
+.text-btn { border:0; background:transparent; color:var(--primary); cursor:pointer; font:inherit; font-size:12px; padding:5px 0; }
+.text-btn:hover { text-decoration:underline; }
+button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.pagination { padding:12px 20px; justify-content:space-between; color:var(--text-muted); font-size:12px; }
+.pagination .btn { height:30px; padding:0 10px; font-size:12px; }
+.state { padding:40px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
+.state p { line-height:1.7; }
+.form-err { padding:10px 12px; margin-bottom:12px; border-radius:8px; background:var(--fail-bg); color:var(--fail-fg); font-size:12px; }
+.traffic-modal { display:flex; flex-direction:column; gap:12px; }
+.request-summary { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:13px; overflow-wrap:anywhere; }
+.request-summary code { flex-basis:100%; color:var(--text-muted); font-size:12px; }
+.detail-meta { flex-wrap:wrap; font-size:12px; color:var(--text-muted); }
+.traffic-modal details { border:1px solid var(--border); border-radius:9px; padding:10px 12px; min-width:0; }
+summary { cursor:pointer; font-size:13px; font-weight:550; }
+pre { margin:10px 0 0; padding:10px; background:var(--surface-2); border-radius:7px; font:12px/1.6 ui-monospace,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.field { display:flex; flex-direction:column; gap:7px; margin:0; font-size:12px; }
+.request-config .field { margin-top:12px; }
+.field textarea { min-height:68px; font:12px/1.6 ui-monospace,Consolas,monospace; resize:vertical; scrollbar-width:none; }
+.field textarea,.field input { width:100%; box-sizing:border-box; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; }
+.field input { min-height:36px; font:inherit; }
+.field textarea:focus,.field input:focus { border-color:var(--primary); outline:2px solid var(--ring); }
+.field textarea::-webkit-scrollbar { display:none; }
+.required { color:var(--fail-fg); }
+.target-url { margin:0; overflow-wrap:anywhere; color:var(--text-muted); font-size:12px; }
+.comparison-verdict { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; border-radius:9px; font-size:12px; }
+.comparison-verdict.passed { background:var(--pass-bg); color:var(--pass-fg); }
+.comparison-verdict.failed { background:var(--fail-bg); color:var(--fail-fg); }
+.diff-item { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; border:1px solid var(--border); padding:12px; border-radius:8px; font-size:12px; overflow-wrap:anywhere; }
+.diff-item>span,.diff-item small { color:var(--text-muted); }
+.diff-item>span { text-align:right; }
+@media(max-width:1050px) { .traffic-row { grid-template-columns:minmax(150px,1fr) 60px 70px 85px; } .traffic-row time,.row-head>span:nth-child(4) { display:none; } }
+@media(max-width:640px) { .capture-panel { padding:16px; } .capture-heading { align-items:flex-start; } .capture-heading .badge { flex:none; } .panel-head { align-items:flex-start; gap:12px; flex-direction:column; padding:16px; } .traffic-row { grid-template-columns:minmax(0,1fr) 85px; gap:8px; padding:10px 14px; } .traffic-row>.badge,.response-time,.row-head { display:none; } .request-name { align-items:flex-start; flex-direction:column; gap:5px; } .pagination { padding:12px; flex-wrap:wrap; gap:8px; } .diff-item { grid-template-columns:minmax(0,1fr); } .diff-item>span { text-align:left; } .capture-actions .muted { flex-basis:100%; } }
 </style>

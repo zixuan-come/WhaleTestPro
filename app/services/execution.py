@@ -127,7 +127,7 @@ def run_case(db, case_id, env_id, project_id):
 
 
 
-def run_interface(db, interface_id, env_id, project_id, *, path_params=None, request_overrides=None):
+def run_interface(db, interface_id, env_id, project_id, *, path_params=None, request_overrides=None, recording_user_id=None):
     """直接执行接口定义，不创建测试用例或测试报告。"""
     interface = interface_repo.db_get(db, interface_id, project_id)
     if interface is None:
@@ -139,6 +139,12 @@ def run_interface(db, interface_id, env_id, project_id, *, path_params=None, req
     error = None
     passed = False
     started = perf_counter()
+    capture_id = None
+    warning = None
+    if recording_user_id is not None:
+        from app.services import traffic_capture
+        capture = traffic_capture.active(db, project_id, recording_user_id)
+        capture_id = capture.capture_id if capture else None
     try:
         interface = with_request_overrides(interface, request_overrides)
         values = {**(getattr(interface, "path_params", None) or {}), **(path_params or {})}
@@ -149,6 +155,16 @@ def run_interface(db, interface_id, env_id, project_id, *, path_params=None, req
                           "headers": fields["headers"], "params": fields["params"], "body": fields["json"]}
         response = _request(interface, url=rendered_url, **fields)
         _add_response_secrets(response, report_secrets)
+        if capture_id:
+            try:
+                warning = traffic_capture.save_debug(db, project_id=project_id,
+                    user_id=recording_user_id, capture_id=capture_id, interface=interface,
+                    request=request_detail, response=_response_detail(response, secrets=report_secrets),
+                    duration_ms=round((perf_counter() - started) * 1000),
+                    base_url=context.get("base_url", ""), known_secrets=report_secrets)
+            except Exception:
+                db.rollback()
+                warning = "接口已执行，但流量录制保存失败，请重试"
         response_detail = _response_detail(response, secrets=report_secrets)
         passed = response.ok
     except Exception as exc:
@@ -160,6 +176,8 @@ def run_interface(db, interface_id, env_id, project_id, *, path_params=None, req
               "duration_ms": round((perf_counter() - started) * 1000)}
     if error is not None:
         result["error"] = _mask_sensitive(error, secrets=report_secrets)
+    if capture_id and warning:
+        result["recording_warning"] = warning
     return result
 
 

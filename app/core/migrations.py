@@ -451,6 +451,7 @@ def run_all_migrations(*binds) -> None:
         ensure_case_request_overrides_schema(bind)
         ensure_execution_report_schema(bind)
         ensure_project_notification_schema(bind)
+        ensure_traffic_capture_schema(bind)
 
 
 def ensure_schedule_environment_schema(bind) -> None:
@@ -539,3 +540,23 @@ def ensure_project_notification_schema(bind) -> None:
     if bind.dialect.name == "mysql":
         with bind.begin() as connection:
             _record_migration(connection, "016_project_notification")
+
+
+def ensure_traffic_capture_schema(bind) -> None:
+    from app.models.traffic_capture import TrafficCapture
+    TrafficCapture.__table__.create(bind, checkfirst=True)
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if inspector.has_table("traffic_records"):
+            columns = {column["name"] for column in inspector.get_columns("traffic_records")}
+            additions = {"source": "VARCHAR(20) NULL", "capture_id": "VARCHAR(36) NULL",
+                "interface_name": "VARCHAR(200) NULL", "request_params": "JSON NULL",
+                "target_host": "VARCHAR(500) NULL", "duration_ms": "INTEGER NULL"}
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE traffic_records ADD COLUMN {name} {definition}"))
+            indexes = {index["name"] for index in inspect(connection).get_indexes("traffic_records")}
+            if "ix_traffic_records_capture_id" not in indexes:
+                connection.execute(text("CREATE INDEX ix_traffic_records_capture_id ON traffic_records (capture_id)"))
+        if bind.dialect.name == "mysql":
+            _record_migration(connection, "017_traffic_capture")

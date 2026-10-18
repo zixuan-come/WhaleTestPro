@@ -14,3 +14,9 @@ class TrafficRecord(Base):
     response_body = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     project_id = Column(Integer, ForeignKey("project.id"), nullable=False)
+    source = Column(String(20), nullable=True)  # NULL: historical incoming record
+    capture_id = Column(String(36), nullable=True, index=True)
+    interface_name = Column(String(200), nullable=True)
+    request_params = Column(JSON, nullable=True)
+    target_host = Column(String(500), nullable=True)
+    duration_ms = Column(Integer, nullable=True)
