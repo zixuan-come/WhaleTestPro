@@ -1,15 +1,38 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.authorization import ProjectContext, authorize
 from app.core.permissions import Action, Resource
 from app.database import get_db
 from app.schemas.response import ApiResponse, success_response
-from app.schemas.scenario import ScenarioCreate, ScenarioOut
+from app.schemas.scenario import ScenarioCreate, ScenarioOut, ScenarioStepDebug, ScenarioDebugExtract
 from app.services import scenario as scenario_service
+from app.services import scenario_debug
 
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+
+@router.post('/{scenario_id}/debug', response_model=ApiResponse[dict])
+def debug_scenario_step(scenario_id: int, payload: ScenarioStepDebug,
+                       env_id: int = Query(gt=0), db: Session = Depends(get_db),
+                       context: ProjectContext = Depends(authorize(Resource.SCENARIO, Action.EXECUTE))):
+    try:
+        result = scenario_debug.debug_step(db, scenario_id, env_id, context.project_id, context.user.id, payload)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return success_response(result, message='单步调试完成')
+
+
+@router.post('/{scenario_id}/debug/extract', response_model=ApiResponse[dict])
+def validate_scenario_extraction(scenario_id: int, payload: ScenarioDebugExtract,
+                                env_id: int = Query(gt=0), db: Session = Depends(get_db),
+                                context: ProjectContext = Depends(authorize(Resource.SCENARIO, Action.EXECUTE))):
+    try:
+        result = scenario_debug.validate_extraction(db, scenario_id, env_id, context.project_id, context.user.id, payload)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return success_response(result, message='提取验证完成')
 
 
 @router.get("", response_model=ApiResponse[list[ScenarioOut]])

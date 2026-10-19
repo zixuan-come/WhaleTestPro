@@ -67,3 +67,39 @@ class ScenarioOut(ScenarioCreate):
     id: int
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class ScenarioStepDebug(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    step: ScenarioStep
+    session_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+    variables: dict[str, object] = Field(default_factory=dict, max_length=100)
+
+    @model_validator(mode='after')
+    def bounded_debug_input(self):
+        import re
+        if any(not re.fullmatch(r'\w{1,64}', key) or key == 'base_url' for key in self.variables):
+            raise ValueError('临时变量名须为 1～64 个字母、数字或下划线，不能覆盖 base_url')
+        if len(json.dumps(self.model_dump(), ensure_ascii=False).encode()) > 256 * 1024:
+            raise ValueError('单步调试配置不能超过 256 KiB')
+        rules = self.step.extract_rules or {}
+        if len(rules) > 100 or any(not re.fullmatch(r'\w{1,64}', key) or key == 'base_url' or
+            not path or len(path) > 500 for key, path in rules.items()):
+            raise ValueError('提取规则最多 100 项，变量名须有效，JSONPath 须为 1～500 个字符')
+        return self
+
+
+class ScenarioDebugExtract(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    session_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    response_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    extract_rules: dict[str, str] = Field(max_length=100)
+
+    @model_validator(mode='after')
+    def bounded_rules(self):
+        import re
+        if any(not re.fullmatch(r'\w{1,64}', key) or key == 'base_url' for key in self.extract_rules):
+            raise ValueError('提取变量名须为 1～64 个字母、数字或下划线，不能覆盖 base_url')
+        if any(not path or len(path) > 500 for path in self.extract_rules.values()):
+            raise ValueError('每条 JSONPath 须为 1～500 个字符')
+        return self
