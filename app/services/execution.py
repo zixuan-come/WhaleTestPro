@@ -407,8 +407,7 @@ def _run_once(db, case, interface, context):
             **fields,
         )
         _add_response_secrets(response, report_secrets)
-        if current_execution.get():
-            response_detail = _response_detail(response, secrets=report_secrets)
+        response_detail = _response_detail(response, secrets=report_secrets)
         status_passed = response.status_code == case.expected_status
         assertions_results = run_assertions(response, render_deep(case.assertions, context), db)
         passed = status_passed and all(r["passed"] for r in assertions_results)
@@ -436,11 +435,13 @@ def _run_once(db, case, interface, context):
             result[field] = _mask_sensitive(result[field], secrets=report_secrets)
     if "assertions" in result:
         result["assertions"] = _assertion_evidence(result["assertions"], report_secrets)
+    result.update(
+        request_detail=_evidence_detail(request_detail, report_secrets),
+        response_detail=response_detail,
+        duration_ms=round((perf_counter() - started) * 1000),
+    )
     if current_execution.get():
-        capture_attempt({**result, "case_name": _mask_sensitive(case.name, secrets=report_secrets),
-                         "request_detail": _evidence_detail(request_detail, report_secrets),
-                         "response_detail": response_detail,
-                         "duration_ms": round((perf_counter() - started) * 1000)})
+        capture_attempt({**result, "case_name": _mask_sensitive(case.name, secrets=report_secrets)})
     return result
 
 

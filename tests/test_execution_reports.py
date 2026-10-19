@@ -95,6 +95,12 @@ def test_case_snapshot_evidence_and_deleted_source(reports):
     client, db, calls = reports
     result = data(client.post("/cases/1/run?env_id=1"))
     assert result["passed"] is True
+    assert result["response_detail"]["body"]["data"] == {"id": 1}
+    assert result["response_detail"]["headers"]["Content-Type"] == "application/json"
+    assert result["request_detail"]["url"] == "http://runner.invalid/health/live"
+    assert result["duration_ms"] >= 0
+    assert "private-fixture-token" not in str(result)
+    assert "private-response-token" not in str(result)
     page = listing(client, "case")
     assert page["total"] == page["passed_count"] == 1
     item = page["items"][0]
@@ -110,6 +116,62 @@ def test_case_snapshot_evidence_and_deleted_source(reports):
     db.commit()
     assert listing(client, "case")["items"][0]["name"] == "用例1"
     assert current_execution.get() is None
+
+
+@pytest.mark.parametrize("content,content_type,body", [
+    (b'{"id":42,"quantity":1}', "application/json", {"id": 42, "quantity": 1}),
+    (b'[]', "application/json", []),
+    (b'false', "application/json", False),
+    (b'0', "application/json", 0),
+    (b'null', "application/json", None),
+    (b'created', "text/plain", "created"),
+    (b'', "text/plain", None),
+])
+def test_case_immediate_response_keeps_body_even_when_status_assertion_fails(reports, monkeypatch, content, content_type, body):
+    client, _, calls = reports
+    def downstream(*args, **kwargs):
+        calls.append(kwargs)
+        response = requests.Response()
+        response.status_code = 201
+        response._content = content
+        response.headers['Content-Type'] = content_type
+        return response
+    monkeypatch.setattr(execution.requests, 'request', downstream)
+    result = data(client.post('/cases/1/run?env_id=1'))
+    assert not result['passed']  # Expected 200; still inspect the actual creation response.
+    assert result['response_detail']['body'] == body
+    assert result['response_detail']['status_code'] == result['actual_status'] == 201
+    assert len(calls) == 1
+
+
+def test_case_data_groups_keep_their_own_last_retry_response(reports, monkeypatch):
+    client, db, calls = reports
+    test_case = db.get(Case, 1)
+    test_case.datasets = [{'group': 'first'}, {'group': 'second'}]
+    test_case.retries = 1
+    db.commit()
+    def downstream(*args, **kwargs):
+        calls.append(kwargs)
+        response = requests.Response()
+        response.status_code = 500 if len(calls) == 1 else 200
+        response._content = ('{"request":%d}' % len(calls)).encode()
+        response.headers['Content-Type'] = 'application/json'
+        return response
+    monkeypatch.setattr(execution.requests, 'request', downstream)
+    results = data(client.post('/cases/1/run?env_id=1'))
+    assert [row['response_detail']['body'] for row in results] == [{'request': 2}, {'request': 3}]
+    assert [row['attempts'] for row in results] == [2, 1]
+
+
+def test_case_without_an_http_response_does_not_fabricate_a_body(reports, monkeypatch):
+    client, _, _ = reports
+    def timeout(*args, **kwargs):
+        raise requests.Timeout('synthetic timeout')
+    monkeypatch.setattr(execution.requests, 'request', timeout)
+    result = data(client.post('/cases/1/run?env_id=1'))
+    assert not result['passed'] and 'timeout' in result['error']
+    assert result['response_detail'] is None
+    assert result['request_detail']['url'].endswith('/health/live')
 
 
 def test_suite_has_one_root_and_explicit_child_reports(reports):

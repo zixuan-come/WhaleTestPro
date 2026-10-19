@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
+import { renderToString } from '@vue/server-renderer'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { cloneRequest, requestConfig, requestDraft, serializeRequest } from '../src/utils/requestConfig.js'
 import { pathParameterNames } from '../src/utils/pathParameters.js'
@@ -24,6 +25,41 @@ const workspaceSetup = build('../src/components/InterfaceWorkspace.vue')
 const caseSetup = build('../src/views/Cases.vue')
 const editorSetup = build('../src/components/RequestEditor.vue')
 const pageSetup = build('../src/views/Interfaces.vue')
+
+async function responseHtml(result) {
+  const filename = '../src/components/CaseResponse.vue'
+  const descriptor = parse(readFileSync(new URL(filename, import.meta.url), 'utf8')).descriptor
+  const script = compileScript(descriptor, { id: 'case-response' })
+  const component = Function('computed', script.content.replace(/^import[^\n]+\n/gm, '').replace('export default', 'return'))(Vue.computed)
+  const template = compileTemplate({ source: descriptor.template.content, id: 'case-response', compilerOptions: { bindingMetadata: script.bindings } })
+  assert.deepEqual(template.errors, [])
+  const code = template.code.replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"];?/g,
+    (_, names) => `const {${names.replace(/\bas\b/g, ':')}} = Vue;`).replace('export function render', 'return function render')
+  component.render = Function('Vue', code)(Vue)
+  return renderToString(Vue.createSSRApp(component, { result }))
+}
+
+test('case execution displays actual response JSON even if its status assertion failed', async () => {
+  const html = await responseHtml({ passed: false, actual_status: 201, duration_ms: 18,
+    response_detail: { status_code: 201, headers: { 'Content-Type': 'application/json' }, body: { id: 42, quantity: 1 } },
+    request_detail: { method: 'POST', url: 'http://fixture.invalid/orders' } })
+  for (const text of ['响应体', '&quot;id&quot;: 42', '&quot;quantity&quot;: 1', '18 ms', '响应头', '实际请求', 'POST']) assert.ok(html.includes(text), text)
+  const source = readFileSync(new URL('../src/views/Cases.vue', import.meta.url), 'utf8')
+  assert.ok(source.includes('<CaseResponse :result="r" />'))
+  assert.ok(source.includes('v-for="(r, i) in runs"'))
+})
+
+test('response rendering preserves falsy JSON, text and safely escapes HTML', async () => {
+  for (const body of [false, 0, [], null, '<script>unsafe()</script>']) {
+    const html = await responseHtml({ response_detail: { status_code: 200, headers: { 'content-type': 'application/json' }, body } })
+    assert.ok(html.includes('class="response-body"'))
+    assert.ok(!html.includes('响应体为空'))
+    assert.ok(!html.includes('<script>unsafe()'))
+  }
+  assert.ok((await responseHtml({ response_detail: { status_code: 204, body: null, headers: {} } })).includes('响应体为空'))
+  assert.ok((await responseHtml({ error: 'timeout', response_detail: null })).includes('本次执行未收到可展示的响应'))
+  assert.ok((await responseHtml({ response_detail: { body: 'partial', body_truncated: true } })).includes('仅展示截取内容'))
+})
 const order = { id: 81, name: '查询订单', method: 'GET', url: '/orders/{id}', path_params: { id: '1' }, headers: { 'X-Project-Id': '1' }, params: { page: 2 }, body: null }
 const other = { ...order, id: 82, name: '其他接口', path_params: { id: '9' } }
 const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, pathParameterNames }

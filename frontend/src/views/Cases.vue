@@ -10,6 +10,7 @@ import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
 import InlineCasePanel from '../components/InlineCasePanel.vue'
 import RequestEditor from '../components/RequestEditor.vue'
+import CaseResponse from '../components/CaseResponse.vue'
 import { requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
 
 const props = defineProps({
@@ -455,7 +456,7 @@ defineExpose({ openCreate, load })
   <p v-if="detailMode && dirty && editingId != null" class="case-save-hint">保存修改后即可运行用例。</p>
 
   <!-- 执行结果弹层 -->
-  <component :is="detailMode ? InlineCasePanel : Modal" v-if="showResult" :title="`执行结果 · ${resultCase?.name}`" :max-width="620" @close="showResult = false">
+  <component :is="detailMode ? InlineCasePanel : Modal" v-if="showResult" :title="`执行结果 · ${resultCase?.name}`" :max-width="820" @close="showResult = false">
     <div class="verdict">
       <span class="badge" :class="overallPassed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ overallPassed ? '通过' : '失败' }}</span>
       <span v-if="runs.length > 1" class="muted">共 {{ runs.length }} 组数据驱动</span>
@@ -470,10 +471,12 @@ defineExpose({ openCreate, load })
 
       <div v-if="r.error" class="form-err">{{ r.error }}</div>
 
-      <div v-else class="kv">
+      <div v-if="r.expected_status != null || r.actual_status != null" class="kv">
         <div><span class="kk">期望状态</span><span class="vv">{{ r.expected_status }}</span></div>
         <div><span class="kk">实际状态</span><span class="vv" :class="{ bad: r.actual_status !== r.expected_status }">{{ r.actual_status }}</span></div>
       </div>
+
+      <CaseResponse :result="r" />
 
       <div v-if="r.assertions && r.assertions.length" class="asserts">
         <div class="asserts-t">断言 ({{ r.assertions.filter(a => a.passed).length }}/{{ r.assertions.length }} 通过)</div>
