@@ -25,6 +25,7 @@ class ReportPage(BaseModel):
 class ScenarioReportStepOut(BaseModel):
     id: int
     sequence: int
+    step_id: str | None = None
     case_id: int
     case_name: str | None = None
     passed: bool

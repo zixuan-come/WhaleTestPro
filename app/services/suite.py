@@ -12,6 +12,9 @@ from app.repositories import report as report_repo
 from app.services import execution
 from app.schemas.suite import SuiteCreate, SuiteUpdate
 from app.services.execution_tracking import tracked
+from app.core.scenario_steps import equivalent_case_ids
+from app.models.case import Case
+from app.models.interface import Interface
 
 
 def s_create(db: Session, suite: SuiteCreate, project_id: int):
@@ -102,6 +105,7 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
             project_id,
             scenario_id=scenario.id,
             scenario_name=scenario.name,
+            **({'steps': scenario.steps} if getattr(scenario, 'steps', None) is not None else {}),
         )
 
         passed = bool(chain_results) and all(r["passed"] for r in chain_results)
@@ -115,7 +119,12 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
         })
 
         # 记录已执行的用例（场景中的步骤）
-        executed_case_ids.update(scenario.case_ids or [])
+        if getattr(scenario, 'steps', None) is None:
+            executed_case_ids.update(scenario.case_ids or [])
+        else:
+            cases = {row.id: row for row in db.query(Case).filter_by(project_id=project_id).all()}
+            interfaces = {row.id: row for row in db.query(Interface).filter_by(project_id=project_id).all()}
+            executed_case_ids.update(equivalent_case_ids(scenario.steps, cases, interfaces))
 
     # 2. 运行独立用例 (case_ids)
     for case_id in suite.case_ids or []:

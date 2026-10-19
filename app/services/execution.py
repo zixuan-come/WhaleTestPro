@@ -19,6 +19,8 @@ import json
 import requests
 from datetime import datetime
 from time import perf_counter
+from copy import deepcopy
+from types import SimpleNamespace
 
 
 MAX_RESPONSE_BODY_BYTES = 64 * 1024
@@ -189,6 +191,7 @@ def run_chain(
     project_id,
     scenario_id=None,
     scenario_name=None,
+    steps=None,
 ):
     report_started_at = datetime.utcnow()
     report_started = perf_counter()
@@ -196,9 +199,15 @@ def run_chain(
     report_secrets = set(sensitive_strings(context))
     results = []
     report_steps = []
-    for sequence, case_id in enumerate(case_ids, start=1):
+    entries = [(step.get('source_case_id'), step) for step in deepcopy(steps)] if steps is not None else [(number, None) for number in case_ids]
+    for sequence, (case_id, snapshot) in enumerate(entries, start=1):
         step_started = perf_counter()
-        case = case_repo.db_get(db, case_id, project_id)
+        case = SimpleNamespace(**snapshot) if snapshot is not None else case_repo.db_get(db, case_id, project_id)
+        if snapshot is not None and snapshot.get('missing_reason'):
+            error = snapshot['missing_reason']
+            results.append({'case_id': case_id, 'step_id': snapshot['step_id'], 'case_name': snapshot['name'], 'passed': False, 'error': error})
+            report_steps.append({'sequence': sequence, **results[-1], 'duration_ms': round((perf_counter() - step_started) * 1000)})
+            continue
         if case is None:
             result = {"case_id": case_id, "case_name": None, "passed": False, "error": "用例不存在"}
             results.append(result)
@@ -216,7 +225,9 @@ def run_chain(
             })
             continue
 
-        interface = interface_repo.db_get(db, case.interface_id, project_id)
+        interface = (SimpleNamespace(id=case.interface_id, name=snapshot.get('interface_name'),
+                                     **{key: deepcopy(snapshot.get(key)) for key in ('method', 'url', 'path_params', 'headers', 'params', 'body')})
+                     if snapshot is not None else interface_repo.db_get(db, case.interface_id, project_id))
         if interface is None:
             result = {"case_id": case_id, "case_name": case.name, "passed": False, "error": "接口不存在"}
             results.append(result)
@@ -291,6 +302,8 @@ def run_chain(
         if error:
             result["error"] = error
         results.append(result)
+        if snapshot is not None:
+            result['step_id'] = snapshot['step_id']
         report_assertions = []
         if actual_status is not None:
             report_assertions.append({
@@ -311,6 +324,7 @@ def run_chain(
             "extracted_variables": _mask_sensitive(extracted_variables) or None,
             "error": error,
             "duration_ms": round((perf_counter() - step_started) * 1000),
+            **({'step_id': snapshot['step_id']} if snapshot is not None else {}),
         })
 
     # Keep raw values only in the in-memory execution context. Aliases and

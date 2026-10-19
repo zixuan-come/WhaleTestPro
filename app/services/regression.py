@@ -14,6 +14,7 @@ from app.models.scenario import Scenario
 from app.models.suite import TestSuite
 from app.services import execution, suite
 from app.services.execution_tracking import tracked
+from app.core.scenario_steps import equivalent_case_ids
 
 
 def _assets(db, model, project_id):
@@ -78,11 +79,23 @@ def preview(db, project_id, selection):
                     items.append({"type": "scenario", "id": scenario_id, "name": f"场景 #{scenario_id}（已删除）", "steps": []})
                 else:
                     remember(scenario)
-                    steps = [case_item(case_id) for case_id in scenario.case_ids or []]
+                    if getattr(scenario, 'steps', None) is None:
+                        steps = [case_item(case_id) for case_id in scenario.case_ids or []]
+                        used.update(scenario.case_ids or [])
+                    else:
+                        steps = []
+                        for step in scenario.steps:
+                            if step.get('missing_reason'):
+                                warnings.append(f"场景「{scenario.name}」中的步骤「{step['name']}」关联接口已失效")
+                            else:
+                                if not env:
+                                    warnings.append('存在使用相对地址的步骤，请选择测试环境')
+                            steps.append({'type': 'case', 'id': step.get('source_case_id'), 'step_id': step['step_id'],
+                                          'name': step['name'], 'interface_id': step.get('interface_id')})
+                        used.update(equivalent_case_ids(scenario.steps, cases, interfaces))
                     if not steps:
                         warnings.append(f"场景「{scenario.name}」没有执行步骤")
                     items.append({"type": "scenario", "id": scenario.id, "name": scenario.name, "steps": steps})
-                    used.update(scenario.case_ids or [])
                     step_count += len(steps)
                 scenario_count += 1
             explicit = list(current.case_ids or [])
@@ -129,7 +142,9 @@ def _run_plan(db, plan, env_id, project_id, report_name, notify=False):
                 passed = detail["total"] > 0 and detail["failed"] == 0
                 for item in group["items"]:
                     for case in item.get("steps", [item]):
-                        if case.get("id") in case_interfaces:
+                        if case.get('interface_id') is not None:
+                            covered.add(case['interface_id'])
+                        elif case.get("id") in case_interfaces:
                             covered.add(case_interfaces[case["id"]])
             else:
                 detail = execution.run_case(db, group["id"], env_id, project_id)

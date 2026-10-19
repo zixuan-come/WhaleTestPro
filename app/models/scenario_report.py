@@ -51,6 +51,7 @@ class ScenarioReportStep(Base):
         index=True,
     )
     sequence = Column(Integer, nullable=False)
+    step_id = Column(String(64), nullable=True)
     case_id = Column(Integer, nullable=False)
     case_name = Column(String(100), nullable=True)
     passed = Column(Boolean, nullable=False)

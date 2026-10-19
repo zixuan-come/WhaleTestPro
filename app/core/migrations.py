@@ -484,6 +484,61 @@ def run_all_migrations(*binds) -> None:
         ensure_perf_run_schema(bind)
         ensure_schedule_selection_schema(bind)
         ensure_tags_removed_schema(bind)
+        ensure_scenario_steps_schema(bind)
+
+
+def ensure_scenario_steps_schema(bind) -> None:
+    """Freeze existing ordered references once; keep missing references visible."""
+    from sqlalchemy import MetaData, Table, select
+    from app.core.scenario_steps import case_snapshot
+    from app.schemas.scenario import ScenarioStep
+    import json
+
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if inspector.has_table('scenario_report_step') and 'step_id' not in {column['name'] for column in inspector.get_columns('scenario_report_step')}:
+            connection.execute(text('ALTER TABLE scenario_report_step ADD COLUMN step_id VARCHAR(64) NULL'))
+        if not inspector.has_table('scenario'):
+            return
+        if 'steps' not in {column['name'] for column in inspector.get_columns('scenario')}:
+            connection.execute(text('ALTER TABLE scenario ADD COLUMN steps JSON NULL'))
+    # MySQL commits DDL implicitly. Backfill in a separate transaction so a
+    # retry after interruption only processes rows whose snapshot is still NULL.
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        tables = {name: Table(name, MetaData(), autoload_with=connection)
+                  for name in ('scenario', 'test_case', 'interface') if inspector.has_table(name)}
+        scenarios = tables['scenario']
+        cases = {row['id']: dict(row) for row in connection.execute(select(tables['test_case'])).mappings()} if 'test_case' in tables else {}
+        interfaces = {row['id']: dict(row) for row in connection.execute(select(tables['interface'])).mappings()} if 'interface' in tables else {}
+        for row in connection.execute(select(scenarios)).mappings().all():
+            saved = row['steps']
+            if isinstance(saved, str):
+                saved = json.loads(saved)
+            if saved is not None:
+                continue
+            ids = row['case_ids']
+            ids = (json.loads(ids) if isinstance(ids, str) else ids) or []
+            if len(ids) > 1000:
+                raise RuntimeError(f"场景 #{row['id']} 超过 1000 步，请先拆分后再升级")
+            steps = []
+            for number in ids:
+                case = cases.get(number)
+                if case and case.get('project_id') != row['project_id']:
+                    case = None
+                interface = interfaces.get(case.get('interface_id')) if case else None
+                if interface and interface.get('project_id') != row['project_id']:
+                    interface = None
+                steps.append(case_snapshot(case, interface, source_id=number))
+            try:
+                steps = [ScenarioStep.model_validate(step).model_dump() for step in steps]
+                if len(json.dumps(steps, ensure_ascii=False).encode()) > 2 * 1024 * 1024:
+                    raise ValueError('snapshot too large')
+            except ValueError:
+                raise RuntimeError(f"场景 #{row['id']} 的旧用例配置无效或超过 2 MiB，请先修正后升级") from None
+            connection.execute(scenarios.update().where(scenarios.c.id == row['id']).values(steps=steps))
+        if bind.dialect.name == 'mysql':
+            _record_migration(connection, '021_scenario_step_snapshots')
 
 
 def ensure_tags_removed_schema(bind) -> None:
