@@ -5,6 +5,9 @@ import RequestEditor from './RequestEditor.vue'
 import CaseResponse from './CaseResponse.vue'
 import ExtractRulesEditor from './ExtractRulesEditor.vue'
 import ExtractedVariables from './ExtractedVariables.vue'
+import AssertionEditor from './AssertionEditor.vue'
+import AssertionResults from './AssertionResults.vue'
+import { assertionRows, serializeAssertions } from '../utils/assertionRules'
 import { extractRuleRows, serializeExtractRules, SCENARIO_EXTRACT_OPTIONS } from '../utils/extractRules'
 import { debugScenarioStep, validateScenarioExtraction } from '../api/scenario'
 import { cloneRequest, requestDraft, serializeRequest } from '../utils/requestConfig'
@@ -28,22 +31,12 @@ const url = ref(props.step.url || '')
 const expectedStatus = ref(props.step.expected_status)
 const request = ref(requestDraft(props.step))
 const originalRequest = cloneRequest(request.value)
-const assertions = ref(props.step.assertions == null ? '' : JSON.stringify(props.step.assertions, null, 2))
+const assertions = ref(assertionRows(props.step.assertions))
 const extracts = ref(extractRuleRows(props.step.extract_rules))
 const advanced = ref(false)
 const error = ref('')
 const editor = ref(null)
 const unsupported = Boolean(props.step.setup_sql?.length || props.step.teardown_sql?.length || props.step.datasets?.length || props.step.retries > 0)
-
-function json(text, label, array) {
-  if (!text.trim()) return null
-  let value
-  try { value = JSON.parse(text) } catch { throw Error(`${label}不是合法 JSON`) }
-  if (!value || (array ? !Array.isArray(value) : typeof value !== 'object' || Array.isArray(value))) throw Error(`${label}必须是 JSON ${array ? '数组' : '对象'}`)
-  if (array && value.some(item => !item || Array.isArray(item) || typeof item !== 'object')) throw Error('每条断言必须是 JSON 对象')
-  if (!array && Object.values(value).some(item => typeof item !== 'string')) throw Error('提取规则的值必须是 JSONPath 文本')
-  return value
-}
 
 function buildStep() {
   error.value = ''
@@ -61,7 +54,7 @@ function buildStep() {
     }
     if (request.value.bodyType === originalRequest.bodyType && request.value.body === originalRequest.body) fields.body = cloneRequest(props.step.body ?? null)
     let rules, checks
-    try { rules = serializeExtractRules(extracts.value, SCENARIO_EXTRACT_OPTIONS); checks = json(assertions.value, '断言', true) }
+    try { rules = serializeExtractRules(extracts.value, SCENARIO_EXTRACT_OPTIONS); checks = serializeAssertions(assertions.value) }
     catch (e) { advanced.value = true; throw e }
     return { ...cloneRequest(props.step), ...fields, name:name.value.trim(), method:method.value,
       url:url.value.trim(), expected_status:Number(expectedStatus.value), assertions:checks, extract_rules:rules }
@@ -76,20 +69,25 @@ function requestKey() {
   return JSON.stringify([method.value, url.value, request.value, String(props.envId || '')])
 }
 const staleResponse = computed(() => result.value && result.value.draft_key !== requestKey())
+function checksKey() {
+  try { return JSON.stringify([Number(expectedStatus.value), serializeAssertions(assertions.value)]) }
+  catch { return '' }
+}
+const staleChecks = computed(() => result.value && result.value.checks_key !== checksKey())
 async function send() {
   if (locked.value || props.step.missing_reason) return
   debugVisible.value = true; debugError.value = ''; copied.value = false
   if (!props.envId) { debugError.value = '请先在场景顶部选择执行环境'; return }
   const step = buildStep()
   if (!step) return
-  const version = ++requestVersion, key = requestKey()
+  const version = ++requestVersion, key = requestKey(), checks = checksKey()
   sending.value = true
   try {
     const data = await debugScenarioStep(props.scenarioId, props.envId, {
       step, ...(props.sessionId ? {session_id:props.sessionId} : {}), variables:cloneRequest(manualVariables.value),
     })
     if (version !== requestVersion) return
-    result.value = { ...data, draft_key:key }
+    result.value = { ...data, draft_key:key, checks_key:checks, assertion_rules:cloneRequest(step.assertions || []) }
     emit('debug', result.value)
     await nextTick()
     debugPanel.value?.scrollIntoView({ block:'start', behavior:'smooth' })
@@ -152,7 +150,7 @@ async function copyResponse() {
     <RequestEditor ref="editor" v-model="request" :url="url" id-prefix="scenario-step-request" />
     <button class="advanced-toggle" type="button" :aria-expanded="advanced" @click="advanced = !advanced">高级配置 <span>断言与变量提取</span><span class="toggle-symbol">{{ advanced ? '收起' : '展开' }}</span></button>
     <div v-if="advanced" class="step-advanced">
-      <div class="step-field"><label for="step-assertions">断言（JSON 数组）</label><textarea id="step-assertions" v-model="assertions" rows="4" placeholder='[{"type":"json_eq","path":"$.status","expected":"paid"}]'></textarea></div>
+      <div class="step-field"><label>业务断言</label><AssertionEditor v-model="assertions" id-prefix="step-assertion" :disabled="locked || !!step.missing_reason" :results="result?.assertions || []" :result-rules="result?.assertion_rules || []" :results-enabled="!staleResponse" /></div>
     </div>
     <p v-if="unsupported" class="step-hint">来源用例含 SQL、数据集或重试配置。场景链路仍只执行 HTTP、状态校验、断言和变量提取；这些来源配置会保留，压测导入时会提示处理。</p>
     <p v-if="error" role="alert" class="step-error">{{ error }}</p>
@@ -163,11 +161,13 @@ async function copyResponse() {
       <details v-if="Object.keys(variables || {}).length" class="debug-variables"><summary>临时调试变量（{{ Object.keys(variables).length }}）</summary><ExtractedVariables :variables="variables" /></details>
       <p v-if="!result" class="debug-empty">点击下方“发送请求”，查看本步骤的响应。</p>
       <template v-else>
-        <div class="debug-verdict"><span>实际状态 <b>{{ result.actual_status ?? '—' }}</b></span><span>期望 {{ result.expected_status }}</span><span :class="result.passed ? 'debug-pass' : 'debug-fail'">{{ result.passed ? '校验通过' : '校验未通过' }}</span><button v-if="result.response_detail" type="button" @click="copyResponse">{{ copied ? '已复制' : '复制响应' }}</button></div>
+        <div class="debug-verdict"><span>实际状态 <b>{{ result.actual_status ?? '—' }}</b></span><span>期望 {{ result.expected_status }}</span><span :class="result.passed ? 'debug-pass' : 'debug-fail'">{{ staleResponse || staleChecks ? '上次' : '' }}{{ result.passed ? '校验通过' : '校验未通过' }}</span><button v-if="result.response_detail" type="button" @click="copyResponse">{{ copied ? '已复制' : '复制响应' }}</button></div>
         <p v-if="result.error" class="step-error">{{ result.error }}</p>
         <div v-if="result.missing_variables?.length" class="missing-vars"><label v-for="variable in result.missing_variables" :key="variable">{{ variable }}<input v-model="manualVariables[variable]" :disabled="locked" :aria-label="`临时变量 ${variable}`" placeholder="填入本次调试使用的值" /></label><small>也可以先调试前置步骤并验证提取，再返回这里。</small></div>
         <p v-if="staleResponse" class="step-hint">请求配置已修改，下方保留的是上次响应。</p>
+        <p v-else-if="staleChecks" class="step-hint">断言或期望状态码已修改，重新发送请求后更新校验结果。</p>
         <CaseResponse :result="result" />
+        <AssertionResults v-if="!advanced && result.assertions?.length" :results="result.assertions" :rules="result.assertion_rules || []" />
       </template>
     </section>
     <div v-if="advanced || result" ref="extractionPanel" class="step-field extraction-config">

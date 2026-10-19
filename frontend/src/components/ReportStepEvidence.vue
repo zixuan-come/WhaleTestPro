@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import ExtractedVariables from './ExtractedVariables.vue'
+import AssertionResults from './AssertionResults.vue'
 const props = defineProps({ evidence: { type: Object, required: true }, label: { type: String, default: '' } })
 const assertions = computed(() => Array.isArray(props.evidence.assertions) ? props.evidence.assertions : [])
 const fmt = value => JSON.stringify(value, null, 2)
@@ -22,7 +23,7 @@ const fmt = value => JSON.stringify(value, null, 2)
       </div>
       <details v-if="assertions.length" class="data-section" :open="assertions.some(item => !item.passed)">
         <summary>断言 · {{ assertions.filter(item => item.passed).length }} / {{ assertions.length }} 通过</summary>
-        <div v-for="(assertion, index) in assertions" :key="index" class="assertion"><span class="badge" :class="assertion.passed ? 'b-pass' : 'b-fail'">{{ assertion.passed ? 'PASS' : 'FAIL' }}</span><pre>{{ fmt(assertion) }}</pre></div>
+        <AssertionResults :results="assertions" />
       </details>
       <details v-if="evidence.extracted_variables" class="data-section"><summary>提取变量</summary><ExtractedVariables :variables="evidence.extracted_variables" /></details>
     </div>
@@ -45,8 +46,5 @@ summary strong { flex:1; min-width:100px; font-size:12px; overflow-wrap:anywhere
 .data-section > summary { padding:9px 10px; color:var(--text-muted); font-size:12px; cursor:pointer; }
 .data-section p { padding:0 10px 10px; color:var(--text-muted); font-size:12px; }
 pre { margin:0; max-height:300px; overflow:auto; padding:10px; background:var(--surface-2); color:var(--text); font:11.5px/1.6 ui-monospace,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
-.assertion { display:flex; align-items:flex-start; gap:8px; padding:8px; border-top:1px solid var(--border); }
-.assertion .badge { flex:none; }
-.assertion pre { flex:1; min-width:0; }
 @media (max-width:650px) { .io-grid { grid-template-columns:1fr; } .codes { flex-basis:100%; } }
 </style>

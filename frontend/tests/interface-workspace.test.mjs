@@ -8,6 +8,7 @@ import { cloneRequest, requestConfig, requestDraft, serializeRequest } from '../
 import { pathParameterNames } from '../src/utils/pathParameters.js'
 import { interfaceResources } from '../src/utils/interfaceResources.js'
 import { extractRuleRows, serializeExtractRules } from '../src/utils/extractRules.js'
+import { assertionRows, blankAssertion, serializeAssertions } from '../src/utils/assertionRules.js'
 
 function build(file) {
   const descriptor = parse(readFileSync(new URL(file, import.meta.url), 'utf8')).descriptor
@@ -63,7 +64,7 @@ test('response rendering preserves falsy JSON, text and safely escapes HTML', as
 })
 const order = { id: 81, name: '查询订单', method: 'GET', url: '/orders/{id}', path_params: { id: '1' }, headers: { 'X-Project-Id': '1' }, params: { page: 2 }, body: null }
 const other = { ...order, id: 82, name: '其他接口', path_params: { id: '9' } }
-const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, pathParameterNames, extractRuleRows, serializeExtractRules }
+const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, pathParameterNames, extractRuleRows, serializeExtractRules, assertionRows, blankAssertion, serializeAssertions }
 
 function workspace(t, run = async () => ({ response: { status_code: 200, body: { id: 1 } } })) {
   const calls = [], created = []
@@ -230,6 +231,20 @@ test('case extraction rows refill old rules, reject duplicates and explicitly cl
   state.openEdit(legacy);state.form.extract_rules=[];await state.save()
   assert.equal(calls.filter(call=>call[0]==='update').at(-1)[2].extract_rules,null)
   assert.deepEqual(legacy.extract_rules,{order_id:'$.id'})
+})
+
+test('case assertion tables preserve typed expectations, block incomplete rows and can clear old assertions', async t => {
+  const {state,calls}=cases(t)
+  const original={id:7,name:'订单断言',interface_id:81,expected_status:200,assertions:[{type:'json_eq',path:'$.active',expected:false}]}
+  state.openEdit(original)
+  assert.equal(state.form.assertions[0].expectedType,'boolean')
+  state.form.assertions[0].expectedType='number';state.form.assertions[0].expectedText='0'
+  await state.save();assert.deepEqual(calls.find(row=>row[0]==='update')[2].assertions,[{type:'json_eq',path:'$.active',expected:0}])
+  state.form.assertions[0].path='';const count=calls.length
+  await state.save();assert.match(state.formErr.value,/JSONPath/);assert.equal(calls.length,count)
+  state.form.assertions=[];await state.save()
+  assert.equal(calls.filter(row=>row[0]==='update').at(-1)[2].assertions,null)
+  assert.equal(original.assertions[0].expected,false)
 })
 
 test('global case overview can still create and select another interface', async t => {

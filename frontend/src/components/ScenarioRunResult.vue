@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import AssertionResults from './AssertionResults.vue'
 
 const props = defineProps({ results: { type: Array, default: () => [] } })
 const passedCount = computed(() => props.results.filter(result => result.passed).length)
@@ -51,10 +52,7 @@ function assertionCount(result) { return (result.assertions || []).filter(assert
           <p v-else-if="!result.passed" class="step-error">{{ result.actual_status !== result.expected_status ? '实际状态码不符合预期。' : '断言未通过，请查看下方明细。' }}</p>
           <div v-if="result.assertions?.length" class="step-assertions">
             <div class="assertions-title">断言 · {{ assertionCount(result) }} / {{ result.assertions.length }} 通过</div>
-            <div v-for="(assertion, assertionIndex) in result.assertions" :key="assertionIndex" class="assertion-row">
-              <span class="badge" :class="assertion.passed ? 'b-pass' : 'b-fail'">{{ assertion.passed ? 'PASS' : 'FAIL' }}</span>
-              <pre>{{ JSON.stringify(assertion, null, 2) }}</pre>
-            </div>
+            <AssertionResults :results="result.assertions" />
           </div>
           <p v-else-if="result.passed" class="detail-note">本步骤执行通过，未配置额外断言。</p>
         </div>
@@ -92,9 +90,6 @@ function assertionCount(result) { return (result.assertions || []).filter(assert
 .step-error { margin-bottom:12px; padding:9px 12px; border-radius:6px; background:var(--fail-bg); color:var(--fail-fg); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
 .step-error:last-child { margin-bottom:0; }
 .assertions-title { margin-bottom:8px; color:var(--text-muted); font-weight:600; }
-.assertion-row { display:flex; align-items:flex-start; gap:8px; margin-top:8px; }
-.assertion-row .badge { flex:none; padding:3px 7px; }
-.assertion-row pre { flex:1; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text-muted); font:11.5px/1.6 ui-monospace,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
 .detail-note, .empty-result { color:var(--text-muted); line-height:1.6; }
 .empty-result { padding:24px 12px; text-align:center; border:1px dashed var(--border); border-radius:10px; font-size:12px; }
 @media (max-width:600px) {

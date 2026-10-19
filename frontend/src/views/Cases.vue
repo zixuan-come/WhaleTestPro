@@ -12,6 +12,9 @@ import InlineCasePanel from '../components/InlineCasePanel.vue'
 import RequestEditor from '../components/RequestEditor.vue'
 import CaseResponse from '../components/CaseResponse.vue'
 import ExtractRulesEditor from '../components/ExtractRulesEditor.vue'
+import AssertionEditor from '../components/AssertionEditor.vue'
+import AssertionResults from '../components/AssertionResults.vue'
+import { assertionRows, blankAssertion, serializeAssertions } from '../utils/assertionRules'
 import { extractRuleRows, serializeExtractRules } from '../utils/extractRules'
 import { requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
 
@@ -51,6 +54,9 @@ const executionEnv = computed({
 const showResult = ref(false)
 const resultCase = ref(null)
 const resultData = ref(null)
+const resultAssertionRules = ref([])
+const resultCaseSnapshot = ref('')
+const resultEnvironment = ref('')
 
 // 新建/编辑弹层
 const showModal = ref(false)
@@ -63,7 +69,7 @@ const requestForm = ref(requestDraft())
 const requestEditor = ref(null)
 const form = reactive({
   name: '', interface_id: '', expected_status: 200, retries: 0,
-  extract_rules: [], assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
+  extract_rules: [], assertions: [], setup_sql: '', teardown_sql: '', datasets: '',
 })
 
 const baseline = ref('')
@@ -91,7 +97,7 @@ watch(() => form.interface_id, () => {
 }, { flush: 'sync' })
 
 function jsonFieldHasValue(text) {
-  if (Array.isArray(text)) return text.some(row => row.name || row.path)
+  if (Array.isArray(text)) return text.some(row => row.name || row.path || row.target && !blankAssertion(row))
   const raw = (text || '').trim()
   if (!raw) return false
   try {
@@ -140,7 +146,7 @@ function openCreate(initialRequest = null, expectedStatus = 200) {
   form.expected_status = expectedStatus
   form.retries = 0
   form.extract_rules = []
-  form.assertions = ''
+  form.assertions = []
   form.setup_sql = ''
   form.teardown_sql = ''
   form.datasets = ''
@@ -163,7 +169,7 @@ function openEdit(testCase) {
   form.expected_status = testCase.expected_status
   form.retries = testCase.retries || 0
   form.extract_rules = extractRuleRows(testCase.extract_rules)
-  form.assertions = formatJsonField(testCase.assertions)
+  form.assertions = assertionRows(testCase.assertions)
   form.setup_sql = formatJsonField(testCase.setup_sql)
   form.teardown_sql = formatJsonField(testCase.teardown_sql)
   form.datasets = formatJsonField(testCase.datasets)
@@ -207,7 +213,7 @@ async function save() {
   try {
     request_overrides = independentRequest.value ? serializeRequest(requestForm.value, selectedInterface.value?.url || '') : null
     extract_rules = serializeExtractRules(form.extract_rules)
-    assertions = parseJsonField(form.assertions, '断言')
+    assertions = serializeAssertions(form.assertions)
     setup_sql = parseJsonField(form.setup_sql, '前置 SQL')
     teardown_sql = parseJsonField(form.teardown_sql, '后置 SQL')
     datasets = parseJsonField(form.datasets, '数据集')
@@ -251,9 +257,15 @@ async function onRun(c) {
   if (props.detailMode && dirty.value) { showMessage('请先保存修改，再运行用例', 'error'); return }
   runningId.value = c.id
   try {
+    const rules = props.detailMode ? serializeAssertions(form.assertions, { empty: [] }) : c.assertions || []
+    const snapshot = formSnapshot.value
+    const environment = String(executionEnv.value || '')
     const data = await runCase(c.id, executionEnv.value || undefined)
     resultCase.value = c
     resultData.value = data
+    resultAssertionRules.value = rules
+    resultCaseSnapshot.value = snapshot
+    resultEnvironment.value = environment
     showResult.value = true
   } catch (e) {
     showMessage(e.message || '执行失败', 'error')
@@ -282,7 +294,6 @@ const runs = computed(() => {
 })
 const overallPassed = computed(() => runs.value.length > 0 && runs.value.every(r => r.passed))
 
-function fmtJson(v) { return JSON.stringify(v, null, 2) }
 
 onMounted(() => {
   if (props.detailMode) {
@@ -425,8 +436,8 @@ defineExpose({ openCreate, load })
     </button>
     <div v-if="showAdvanced" id="case-advanced-settings" class="advanced-panel">
       <div class="field">
-        <label for="case-assertions">断言 <span class="opt">(JSON 数组，可选)</span></label>
-        <textarea id="case-assertions" v-model="form.assertions" rows="3" placeholder='[{"type":"json_eq","path":"code","expected":0}]'></textarea>
+        <label>业务断言 <span class="opt">(可选)</span></label>
+        <AssertionEditor v-model="form.assertions" id-prefix="case-assertion" :disabled="saving || runningId != null" :results="runs[0]?.assertions || []" :result-rules="resultAssertionRules" :results-enabled="!dirty && resultCaseSnapshot === formSnapshot && resultEnvironment === String(executionEnv || '') && resultCase?.id === editingId && runs.length === 1" />
       </div>
       <div class="field">
         <label>变量提取 <span class="opt">(可选)</span></label>
@@ -483,10 +494,7 @@ defineExpose({ openCreate, load })
 
       <div v-if="r.assertions && r.assertions.length" class="asserts">
         <div class="asserts-t">断言 ({{ r.assertions.filter(a => a.passed).length }}/{{ r.assertions.length }} 通过)</div>
-        <div v-for="(a, j) in r.assertions" :key="j" class="assert-row" :class="{ fail: !a.passed }">
-          <span class="badge" :class="a.passed ? 'b-pass' : 'b-fail'"><span class="dot"></span>{{ a.passed ? 'PASS' : 'FAIL' }}</span>
-          <code>{{ fmtJson(a) }}</code>
-        </div>
+        <AssertionResults :results="r.assertions" :rules="resultAssertionRules" />
       </div>
     </div>
 
@@ -607,11 +615,6 @@ defineExpose({ openCreate, load })
 .kv .vv { font-family:ui-monospace,Consolas,monospace; font-weight:700; font-size:15px; }
 .kv .vv.bad { color:var(--fail-fg); }
 .asserts-t { font-size:12px; color:var(--text-muted); font-weight:600; margin-bottom:8px; }
-.assert-row { display:flex; align-items:flex-start; gap:10px; margin-bottom:8px; }
-.assert-row code { flex:1; font-family:ui-monospace,Consolas,monospace; font-size:11.5px; color:var(--text-muted);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:6px 9px;
-  white-space:pre-wrap; word-break:break-all; }
-
 /* ===== 响应式 ===== */
 @media (max-width:1100px) {
   .cards { grid-template-columns:repeat(3,1fr); }

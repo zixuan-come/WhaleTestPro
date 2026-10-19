@@ -6,7 +6,7 @@
   "scripts": {
     "test:traffic": "node --test tests/traffic-workflow.test.mjs",
     "test:perf": "node --test tests/perf-plan.test.mjs tests/perf-grid.test.mjs tests/perf-live.test.mjs",
-    "test:refactor": "node --test tests/suite-modal.test.mjs tests/auth-session.test.mjs tests/team-info.test.mjs tests/environment-memory.test.mjs tests/path-parameters.test.mjs tests/interface-workspace.test.mjs tests/reports.test.mjs tests/regression-workflow.test.mjs tests/suite-picker.test.mjs tests/project-notifications.test.mjs tests/scenario-steps.test.mjs tests/extract-rules.test.mjs",
+    "test:refactor": "node --test tests/suite-modal.test.mjs tests/auth-session.test.mjs tests/team-info.test.mjs tests/environment-memory.test.mjs tests/path-parameters.test.mjs tests/interface-workspace.test.mjs tests/reports.test.mjs tests/regression-workflow.test.mjs tests/suite-picker.test.mjs tests/project-notifications.test.mjs tests/scenario-steps.test.mjs tests/extract-rules.test.mjs tests/assertion-rules.test.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

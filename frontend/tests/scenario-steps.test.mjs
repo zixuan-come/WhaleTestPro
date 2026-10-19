@@ -7,6 +7,7 @@ import { caseToStep, savedScenarioSteps, equivalentCaseIds } from '../src/utils/
 import { cloneRequest, requestDraft, serializeRequest } from '../src/utils/requestConfig.js'
 import { scenarioSteps } from '../src/utils/perf-plan.js'
 import * as extraction from '../src/utils/extractRules.js'
+import * as assertion from '../src/utils/assertionRules.js'
 import { suiteCatalog, selectedSuiteContent } from '../src/utils/suiteSelection.js'
 
 const request = { id:10, name:'查询订单', method:'GET', url:'/orders/{id}', path_params:{id:'${order_id}'}, headers:{'X-Project-Id':'1'}, params:null, body:null }
@@ -19,7 +20,7 @@ function compiled(path) {
   const code = script.content.replace(/^import[\s\S]*?\bfrom\s*['"][^'"]+['"];?/gm,'').replace('export default','return')
   return (t, props, mocks) => {
     const names = Object.keys(script.imports)
-    const component = Function(...names,code)(...names.map(name=>mocks[name] ?? extraction[name] ?? Vue[name]))
+    const component = Function(...names,code)(...names.map(name=>mocks[name] ?? extraction[name] ?? assertion[name] ?? Vue[name]))
     const scope = Vue.effectScope();t.after(()=>scope.stop())
     return scope.run(()=>component.setup(props,{expose(){},emit:mocks.emit || (()=>{})}))
   }
@@ -191,6 +192,19 @@ test('single-step debug executes the current unsaved draft and keeps it separate
   assert.equal(calls[0][2].step.expected_status,404);assert.equal(calls[0][2].step.path_params.id,'999')
   assert.equal(props.step.expected_status,200);assert.equal(events.some(([name])=>name==='apply'),false)
   assert.equal(state.result.value.response_detail.body.id,42)
+})
+
+test('assertion table executes a typed snapshot and changing checks marks old results stale',async t=>{
+  const {state,props,calls,events}=debugEditor(t)
+  assert.equal(state.assertions.value[0].expectedType,'number')
+  state.assertions.value[0].expectedText='0'
+  await state.send()
+  assert.deepEqual(calls[0][2].step.assertions,[{type:'json_eq',path:'$.id',expected:0}])
+  assert.deepEqual(state.result.value.assertion_rules,calls[0][2].step.assertions)
+  assert.equal(state.staleChecks.value,false)
+  state.assertions.value[0].expectedText='1';assert.equal(state.staleChecks.value,true)
+  state.apply();assert.equal(events.at(-1)[1].assertions[0].expected,1)
+  assert.equal(props.step.assertions[0].expected,42)
 })
 
 test('JSONPath verification uses the previous response ticket and never resends the HTTP request',async t=>{
