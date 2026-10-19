@@ -7,6 +7,7 @@ from app.models.case import Case
 from app.models.execution_report import ExecutionReport
 from app.models.report import TestReport
 from app.models.scenario_report import ScenarioReport
+from app.models.report_folder import ReportFolderItem
 
 
 def _catalog(project_id):
@@ -17,6 +18,9 @@ def _catalog(project_id):
         ExecutionReport.trigger_source.label("trigger_source"),
         ExecutionReport.environment_name.label("environment_name"),
         ExecutionReport.duration_ms.label("duration_ms"), ExecutionReport.created_at.label("created_at"),
+        ReportFolderItem.folder_id.label("folder_id"),
+    ).outerjoin(ReportFolderItem, and_(ReportFolderItem.project_id == project_id,
+        ReportFolderItem.storage == "run", ReportFolderItem.report_id == ExecutionReport.id)
     ).where(ExecutionReport.project_id == project_id, ExecutionReport.parent_id.is_(None))
     historical = select(
         literal("legacy").label("storage"), TestReport.id.label("number"),
@@ -26,7 +30,10 @@ def _catalog(project_id):
         TestReport.passed.label("passed"), literal("completed").label("status"),
         literal(None).label("trigger_source"), literal(None).label("environment_name"),
         literal(None).label("duration_ms"), TestReport.created_at.label("created_at"),
-    ).outerjoin(Case, and_(Case.id == TestReport.case_id, Case.project_id == TestReport.project_id)).where(
+        ReportFolderItem.folder_id.label("folder_id"),
+    ).outerjoin(Case, and_(Case.id == TestReport.case_id, Case.project_id == TestReport.project_id)
+    ).outerjoin(ReportFolderItem, and_(ReportFolderItem.project_id == project_id,
+        ReportFolderItem.storage == "legacy", ReportFolderItem.report_id == TestReport.id)).where(
         TestReport.project_id == project_id, TestReport.execution_report_id.is_(None),
     )
     scenarios = select(
@@ -35,6 +42,9 @@ def _catalog(project_id):
         ScenarioReport.passed.label("passed"), literal("completed").label("status"),
         literal(None).label("trigger_source"), literal(None).label("environment_name"),
         ScenarioReport.duration_ms.label("duration_ms"), ScenarioReport.created_at.label("created_at"),
+        ReportFolderItem.folder_id.label("folder_id"),
+    ).outerjoin(ReportFolderItem, and_(ReportFolderItem.project_id == project_id,
+        ReportFolderItem.storage == "scenario", ReportFolderItem.report_id == ScenarioReport.id)
     ).where(ScenarioReport.project_id == project_id, ScenarioReport.execution_report_id.is_(None))
     return union_all(runs, historical, scenarios).subquery()
 
@@ -53,9 +63,15 @@ def _run_item(row):
             "created_at": row.created_at, "historical": False}
 
 
-def db_page(db, project_id, *, kind, page, page_size, q="", status="all", date_from=None, date_to=None):
+def db_page(db, project_id, *, kind, page, page_size, q="", status="all", date_from=None, date_to=None, folder_id=None):
     catalog = _catalog(project_id)
-    query = select(catalog).where(catalog.c.kind == kind)
+    query = select(catalog)
+    if kind != "all":
+        query = query.where(catalog.c.kind == kind)
+    if folder_id == 0:
+        query = query.where(catalog.c.folder_id.is_(None))
+    elif folder_id is not None:
+        query = query.where(catalog.c.folder_id == folder_id)
     if q:
         query = query.where(catalog.c.name.contains(q, autoescape=True))
     if status != "all":
@@ -107,7 +123,8 @@ def db_get(db, project_id, report_id):
                     missing.append({**item, "name": item.get("name") or f"{label} #{number}"})
             if missing:
                 detail["unexecuted_items"] = missing
-        return {**_run_item(row), "detail": detail, "children": [_run_item(child) for child in children]}
+        folder_id = db.query(ReportFolderItem.folder_id).filter_by(project_id=project_id, storage="run", report_id=row.id).scalar()
+        return {**_run_item(row), "folder_id": folder_id, "detail": detail, "children": [_run_item(child) for child in children]}
     catalog = _catalog(project_id)
     item = db.execute(select(catalog).where(catalog.c.storage == storage, catalog.c.number == number)).mappings().first()
     if item is None:

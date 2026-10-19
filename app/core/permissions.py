@@ -36,6 +36,7 @@ PermissionKey = Literal[
     "perf.write",
     "scenario.write",
     "suite.write",
+    "report.write",
 ]
 
 TEAM_PERMISSION_KEYS: tuple[PermissionKey, ...] = (
@@ -47,6 +48,7 @@ TEAM_PERMISSION_KEYS: tuple[PermissionKey, ...] = (
     "perf.write",
     "scenario.write",
     "suite.write",
+    "report.write",
 )
 
 WRITE_PERMISSION_BY_RESOURCE: dict[Resource, PermissionKey] = {
@@ -58,4 +60,5 @@ WRITE_PERMISSION_BY_RESOURCE: dict[Resource, PermissionKey] = {
     Resource.PERF: "perf.write",
     Resource.SCENARIO: "scenario.write",
     Resource.SUITE: "suite.write",
+    Resource.REPORT: "report.write",
 }

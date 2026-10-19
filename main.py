@@ -70,6 +70,7 @@ import app.models.team_member
 import app.models.team_invitation
 import app.models.team_permission
 import app.models.scenario_report
+import app.models.report_folder
 
 
 Base.metadata.create_all(bind=engine)

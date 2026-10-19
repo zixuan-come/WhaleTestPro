@@ -485,6 +485,18 @@ def run_all_migrations(*binds) -> None:
         ensure_schedule_selection_schema(bind)
         ensure_tags_removed_schema(bind)
         ensure_scenario_steps_schema(bind)
+        ensure_report_folder_schema(bind)
+
+
+def ensure_report_folder_schema(bind) -> None:
+    """Add organization metadata only; old reports remain unfiled."""
+    from app.models.project import Project
+    from app.models.report_folder import ReportFolder, ReportFolderItem
+    ReportFolder.__table__.create(bind, checkfirst=True)
+    ReportFolderItem.__table__.create(bind, checkfirst=True)
+    if bind.dialect.name == "mysql":
+        with bind.begin() as connection:
+            _record_migration(connection, "022_report_folders")
 
 
 def ensure_scenario_steps_schema(bind) -> None:

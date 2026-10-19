@@ -15,6 +15,7 @@ from app.models.traffic_record import TrafficRecord
 from app.models.traffic_capture import TrafficCapture
 from app.models.suite import TestSuite
 from app.models.execution_report import ExecutionReport
+from app.models.report_folder import ReportFolder, ReportFolderItem
 from app.repositories import schedule_sync as schedule_sync_repo
 from app.schemas.project import ProjectCreate
 
@@ -106,6 +107,8 @@ def db_delete(db: Session, project_id: int, check_perf=None) -> Project | None:
         # schedule/test_report 先于 test_suite 删除，因为二者都可能通过
         # suite_id 外键引用测试套件。
         for model in (
+            ReportFolderItem,
+            ReportFolder,
             Schedule,
             ExecutionReport,
             Case,

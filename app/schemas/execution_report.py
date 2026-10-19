@@ -16,6 +16,7 @@ class ExecutionReportItem(BaseModel):
     duration_ms: int | None
     created_at: datetime
     historical: bool
+    folder_id: int | None = None
 
 
 class ExecutionReportDetail(ExecutionReportItem):
