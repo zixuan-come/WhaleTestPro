@@ -566,7 +566,7 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
       </div>
     </div>
     <div v-if="form.mode === 'chain'" class="pick grid2">
-      <div class="field"><label>导入已有 HTTP 场景</label><select v-model.number="form.scenario_id" aria-label="场景"><option value="">— 选择场景 —</option><option v-for="sc in scenarios" :key="sc.id" :value="sc.id">{{ sc.name }} · {{ sc.case_ids?.length || 0 }} 步</option></select></div>
+      <div class="field"><label>导入已有 HTTP 场景</label><select v-model.number="form.scenario_id" aria-label="场景"><option value="">— 选择场景 —</option><option v-for="sc in scenarios" :key="sc.id" :value="sc.id">{{ sc.name }} · {{ (sc.steps || sc.case_ids || []).length }} 步</option></select></div>
       <div class="step-actions"><button class="btn btn-ghost" :disabled="!form.scenario_id" @click="importScenario">导入场景快照</button><button class="btn btn-ghost" :disabled="steps.length >= 100" @click="addStep">添加接口步骤</button></div>
     </div>
     <div v-for="(step, index) in steps" :key="index" class="perf-step">

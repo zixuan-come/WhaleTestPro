@@ -2,8 +2,8 @@
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
 import { ref, reactive, computed, onMounted } from 'vue'
-import { listCases } from '../api/case'
-import { listInterfaces } from '../api/interface'
+import { listCases, getCase } from '../api/case'
+import { listInterfaces, getInterface } from '../api/interface'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import {
@@ -11,6 +11,10 @@ import {
 } from '../api/scenario'
 import Modal from '../components/Modal.vue'
 import ScenarioRunResult from '../components/ScenarioRunResult.vue'
+import ScenarioStepEditor from '../components/ScenarioStepEditor.vue'
+import ScenarioCasePicker from '../components/ScenarioCasePicker.vue'
+import { caseToStep, savedScenarioSteps } from '../utils/scenarioSteps'
+import { cloneRequest } from '../utils/requestConfig'
 
 // —— 数据源 ——
 const scenarios = ref([])
@@ -25,30 +29,38 @@ const currentId = ref(null)              // null=未选;数字=编辑中
 const currentName = ref('')
 const currentDesc = ref('')
 const chain = ref([])                    // [{case obj}] 有序
-const selectedStep = ref(null)
+const editingStep = ref(null)
+const editorRevision = ref(0)
+const showCasePicker = ref(false)
+const showMore = ref(false)
+const saving = ref(false)
+const refreshing = ref(false)
 // 快照:加载/保存时打一份,dirty = 当前 vs 快照 (避免用 watch 追踪的时序 bug)
 const originalSnapshot = ref(null)
+let selectionVersion = 0
 
 const dirty = computed(() => {
   if (!currentId.value || !originalSnapshot.value) return false
   const o = originalSnapshot.value
   if (currentName.value !== o.name) return true
   if ((currentDesc.value || '') !== (o.description || '')) return true
-  const currentIds = chain.value.map(c => c.id).join(',')
-  const originalIds = (o.case_ids || []).join(',')
-  return currentIds !== originalIds
+  return JSON.stringify(chain.value) !== JSON.stringify(o.steps)
 })
 
 function snapshotCurrent() {
   originalSnapshot.value = {
     name: currentName.value,
     description: currentDesc.value || '',
-    case_ids: chain.value.map(c => c.id),
+    steps: cloneRequest(chain.value),
   }
 }
 
-// —— 用例库 ——
-const search = ref('')
+// —— 场景导航 ——
+const scenarioSearch = ref('')
+const filteredScenarios = computed(() => {
+  const q = scenarioSearch.value.trim().toLowerCase()
+  return scenarios.value.filter(sc => `${sc.name} ${sc.description || ''}`.toLowerCase().includes(q))
+})
 
 // —— 拖拽 ——
 const dragIdx = ref(null)
@@ -65,24 +77,13 @@ const newDesc = ref('')
 const newErr = ref('')
 
 // —— 派生 ——
-const caseMap = computed(() => {
-  const m = {}
-  for (const c of cases.value) m[c.id] = c
-  return m
-})
 const ifaceMap = computed(() => {
   const m = {}
   for (const it of interfaces.value) m[it.id] = it
   return m
 })
-function methodOf(c) { return (ifaceMap.value[c?.interface_id]?.method || 'GET').toUpperCase() }
+function methodOf(c) { return (c?.method || ifaceMap.value[c?.interface_id]?.method || 'GET').toUpperCase() }
 function methodClass(m) { return 'm-' + (m || 'get').toLowerCase() }
-
-const filteredCases = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return cases.value
-  return cases.value.filter(c => c.name.toLowerCase().includes(q))
-})
 
 // —— 加载全量 ——
 async function load() {
@@ -104,21 +105,20 @@ async function load() {
 
 // —— 场景操作 ——
 async function selectScenario(sc) {
+  if (saving.value || running.value || refreshing.value) return
   if (dirty.value && !(await confirmAction('当前场景有未保存改动,切换会丢弃。继续?'))) return
+  const version = ++selectionVersion
   try {
     // 拉全量数据(list 接口跟 get 应该一致,但保险起见)
     const full = await getScenario(sc.id)
+    if (version !== selectionVersion) return
     currentId.value = full.id
     currentName.value = full.name
     currentDesc.value = full.description || ''
-    // 按 case_ids 顺序找回 case 对象;丢失的用例跳过(留个 console.warn)
-    const ids = full.case_ids || []
-    const found = ids.map(id => caseMap.value[id]).filter(Boolean)
-    const missing = ids.length - found.length
-    if (missing > 0) {
-      console.warn(`场景 "${full.name}" 有 ${missing} 个用例已被删除,已从链上跳过`)
-    }
-    chain.value = found.map(c => ({ ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` }))
+    chain.value = savedScenarioSteps(full, cases.value, interfaces.value)
+    editingStep.value = null
+    showCasePicker.value = false
+    showMore.value = false
     snapshotCurrent()
   } catch (e) {
     showMessage(e.message || '加载场景失败', 'error')
@@ -126,6 +126,7 @@ async function selectScenario(sc) {
 }
 
 function openNewScenario() {
+  if (saving.value || running.value || refreshing.value) return
   newName.value = ''
   newDesc.value = ''
   newErr.value = ''
@@ -146,24 +147,32 @@ async function submitNewScenario() {
 }
 
 async function saveCurrent() {
-  if (!currentId.value) return
+  if (!currentId.value || saving.value || running.value || refreshing.value) return false
+  saving.value = true
   try {
     const payload = {
       name: currentName.value.trim() || '未命名',
       description: currentDesc.value.trim() || null,
-      case_ids: chain.value.map(c => c.id),
+      steps: cloneRequest(chain.value),
     }
     const sc = await updateScenario(currentId.value, payload)
     // 更新列表里的对应项
     const idx = scenarios.value.findIndex(s => s.id === sc.id)
     if (idx !== -1) scenarios.value[idx] = sc
+    chain.value = savedScenarioSteps(sc, cases.value, interfaces.value)
     snapshotCurrent()
+    return true
   } catch (e) {
     showMessage(e.message || '保存失败', 'error')
+    return false
+  } finally {
+    saving.value = false
   }
 }
 
 async function deleteCurrent() {
+  showMore.value = false
+  if (saving.value || running.value || refreshing.value) return
   if (!currentId.value) return
   if (!(await confirmAction(`确认删除场景「${currentName.value}」? (关联的用例不会删)`))) return
   try {
@@ -176,25 +185,48 @@ async function deleteCurrent() {
 }
 
 function clearEditor() {
+  selectionVersion += 1
   currentId.value = null
   currentName.value = ''
   currentDesc.value = ''
   chain.value = []
+  editingStep.value = null
+  showCasePicker.value = false
+  showMore.value = false
   originalSnapshot.value = null
 }
 
 // —— chain 操作 ——
 function addToChain(c) {
+  if (saving.value || running.value || refreshing.value) return
   if (!currentId.value) { showMessage('请先选择或新建一个场景', 'error'); return }
-  const step = { ...c, _uid: `${c.id}-${Math.random().toString(36).slice(2, 8)}` }
+  const step = caseToStep(c, ifaceMap.value[c.interface_id])
   chain.value.push(step)
-  selectedStep.value = step._uid
+}
+function openCasePicker() {
+  if (!currentId.value || saving.value || running.value || refreshing.value) return
+  showCasePicker.value = true
+}
+function addCases(items) {
+  if (saving.value || running.value || refreshing.value) return
+  if (chain.value.length + items.length > 1000) { showMessage('每个场景最多添加 1000 个步骤', 'error'); return }
+  for (const item of items) addToChain(item)
+  showCasePicker.value = false
 }
 function removeStep(i) {
+  if (saving.value || running.value || refreshing.value) return
   chain.value.splice(i, 1)
 }
-function onDragStart(i) { dragIdx.value = i }
+function onDragStart(i) { if (!saving.value && !running.value && !refreshing.value) dragIdx.value = i }
+function moveStep(i, offset) {
+  if (saving.value || running.value || refreshing.value) return
+  const target = i + offset
+  if (target < 0 || target >= chain.value.length) return
+  const [step] = chain.value.splice(i, 1)
+  chain.value.splice(target, 0, step)
+}
 function onDrop(i) {
+  if (saving.value || running.value || refreshing.value) return
   const from = dragIdx.value
   if (from === null || from === i) { dragIdx.value = null; return }
   const [moved] = chain.value.splice(from, 1)
@@ -202,10 +234,38 @@ function onDrop(i) {
   dragIdx.value = null
 }
 
+function editStep(step) {
+  if (!step || saving.value || running.value || refreshing.value) return
+  editingStep.value = cloneRequest(step)
+}
+function applyStep(step) {
+  const index = chain.value.findIndex(item => item.step_id === step.step_id)
+  if (index >= 0) chain.value[index] = cloneRequest(step)
+  editingStep.value = null
+}
+async function reapplyTemplate(step) {
+  if (!step?.source_case_id || saving.value || running.value || refreshing.value) return
+  if (!(await confirmAction('重新应用模板会覆盖当前步骤的修改，其他步骤不受影响。继续？'))) return
+  refreshing.value = true
+  try {
+    const testCase = await getCase(step.source_case_id)
+    const request = await getInterface(testCase.interface_id)
+    // Keep the fresh template in the modal draft until the user applies it.
+    editingStep.value = caseToStep(testCase, request, step.step_id)
+    editorRevision.value += 1
+    showMessage('已载入最新模板，应用后请保存场景', 'success')
+  } catch (e) {
+    showMessage(e.message || '来源用例或接口已不可用，当前步骤配置已保留', 'error')
+  } finally { refreshing.value = false }
+}
+
 // —— 跑 ——
 async function onRun() {
-  if (!currentId.value) return
-  if (dirty.value && !(await confirmAction('当前场景有未保存改动,跑的是保存过的版本。要不要先保存?'))) return
+  if (!currentId.value || saving.value || running.value || refreshing.value) return
+  if (dirty.value) {
+    if (!(await confirmAction('当前场景有未保存修改，保存后执行？'))) return
+    if (!(await saveCurrent())) return
+  }
   running.value = true
   try {
     const data = await runScenario(currentId.value, selectedEnv.value || undefined)
@@ -223,254 +283,176 @@ onMounted(load)
 
 <template>
   <div v-if="loading" class="state">加载中…</div>
-  <div v-else-if="error" class="state err">
-    {{ error }}
-    <button class="btn btn-ghost" @click="load">重试</button>
-  </div>
-
-  <div v-else class="three-col">
-    <!-- ==================== 左:场景列表 ==================== -->
-    <aside class="col-left panel">
-      <div class="panel-head">
-        场景
-        <button class="btn btn-primary btn-sm" @click="openNewScenario">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-          新建
+  <div v-else-if="error" class="state err">{{ error }} <button class="btn btn-ghost" @click="load">重试</button></div>
+  <div v-else class="scenario-layout">
+    <aside class="scenario-nav panel" aria-label="场景导航">
+      <div class="panel-head"><span>场景 <small>{{ scenarios.length }}</small></span><button class="icon-btn" aria-label="新建场景" title="新建场景" :disabled="saving || running || refreshing" @click="openNewScenario">＋</button></div>
+      <div class="nav-search"><input v-model="scenarioSearch" aria-label="搜索场景" placeholder="搜索场景…" /></div>
+      <div class="sc-list">
+        <p v-if="!scenarios.length" class="nav-empty">还没有场景，点击下方新建。</p>
+        <p v-else-if="!filteredScenarios.length" class="nav-empty">没有匹配的场景</p>
+        <button v-for="sc in filteredScenarios" :key="sc.id" type="button" class="sc-item" :class="{ active:sc.id === currentId }" :aria-current="sc.id === currentId ? 'true' : undefined" :disabled="saving || running || refreshing" @click="selectScenario(sc)">
+          <span class="sc-name" :title="sc.name">{{ sc.name }}</span><span class="sc-meta">{{ sc.id === currentId ? chain.length : (sc.steps || sc.case_ids || []).length }} 个步骤</span>
         </button>
       </div>
-      <div v-if="!scenarios.length" class="empty">还没场景,点右上角"新建"</div>
-      <div v-else class="sc-list">
-        <div v-for="sc in scenarios" :key="sc.id"
-             class="sc-item"
-             :class="{ active: sc.id === currentId }"
-             @click="selectScenario(sc)">
-          <div class="sc-name">{{ sc.name }}</div>
-          <div class="sc-meta">
-            <span class="sc-count">{{ (sc.case_ids || []).length }} 步</span>
-            <span v-if="sc.description" class="sc-desc" :title="sc.description">{{ sc.description }}</span>
-          </div>
-        </div>
-      </div>
+      <div class="nav-footer"><button class="btn btn-ghost" :disabled="saving || running || refreshing" @click="openNewScenario">＋ 新建场景</button></div>
     </aside>
 
-    <!-- ==================== 中:用例库 ==================== -->
-    <section class="col-mid panel">
-      <div class="panel-head">
-        用例库
-        <input v-model="search" class="lib-search" placeholder="按名称过滤…" />
-      </div>
-      <div v-if="!filteredCases.length" class="empty">没有匹配的用例</div>
-      <div v-else class="lib-list">
-        <div v-for="(c, i) in filteredCases" :key="c.id" class="lib-item">
-          <span class="tag-method" :class="methodClass(methodOf(c))">{{ methodOf(c) }}</span>
-          <span class="li-name"><span class="id">#{{ i + 1 }}</span>{{ c.name }}</span>
-          <button class="icon-btn add" title="加到当前场景" @click="addToChain(c)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 右:编辑区 ==================== -->
-    <section class="col-right panel">
-      <div v-if="!currentId" class="empty tall">
-        左侧选一个场景开始编辑,或点"新建"创建新场景
-      </div>
+    <section class="scenario-editor panel" aria-label="场景步骤">
+      <div v-if="!currentId" class="editor-empty"><strong>选择一个场景开始编排</strong><p>按业务顺序添加用例，组成完整的接口测试链路。</p><button class="btn btn-primary btn-sm" @click="openNewScenario">新建场景</button></div>
       <template v-else>
-        <div class="panel-head editor-head">
-          <div class="editor-meta">
-            <input v-model="currentName" class="editor-name" placeholder="场景名" />
-            <span v-if="dirty" class="dirty-dot" title="有未保存改动">●</span>
-          </div>
+        <div class="editor-head">
+          <div class="editor-meta"><input v-model="currentName" class="editor-name" aria-label="场景名称" placeholder="场景名称" maxlength="100" :disabled="saving || running || refreshing" /><span v-if="dirty" class="dirty-label">未保存</span></div>
           <div class="editor-actions">
-            <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="跑测试用的环境" />
-            <button class="btn btn-ghost btn-sm" @click="deleteCurrent">删除</button>
-            <button class="btn btn-ghost btn-sm" @click="saveCurrent" :disabled="!dirty">保存</button>
-            <button class="btn btn-primary btn-sm" @click="onRun" :disabled="running || !chain.length">
-              {{ running ? '跑中…' : '跑测试' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="desc-row">
-          <input v-model="currentDesc" placeholder="场景描述(可选)" class="desc-input" />
-        </div>
-
-        <div v-if="!chain.length" class="canvas-empty">
-          从中间"用例库"点 <b>+</b> 加用例到这里,可拖拽排序
-        </div>
-        <div v-else class="workflow-layout">
-          <div class="steps">
-          <div v-for="(c, i) in chain" :key="c._uid"
-               class="step"
-               :class="{ dragging: dragIdx === i, selected: selectedStep === c._uid }"
-               @click="selectedStep = c._uid"
-               draggable="true"
-               @dragstart="onDragStart(i)"
-               @dragover.prevent
-               @drop="onDrop(i)">
-            <span class="step-no">{{ i + 1 }}</span>
-            <span class="grip">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" /></svg>
-            </span>
-            <span class="tag-method" :class="methodClass(methodOf(c))">{{ methodOf(c) }}</span>
-            <span class="step-name">{{ c.name }}</span>
-            <button class="icon-btn del" title="移除" @click="removeStep(i)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          </div>
-          <aside class="step-inspector" v-if="selectedStep && chain.find(c => c._uid === selectedStep)">
-            <div v-for="step in chain.filter(c => c._uid === selectedStep)" :key="step._uid">
-              <div class="inspector-kicker">当前步骤 · {{ chain.findIndex(c => c._uid === step._uid) + 1 }}</div>
-              <h3>{{ step.name }}</h3>
-              <div class="inspector-row"><span>请求方法</span><strong class="tag-method" :class="methodClass(methodOf(step))">{{ methodOf(step) }}</strong></div>
-              <div class="inspector-row"><span>关联接口</span><strong>{{ ifaceMap[step.interface_id]?.name || '未关联' }}</strong></div>
-              <div class="inspector-row"><span>期望状态</span><strong class="mono">{{ step.expected_status || '—' }}</strong></div>
-              <div class="inspector-note">步骤顺序可在流程画布中拖拽调整，执行时会按当前顺序依次运行。</div>
-              <button class="btn btn-ghost inspector-remove" @click="removeStep(chain.findIndex(c => c._uid === step._uid))">移除步骤</button>
+            <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="执行环境" />
+            <button class="btn btn-ghost btn-sm" @click="saveCurrent" :disabled="!dirty || saving || running || refreshing">{{ saving ? '保存中…' : '保存' }}</button>
+            <button class="btn btn-primary btn-sm" @click="onRun" :disabled="running || saving || refreshing || !chain.length">{{ running ? '执行中…' : '运行场景' }}</button>
+            <div class="more-actions" @focusout="event => { if (!event.currentTarget.contains(event.relatedTarget)) showMore = false }" @keydown.esc="showMore = false">
+              <button class="icon-btn" type="button" aria-label="更多场景操作" :aria-expanded="showMore" aria-haspopup="menu" :disabled="saving || running || refreshing" @click="showMore = !showMore">⋯</button>
+              <div v-if="showMore" class="more-menu" role="menu"><button role="menuitem" type="button" @click="deleteCurrent">删除场景</button></div>
             </div>
-          </aside>
+          </div>
+          <input v-model="currentDesc" class="desc-input" aria-label="场景简介" placeholder="添加场景简介（可选）" maxlength="500" :disabled="saving || running || refreshing" />
         </div>
+        <div class="flow-heading"><strong>执行步骤 <span>{{ chain.length }}</span></strong><span>按顺序执行 · 可拖拽调整</span></div>
+        <div v-if="!chain.length" class="canvas-empty"><strong>从用例库添加第一个步骤</strong><p>每个步骤都可以单独修改请求、期望状态码和断言。</p><button class="btn btn-primary btn-sm" @click="openCasePicker">＋ 从用例库添加步骤</button></div>
+        <template v-else>
+          <div class="steps" role="list" aria-label="按执行顺序排列的步骤">
+            <div v-for="(c, i) in chain" :key="c.step_id" class="step" role="listitem" :class="{ dragging:dragIdx === i, invalid:!!c.missing_reason }" @dblclick="editStep(c)" @dragover.prevent @drop.prevent="onDrop(i)">
+              <button class="grip" type="button" :aria-label="`调整步骤 ${i + 1} 顺序，方向键上下移动`" title="拖拽排序，也可聚焦后使用上下方向键" :disabled="saving || running || refreshing" :draggable="!saving && !running && !refreshing" @dragstart="onDragStart(i)" @dragend="dragIdx = null" @keydown.up.prevent="moveStep(i, -1)" @keydown.down.prevent="moveStep(i, 1)"><svg viewBox="0 0 24 24" fill="currentColor"><circle v-for="(point, index) in [[8,6],[8,12],[8,18],[16,6],[16,12],[16,18]]" :key="index" :cx="point[0]" :cy="point[1]" r="1.5" /></svg></button>
+              <span class="step-no">{{ i + 1 }}</span>
+              <div class="step-copy"><strong class="step-name" :title="c.name">{{ c.name }}</strong><span class="step-request"><span class="tag-method" :class="methodClass(methodOf(c))">{{ c.method || (c.missing_reason ? '—' : methodOf(c)) }}</span><code :title="c.url">{{ c.url || '请求配置不可用' }}</code></span><span v-if="c.missing_reason" class="step-error">{{ c.missing_reason }}</span></div>
+              <span class="step-status">期望 <b>{{ c.expected_status || '—' }}</b></span>
+              <button class="step-edit" :disabled="saving || running || refreshing" :aria-label="`编辑步骤 ${i + 1}：${c.name}`" @click="editStep(c)">编辑</button>
+              <button class="icon-btn del" :aria-label="`移除步骤 ${i + 1}：${c.name}`" title="移除步骤" :disabled="saving || running || refreshing" @click="removeStep(i)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V4h6v3M8 7l1 13h6l1-13" /></svg></button>
+            </div>
+          </div>
+          <div class="add-step-row"><button type="button" class="add-step" :disabled="saving || running || refreshing" @click="openCasePicker">＋ 从用例库添加步骤</button><span>添加后可独立编辑</span></div>
+        </template>
       </template>
     </section>
   </div>
 
-  <!-- 新建场景弹层 -->
-  <Modal v-if="showNew" title="新建场景" @close="showNew = false">
-    <div class="field">
-      <label>场景名</label>
-      <input v-model="newName" placeholder="如:下单主流程" @keyup.enter="submitNewScenario" />
-    </div>
-    <div class="field">
-      <label>描述 <span class="opt">(可选)</span></label>
-      <input v-model="newDesc" placeholder="一句话说说这个场景干啥" />
-    </div>
-    <div v-if="newErr" class="form-err">{{ newErr }}</div>
-    <template #foot>
-      <button class="btn btn-ghost" @click="showNew = false">取消</button>
-      <button class="btn btn-primary" @click="submitNewScenario">创建</button>
-    </template>
-  </Modal>
+  <ScenarioCasePicker v-if="showCasePicker" :cases="cases" :interfaces="interfaces" :remaining="1000 - chain.length" @add="addCases" @close="showCasePicker = false" />
+  <ScenarioStepEditor v-if="editingStep" :key="`${editingStep.step_id}-${editorRevision}`" :step="editingStep" :busy="refreshing" @reapply="reapplyTemplate(editingStep)" @apply="applyStep" @close="editingStep = null" />
 
-  <!-- 执行结果弹层 -->
+  <Modal v-if="showNew" title="新建场景" @close="showNew = false">
+    <div class="field"><label for="new-scene-name">场景名称</label><input id="new-scene-name" v-model="newName" maxlength="100" placeholder="如：订单核心链路" @keyup.enter="submitNewScenario" /></div>
+    <div class="field"><label for="new-scene-desc">简介 <span class="opt">（可选）</span></label><input id="new-scene-desc" v-model="newDesc" maxlength="500" placeholder="描述需要验证的业务流程" /></div>
+    <div v-if="newErr" class="form-err">{{ newErr }}</div>
+    <template #foot><button class="btn btn-ghost" @click="showNew = false">取消</button><button class="btn btn-primary" @click="submitNewScenario">创建</button></template>
+  </Modal>
   <Modal v-if="showResult" :title="`执行结果 · ${currentName}`" :max-width="720" @close="showResult = false">
     <ScenarioRunResult :results="results" />
-    <template #foot>
-      <button class="btn btn-primary" @click="showResult = false">关闭</button>
-    </template>
+    <template #foot><button class="btn btn-primary" @click="showResult = false">关闭</button></template>
   </Modal>
 </template>
 
 <style scoped>
-.workflow-layout { display:grid; grid-template-columns:minmax(0,1fr) 220px; flex:1; min-height:0; }
-.canvas-empty { margin:14px; padding:70px 20px; text-align:center; color:var(--text-muted); font-size:12.5px; border:1px dashed var(--border); border-radius:12px; background:var(--surface-2); }
-.step { position:relative; }
-.step:not(:last-child)::after { content:""; position:absolute; left:25px; top:100%; width:2px; height:8px; background:var(--primary); opacity:.35; }
-.step.selected { border-color:var(--primary); box-shadow:0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent); }
-.step-inspector { border-left:1px solid var(--border); padding:18px 16px; background:var(--surface-2); }
-.inspector-kicker { color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
-.step-inspector h3 { margin:8px 0 20px; font-size:15px; line-height:1.4; }
-.inspector-row { display:flex; flex-direction:column; gap:5px; padding:10px 0; border-bottom:1px solid var(--border); font-size:12px; }
-.inspector-row span { color:var(--text-muted); }
-.inspector-row strong { color:var(--text); }
-.mono { font-family:ui-monospace,Consolas,monospace; }
-.inspector-note { margin-top:16px; color:var(--text-muted); font-size:11.5px; line-height:1.6; }
-.inspector-remove { margin-top:18px; width:100%; }
-
-.state { padding:48px 20px; text-align:center; color:var(--text-muted); font-size:13px; }
-.state.err { color:var(--fail-fg); }
-
-/* ===== 三列布局 ===== */
-.three-col { display:grid; grid-template-columns:260px 340px 1fr; gap:16px; align-items:stretch; }
-.col-left, .col-mid, .col-right { display:flex; flex-direction:column; min-height:520px; }
-
-.panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px;
-  padding:14px 18px; border-bottom:1px solid var(--border); font-size:13.5px; font-weight:600; }
-
-.empty { padding:36px 20px; text-align:center; color:var(--text-muted); font-size:12.5px; }
-.empty.tall { padding:100px 20px; }
-
-.btn-sm { height:32px; padding:0 12px; font-size:12.5px; }
-
-/* ===== 左:场景列表 ===== */
-.sc-list { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px; }
-.sc-item { padding:10px 12px; border-radius:8px; cursor:pointer;
-  border:1px solid transparent; transition:background .15s, border-color .15s; }
-.sc-item:hover { background:var(--surface-2); }
-.sc-item.active { background:var(--surface-2); border-color:var(--primary); }
-.sc-name { font-size:13px; font-weight:600; color:var(--text); margin-bottom:4px; }
-.sc-meta { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--text-muted); }
-.sc-count { background:var(--surface); border:1px solid var(--border); padding:1px 8px; border-radius:10px; font-weight:500; }
-.sc-desc { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
-
-/* ===== 中:用例库 ===== */
-.lib-search { height:30px; padding:0 10px; font-size:12.5px; background:var(--surface-2);
-  border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit;
-  min-width:0; flex:1; max-width:180px; }
-.lib-search:focus { outline:none; border-color:var(--primary); }
-.lib-list { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
-.lib-item { display:flex; align-items:center; gap:10px; padding:9px 12px;
-  border-radius:8px; transition:background .15s; }
-.lib-item:hover { background:var(--surface-2); }
-.li-name { flex:1; font-size:12.5px; color:var(--text); display:flex; align-items:center; gap:8px;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.li-name .id { color:var(--text-muted); font-family:ui-monospace,Consolas,monospace; font-size:11px;
-  background:var(--surface); padding:1px 6px; border-radius:5px; }
-
-/* ===== 右:编辑区 ===== */
-.editor-head { flex-wrap:wrap; gap:12px; }
-.editor-meta { display:flex; align-items:center; gap:8px; flex:1; min-width:0; }
-.editor-name { height:34px; padding:0 12px; font-size:14px; font-weight:600; color:var(--text);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-  flex:1; min-width:100px; font-family:inherit; }
-.editor-name:focus { outline:none; border-color:var(--primary); }
-.dirty-dot { color:var(--primary); font-size:14px; }
-.editor-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.env-sel { height:32px; padding:0 10px; font-size:12.5px; color:var(--text);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:6px; font-family:inherit; }
-.env-sel:focus { outline:none; border-color:var(--primary); }
-
-.desc-row { padding:12px 18px; border-bottom:1px solid var(--border); }
-.desc-input { width:100%; height:32px; padding:0 12px; font-size:12.5px; color:var(--text);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:6px; font-family:inherit; }
-.desc-input:focus { outline:none; border-color:var(--primary); }
-
-.steps { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
-.step { display:flex; align-items:center; gap:12px; padding:10px 14px;
-  background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
-  cursor:move; transition:background .15s; }
-.step:hover { background:var(--surface); }
-.step.dragging { opacity:.4; }
-.step-no { min-width:26px; text-align:center; font-weight:700; color:var(--text-muted);
-  font-family:ui-monospace,Consolas,monospace; font-size:12px; }
-.grip { color:var(--text-muted); }
-.grip svg { width:14px; height:14px; }
-.step-name { flex:1; font-size:12.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-/* ===== 通用小按钮 ===== */
-.icon-btn { display:inline-flex; align-items:center; justify-content:center;
-  width:28px; height:28px; padding:0; background:none; border:none; color:var(--text-muted);
-  cursor:pointer; border-radius:4px; transition:color .15s, background .15s; flex:none; }
-.icon-btn svg { width:14px; height:14px; }
-.icon-btn.add:hover { color:var(--primary); background:var(--surface-2); }
-.icon-btn.del:hover { color:var(--fail-fg); background:var(--fail-bg); }
-
-/* ===== 弹层字段 ===== */
-.field { margin-bottom:16px; }
-.field label { display:block; font-size:12.5px; font-weight:600; margin-bottom:8px; color:var(--text); }
-.field label .opt { color:var(--text-muted); font-weight:400; }
-.field input { width:100%; height:38px; padding:0 12px; font-size:13px; color:var(--text);
-  background:var(--surface-2); border:1px solid var(--border); border-radius:8px; font-family:inherit; }
-.field input:focus { outline:none; border-color:var(--primary); }
-.form-err { color:var(--fail-fg); font-size:12.5px; background:var(--fail-bg); padding:9px 12px; border-radius:8px; }
-
-/* ===== 响应式 ===== */
-@media (max-width:1200px) {
-  .three-col { grid-template-columns:220px 280px 1fr; }
+.scenario-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:stretch}
+.scenario-nav,.scenario-editor{display:flex;flex-direction:column;min-width:0;min-height:520px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;font-size:14px;font-weight:600}
+.panel-head small{margin-left:6px;font-size:11px;font-weight:400;color:var(--text-muted)}
+.nav-search{padding:0 12px 12px}
+.nav-search input{box-sizing:border-box;width:100%;height:34px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);color:var(--text);padding:0 10px;font:inherit;font-size:12px}
+.sc-list{display:flex;flex-direction:column;gap:5px;flex:1;max-height:65vh;overflow:auto;scrollbar-width:none;padding:0 8px 8px}
+.sc-list::-webkit-scrollbar{display:none}
+.sc-item{text-align:left;border:1px solid transparent;border-radius:8px;background:transparent;padding:12px;color:var(--text);font:inherit;cursor:pointer}
+.sc-item:hover{background:var(--surface-2)}
+.sc-item.active{background:var(--surface-2);border-color:var(--border);box-shadow:inset 3px 0 var(--primary)}
+.sc-name{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:600;margin-bottom:5px}
+.sc-item.active .sc-name{color:var(--primary)}
+.sc-meta{color:var(--text-muted);font-size:11px}
+.nav-empty{padding:20px 8px;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.7}
+.nav-footer{padding:12px;border-top:1px solid var(--border)}
+.nav-footer .btn{width:100%;font-size:12px;height:34px}
+.editor-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border)}
+.editor-meta{display:flex;align-items:center;gap:8px;flex:1;min-width:180px}
+.editor-name{box-sizing:border-box;min-width:0;width:100%;height:34px;background:transparent;border:1px solid transparent;border-radius:6px;padding:0 6px;font-family:inherit;font-size:17px;font-weight:700;color:var(--text)}
+.editor-name:hover{border-color:var(--border)}
+.editor-name:focus{background:var(--surface-2)}
+.dirty-label{flex:none;font-size:10px;color:var(--primary);white-space:nowrap}
+.editor-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.editor-actions :deep(.env-select){max-width:220px}
+.desc-input{box-sizing:border-box;width:100%;height:28px;border:1px solid transparent;border-radius:5px;padding:0 6px;background:transparent;color:var(--text-muted);font:inherit;font-size:12px}
+.desc-input:hover{border-color:var(--border)}
+.desc-input:focus{color:var(--text);background:var(--surface-2)}
+.btn-sm{height:32px;padding:0 12px;font-size:12px}
+.more-actions{position:relative}
+.more-menu{position:absolute;right:0;top:calc(100% + 5px);z-index:10;min-width:120px;padding:5px;background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:var(--shadow-lg)}
+.more-menu button{width:100%;border:0;border-radius:4px;background:transparent;color:var(--fail-fg);padding:9px;text-align:left;font:inherit;font-size:12px;cursor:pointer}
+.more-menu button:hover{background:var(--fail-bg)}
+.flow-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:17px 20px 12px;font-size:12px}
+.flow-heading strong{font-size:13px;font-weight:600}
+.flow-heading strong span{margin-left:5px;font-size:11px;font-weight:400;color:var(--text-muted)}
+.flow-heading>span{color:var(--text-muted);font-size:11px}
+.steps{padding:0 20px;display:flex;flex-direction:column;gap:8px}
+.step{display:flex;align-items:center;gap:10px;min-width:0;min-height:66px;box-sizing:border-box;padding:10px 12px 10px 6px;border:1px solid var(--border);border-radius:9px;background:var(--surface);transition:background .15s}
+.step:hover{background:var(--surface-2)}
+.step.dragging{opacity:.4}
+.step.invalid{border-color:var(--fail-fg)}
+.step-no{flex:none;min-width:22px;color:var(--text-muted);font-size:12px;text-align:center;font-variant-numeric:tabular-nums}
+.grip{display:grid;place-items:center;flex:none;width:20px;height:28px;padding:0;border:0;background:transparent;color:var(--text-muted);cursor:grab}
+.grip:active{cursor:grabbing}
+.grip svg{width:14px;height:16px}
+.step-copy{flex:1;min-width:0}
+.step-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:13px;font-weight:600;line-height:1.6}
+.step-request{display:flex;align-items:center;gap:8px;margin-top:4px;min-width:0}
+.step-request code{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted);font:11px/1.4 ui-monospace,Consolas,monospace}
+.step-request .tag-method{flex:none;min-width:35px;font-size:9px;text-align:center;padding:1px 5px;line-height:1.4}
+.step-status{display:flex;align-items:center;gap:6px;flex:none;font-size:11px;color:var(--text-muted);margin:0 8px}
+.step-status b{font-size:12px;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.step-edit{flex:none;border:0;background:transparent;color:var(--primary);font:inherit;font-size:12px;padding:6px;cursor:pointer}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border:0;border-radius:5px;background:transparent;color:var(--text-muted);font:inherit;font-size:21px;cursor:pointer}
+.icon-btn svg{width:16px;height:16px}
+.icon-btn:hover{background:var(--surface-2);color:var(--primary)}
+.icon-btn.del:hover{color:var(--fail-fg);background:var(--fail-bg)}
+.step-error{display:block;margin-top:4px;color:var(--fail-fg);font-size:11px;overflow-wrap:anywhere}
+.add-step-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 20px 20px;padding:0 4px}
+.add-step{border:0;background:transparent;color:var(--primary);padding:10px 0;font:inherit;font-size:12px;cursor:pointer}
+.add-step-row>span{font-size:11px;color:var(--text-muted)}
+.editor-empty,.canvas-empty{text-align:center;padding:90px 20px;color:var(--text-muted)}
+.canvas-empty{padding:60px 20px}
+.editor-empty strong,.canvas-empty strong{color:var(--text);font-size:14px}
+.editor-empty p,.canvas-empty p{font-size:12px;line-height:1.8;margin:10px 0 20px}
+.state{padding:48px 20px;text-align:center;color:var(--text-muted);font-size:13px}
+.state.err{color:var(--fail-fg)}
+.field{margin-bottom:16px}
+.field label{display:block;margin-bottom:8px;color:var(--text);font-size:13px;font-weight:600}
+.field .opt{font-weight:400;color:var(--text-muted)}
+.field input{box-sizing:border-box;width:100%;height:38px;padding:0 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);color:var(--text);font:inherit;font-size:13px}
+.form-err{padding:10px;background:var(--fail-bg);color:var(--fail-fg);font-size:12px;border-radius:6px}
+button:focus-visible,input:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+@media(max-width:1100px){.scenario-layout{grid-template-columns:200px minmax(0,1fr);gap:14px}
+.editor-actions{width:100%}
+.editor-meta{min-width:0}
+.editor-head{gap:8px}
+.desc-input{order:1}
+.editor-actions{order:2}
+.editor-actions :deep(.env-select){margin-right:auto}
+.steps{padding:0 14px}
+.flow-heading{padding-left:14px;padding-right:14px}
+.add-step-row{margin-left:14px;margin-right:14px}
 }
-@media (max-width:900px) {
-  .three-col { grid-template-columns:1fr; }
-  .col-left, .col-mid, .col-right { min-height:auto; }
+@media(max-width:760px){.scenario-layout{grid-template-columns:minmax(0,1fr)}
+.scenario-nav{min-height:auto}
+.sc-list{max-height:180px}
+.nav-footer{padding:8px 12px}
+.scenario-editor{min-height:400px}
+.editor-head{padding:14px}
+.step{gap:5px;padding-right:8px}
+.step-status{margin:0 2px;font-size:10px;gap:3px}
+.step-status b{font-size:11px}
+.step-name{font-size:12px}
+.step-no{min-width:16px;font-size:11px}
+.step-edit{padding:5px;font-size:11px}
+.icon-btn.del{width:24px}
+.grip{width:16px}
+.flow-heading>span,.add-step-row>span{display:none}
+.editor-actions{gap:6px}
+.editor-actions :deep(.env-select){max-width:100%;flex:1;min-width:130px}
+.editor-actions .btn{padding:0 9px;font-size:11px}
+.more-actions .icon-btn{width:24px}
 }
 </style>

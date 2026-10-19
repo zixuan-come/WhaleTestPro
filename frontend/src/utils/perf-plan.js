@@ -1,10 +1,21 @@
 export const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+import { pathParameterNames } from './pathParameters.js'
+import { savedScenarioSteps } from './scenarioSteps.js'
 const ASSERTIONS = ['json_eq', 'json_contains', 'json_gt', 'json_lt', 'header_eq', 'header_contains', 'response_time_lt', 'json_schema']
 const pretty = value => JSON.stringify(value, null, 2)
 
 export function newPerfStep(source = {}) {
+  let path = source.url || '/'
+  for (const name of pathParameterNames(path)) {
+    const value = source.path_params?.[name] ?? `\${${name}}`
+    const bound = String(value).split(/(\$\{\w+\})/g).map(part => /^\$\{\w+\}$/.test(part) ? part : encodeURIComponent(part)).join('')
+    const boundary = path.search(/[?#]/)
+    const prefix = boundary < 0 ? path : path.slice(0, boundary)
+    const suffix = boundary < 0 ? '' : path.slice(boundary)
+    path = prefix.replace(/(?<![$\{])\{([\w-]+)\}(?!\})/g, (match, key) => key === name ? bound : match) + suffix
+  }
   return {
-    name: source.name || '请求', method: source.method || 'GET', path: source.url || '/',
+    name: source.name || '请求', method: source.method || 'GET', path,
     headers: pretty(source.headers || {}), params: pretty(source.params || {}),
     body_type: source.body == null ? 'none' : 'json', body: source.body == null ? '' : pretty(source.body),
     expected_status: '', extract_rules: '{}', assertions: '[]', allow_redirects: false,
@@ -12,18 +23,17 @@ export function newPerfStep(source = {}) {
 }
 
 export function scenarioSteps(scenario, cases, interfaces) {
-  if (!scenario?.case_ids?.length) throw new Error('场景没有步骤')
-  return scenario.case_ids.map(id => {
-    const testCase = cases.find(item => item.id === id)
-    const request = interfaces.find(item => item.id === testCase?.interface_id)
-    if (!testCase || !request) throw new Error('场景存在已删除或不可访问的用例/接口，不能跳过后压测')
+  const saved = scenario ? savedScenarioSteps(scenario, cases, interfaces) : []
+  if (!saved.length) throw new Error('场景没有步骤')
+  return saved.map(testCase => {
+    if (testCase.missing_reason) throw new Error('场景存在已删除或不可访问的用例/接口，不能跳过后压测')
     if (testCase.setup_sql?.length || testCase.teardown_sql?.length || testCase.datasets?.length || testCase.retries > 0) {
       throw new Error('该场景含 SQL、用例级数据集或自动重试，请先制作纯 HTTP 压测场景；不会静默忽略这些配置')
     }
     if ((testCase.assertions || []).some(rule => !ASSERTIONS.includes(rule.type))) {
       throw new Error('场景包含不支持的压测断言（例如 db_eq），请先移除或改为 HTTP 断言')
     }
-    return { ...newPerfStep(request), name: testCase.name, expected_status: testCase.expected_status,
+    return { ...newPerfStep(testCase), name: testCase.name, expected_status: testCase.expected_status,
       extract_rules: pretty(testCase.extract_rules || {}), assertions: pretty(testCase.assertions || []) }
   })
 }
