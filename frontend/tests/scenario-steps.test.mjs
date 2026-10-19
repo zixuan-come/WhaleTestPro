@@ -30,7 +30,7 @@ const pickerSetup = compiled('../src/components/ScenarioCasePicker.vue')
 async function page(t, overrides={}) {
   const calls=[], messages=[]
   let saved={id:5,name:'订单核心链路',description:null,case_ids:[1,1],steps:[caseToStep(template,request),caseToStep(template,request)]}
-  const mocks={onMounted(){},caseToStep,savedScenarioSteps,cloneRequest,
+  const mocks={onMounted(){},useAuthStore:()=>Vue.reactive({token:'test-session',currentProjectId:1}),caseToStep,savedScenarioSteps,cloneRequest,
     useFeedback:()=>({showMessage:(...args)=>messages.push(args),confirmAction:async()=>true}),
     useExecutionEnvironment:()=>({envs:Vue.ref([]),selectedEnv:Vue.ref(3),loadEnvironments:async()=>{}}),
     listScenarios:async()=>[cloneRequest(saved)],listCases:async()=>[cloneRequest(template)],listInterfaces:async()=>[cloneRequest(request)],
@@ -135,7 +135,7 @@ test('removed legacy references stay visible and disabled instead of silently di
 
 test('step editor cancels safely, rejects invalid JSON and applies independent request values',t=>{
   const step=caseToStep(template,request),events=[]
-  const state=editorSetup(t,{step},{cloneRequest,requestDraft,serializeRequest,emit:(...args)=>events.push(args)})
+  const state=editorSetup(t,{step},{onBeforeUnmount(){},cloneRequest,requestDraft,serializeRequest,emit:(...args)=>events.push(args)})
   assert.equal(state.advanced.value,false)
   state.expectedStatus.value=404;state.request.value.pathParams.id='999';state.assertions.value='invalid'
   state.apply();assert.ok(state.error.value.includes('JSON'));assert.equal(events.length,0);assert.equal(state.advanced.value,true)
@@ -146,7 +146,7 @@ test('step editor cancels safely, rejects invalid JSON and applies independent r
 
 test('editing only status preserves untouched typed Query and Body values',t=>{
   const step={...caseToStep(template,request),params:{page:2,enabled:false,filters:['paid']},body:{quantity:2}},events=[]
-  const state=editorSetup(t,{step},{cloneRequest,requestDraft,serializeRequest,emit:(...args)=>events.push(args)})
+  const state=editorSetup(t,{step},{onBeforeUnmount(){},cloneRequest,requestDraft,serializeRequest,emit:(...args)=>events.push(args)})
   state.expectedStatus.value=404;state.apply()
   assert.deepEqual(events[0][1].params,step.params);assert.deepEqual(events[0][1].body,step.body)
 })
@@ -169,4 +169,65 @@ test('suite coverage excludes modified copies but still deduplicates an unchange
   const catalog=suiteCatalog([{id:5,name:'差异场景',steps:[b],case_ids:[1]}],[template],[request])
   const chosen=selectedSuiteContent(catalog,{scenario_ids:[5],case_ids:[1]})
   assert.equal(chosen.cases[0].included,false);assert.equal(catalog.scenarios[0].steps[0].name,b.name)
+})
+
+function debugEditor(t, overrides={}) {
+  const events=[],calls=[],props=Vue.reactive({step:caseToStep(template,request),scenarioId:5,envId:3,
+    sessionId:'',variables:{},debugMode:true})
+  let dispose=()=>{}
+  const mocks={cloneRequest,requestDraft,serializeRequest,onBeforeUnmount(fn){dispose=fn},
+    emit(name,value){events.push([name,value]);if(name==='debug'){props.debugResult=value;props.sessionId=value.session_id;props.variables=value.variables}},
+    debugScenarioStep:async(...args)=>{calls.push(args);return{step_id:props.step.step_id,session_id:'a'.repeat(32),response_id:'b'.repeat(32),actual_status:201,expected_status:200,passed:false,response_detail:{status_code:201,headers:{},body:{id:42}},variables:{}}},
+    validateScenarioExtraction:async(...args)=>{calls.push(['extract',...args]);return{step_id:props.step.step_id,session_id:'a'.repeat(32),extraction:[{name:'order_id',passed:true,value:42}],variables:{order_id:42}}},...overrides}
+  return {state:editorSetup(t,props,mocks),props,events,calls,dispose:()=>dispose()}
+}
+
+test('single-step debug executes the current unsaved draft and keeps it separate from apply',async t=>{
+  const {state,props,calls,events}=debugEditor(t)
+  state.name.value='独立调试';state.expectedStatus.value=404;state.request.value.pathParams.id='999'
+  await state.send()
+  assert.equal(calls.length,1);assert.equal(calls[0][0],5);assert.equal(calls[0][1],3)
+  assert.equal(calls[0][2].step.expected_status,404);assert.equal(calls[0][2].step.path_params.id,'999')
+  assert.equal(props.step.expected_status,200);assert.equal(events.some(([name])=>name==='apply'),false)
+  assert.equal(state.result.value.response_detail.body.id,42)
+})
+
+test('JSONPath verification uses the previous response ticket and never resends the HTTP request',async t=>{
+  const {state,calls,props}=debugEditor(t)
+  await state.send();state.extracts.value='{"order_id":"$.id"}'
+  await state.verifyExtraction()
+  assert.equal(calls.length,2);assert.equal(calls[1][0],'extract')
+  assert.equal(calls[1][3].response_id,'b'.repeat(32));assert.deepEqual(props.variables,{order_id:42})
+  state.url.value='/orders/changed'
+  await state.verifyExtraction();assert.equal(calls.length,2);assert.ok(state.debugError.value.includes('已修改'))
+})
+
+test('missing environment, invalid extraction JSON and busy clicks cannot send duplicate requests',async t=>{
+  let finish
+  const {state,props,calls}=debugEditor(t,{debugScenarioStep:(...args)=>{calls.push(args);return new Promise(resolve=>finish=resolve)}})
+  props.envId='';await state.send();assert.equal(calls.length,0)
+  props.envId=3;const pending=state.send();await state.send();assert.equal(calls.length,1)
+  finish({step_id:props.step.step_id,session_id:'a'.repeat(32),response_id:'b'.repeat(32),variables:{}});await pending
+  state.extracts.value='broken';await state.verifyExtraction();assert.equal(calls.length,1);assert.ok(state.debugError.value.includes('JSON'))
+})
+
+test('closed editor ignores a late response and clearing transient variables never applies a draft',async t=>{
+  let finish
+  const editor=debugEditor(t,{debugScenarioStep:()=>new Promise(resolve=>finish=resolve)})
+  const pending=editor.state.send();editor.dispose();finish({session_id:'a'.repeat(32),variables:{order_id:42}});await pending
+  assert.equal(editor.events.length,0)
+  const next=debugEditor(t);await next.state.send();next.state.clearDebug()
+  assert.equal(next.state.result.value,null);assert.equal(next.events.at(-1)[0],'reset-debug')
+  assert.equal(next.events.some(([name])=>name==='apply'),false)
+})
+
+test('debug variables and modal are cleared synchronously when the environment or account changes',async t=>{
+  const auth=Vue.reactive({token:'alice',currentProjectId:1})
+  const {state}=await page(t,{useAuthStore:()=>auth})
+  state.editStep(state.chain.value[0],true)
+  state.rememberDebug({step_id:state.chain.value[0].step_id,session_id:'a'.repeat(32),variables:{order_id:42}})
+  state.selectedEnv.value=4
+  assert.equal(state.debugSession.value,'');assert.equal(state.editingStep.value,null)
+  state.rememberDebug({step_id:'x',session_id:'b'.repeat(32),variables:{order_id:9}})
+  auth.token='bob';assert.deepEqual(state.debugVariables.value,{})
 })

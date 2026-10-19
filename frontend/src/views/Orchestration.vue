@@ -1,7 +1,8 @@
 <script setup>
 import { useFeedback } from '../composables/feedback'
 const { showMessage, confirmAction } = useFeedback()
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useAuthStore } from '../stores/auth'
 import { listCases, getCase } from '../api/case'
 import { listInterfaces, getInterface } from '../api/interface'
 import { useExecutionEnvironment } from '../composables/executionEnvironment'
@@ -21,6 +22,21 @@ const scenarios = ref([])
 const cases = ref([])
 const interfaces = ref([])
 const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
+const auth = useAuthStore()
+const debugSession = ref('')
+const debugVariables = ref({})
+const debugResults = ref({})
+const debugMode = ref(false)
+function resetDebug() {
+  debugSession.value = ''
+  debugVariables.value = {}
+  debugResults.value = {}
+}
+function rememberDebug(result) {
+  debugSession.value = result.session_id
+  debugVariables.value = result.variables || {}
+  debugResults.value = { ...debugResults.value, [result.step_id]:result }
+}
 const loading = ref(true)
 const error = ref('')
 
@@ -38,6 +54,10 @@ const refreshing = ref(false)
 // 快照:加载/保存时打一份,dirty = 当前 vs 快照 (避免用 watch 追踪的时序 bug)
 const originalSnapshot = ref(null)
 let selectionVersion = 0
+watch(() => [auth.token, auth.currentProjectId, currentId.value, selectedEnv.value], () => {
+  resetDebug()
+  editingStep.value = null
+}, { flush:'sync' })
 
 const dirty = computed(() => {
   if (!currentId.value || !originalSnapshot.value) return false
@@ -234,9 +254,10 @@ function onDrop(i) {
   dragIdx.value = null
 }
 
-function editStep(step) {
+function editStep(step, debug = false) {
   if (!step || saving.value || running.value || refreshing.value) return
   editingStep.value = cloneRequest(step)
+  debugMode.value = debug
 }
 function applyStep(step) {
   const index = chain.value.findIndex(item => item.step_id === step.step_id)
@@ -323,6 +344,7 @@ onMounted(load)
               <span class="step-no">{{ i + 1 }}</span>
               <div class="step-copy"><strong class="step-name" :title="c.name">{{ c.name }}</strong><span class="step-request"><span class="tag-method" :class="methodClass(methodOf(c))">{{ c.method || (c.missing_reason ? '—' : methodOf(c)) }}</span><code :title="c.url">{{ c.url || '请求配置不可用' }}</code></span><span v-if="c.missing_reason" class="step-error">{{ c.missing_reason }}</span></div>
               <span class="step-status">期望 <b>{{ c.expected_status || '—' }}</b></span>
+              <button class="step-edit step-debug" :disabled="!!c.missing_reason || saving || running || refreshing" :aria-label="`调试步骤 ${i + 1}：${c.name}`" @click="editStep(c, true)">调试</button>
               <button class="step-edit" :disabled="saving || running || refreshing" :aria-label="`编辑步骤 ${i + 1}：${c.name}`" @click="editStep(c)">编辑</button>
               <button class="icon-btn del" :aria-label="`移除步骤 ${i + 1}：${c.name}`" title="移除步骤" :disabled="saving || running || refreshing" @click="removeStep(i)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7h12M9 7V4h6v3M8 7l1 13h6l1-13" /></svg></button>
             </div>
@@ -334,7 +356,7 @@ onMounted(load)
   </div>
 
   <ScenarioCasePicker v-if="showCasePicker" :cases="cases" :interfaces="interfaces" :remaining="1000 - chain.length" @add="addCases" @close="showCasePicker = false" />
-  <ScenarioStepEditor v-if="editingStep" :key="`${editingStep.step_id}-${editorRevision}`" :step="editingStep" :busy="refreshing" @reapply="reapplyTemplate(editingStep)" @apply="applyStep" @close="editingStep = null" />
+  <ScenarioStepEditor v-if="editingStep" :key="`${editingStep.step_id}-${editorRevision}`" :step="editingStep" :busy="refreshing" :scenario-id="currentId" :env-id="selectedEnv" :environment-name="envs.find(item => String(item.id) === String(selectedEnv))?.name || ''" :debug-mode="debugMode" :session-id="debugSession" :variables="debugVariables" :debug-result="debugResults[editingStep.step_id]" @debug="rememberDebug" @reset-debug="resetDebug" @reapply="reapplyTemplate(editingStep)" @apply="applyStep" @close="editingStep = null" />
 
   <Modal v-if="showNew" title="新建场景" @close="showNew = false">
     <div class="field"><label for="new-scene-name">场景名称</label><input id="new-scene-name" v-model="newName" maxlength="100" placeholder="如：订单核心链路" @keyup.enter="submitNewScenario" /></div>
