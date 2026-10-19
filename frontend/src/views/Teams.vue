@@ -40,6 +40,7 @@ const permissionOptions = [
   { key: 'perf.write', label: '性能任务', description: '维护性能测试任务配置' },
   { key: 'scenario.write', label: '业务场景', description: '新增、修改和删除场景' },
   { key: 'suite.write', label: '测试套件', description: '新增、修改和删除测试套件' },
+  { key: 'report.write', label: '测试报告', description: '管理报告目录、归档和删除测试报告' },
 ]
 
 const currentTeam = computed(() => teams.value.find(t => t.id === auth.currentTeamId) || teams.value[0] || null)
