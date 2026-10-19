@@ -6,6 +6,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { caseToStep, savedScenarioSteps, equivalentCaseIds } from '../src/utils/scenarioSteps.js'
 import { cloneRequest, requestDraft, serializeRequest } from '../src/utils/requestConfig.js'
 import { scenarioSteps } from '../src/utils/perf-plan.js'
+import * as extraction from '../src/utils/extractRules.js'
 import { suiteCatalog, selectedSuiteContent } from '../src/utils/suiteSelection.js'
 
 const request = { id:10, name:'查询订单', method:'GET', url:'/orders/{id}', path_params:{id:'${order_id}'}, headers:{'X-Project-Id':'1'}, params:null, body:null }
@@ -18,7 +19,7 @@ function compiled(path) {
   const code = script.content.replace(/^import[\s\S]*?\bfrom\s*['"][^'"]+['"];?/gm,'').replace('export default','return')
   return (t, props, mocks) => {
     const names = Object.keys(script.imports)
-    const component = Function(...names,code)(...names.map(name=>mocks[name] ?? Vue[name]))
+    const component = Function(...names,code)(...names.map(name=>mocks[name] ?? extraction[name] ?? Vue[name]))
     const scope = Vue.effectScope();t.after(()=>scope.stop())
     return scope.run(()=>component.setup(props,{expose(){},emit:mocks.emit || (()=>{})}))
   }
@@ -178,7 +179,7 @@ function debugEditor(t, overrides={}) {
   const mocks={cloneRequest,requestDraft,serializeRequest,onBeforeUnmount(fn){dispose=fn},
     emit(name,value){events.push([name,value]);if(name==='debug'){props.debugResult=value;props.sessionId=value.session_id;props.variables=value.variables}},
     debugScenarioStep:async(...args)=>{calls.push(args);return{step_id:props.step.step_id,session_id:'a'.repeat(32),response_id:'b'.repeat(32),actual_status:201,expected_status:200,passed:false,response_detail:{status_code:201,headers:{},body:{id:42}},variables:{}}},
-    validateScenarioExtraction:async(...args)=>{calls.push(['extract',...args]);return{step_id:props.step.step_id,session_id:'a'.repeat(32),extraction:[{name:'order_id',passed:true,value:42}],variables:{order_id:42}}},...overrides}
+    validateScenarioExtraction:async(...args)=>{calls.push(['extract',...args]);return{step_id:props.step.step_id,session_id:'a'.repeat(32),extraction:[{name:'order_id',path:'$.id',passed:true,value:42}],variables:{order_id:42}}},...overrides}
   return {state:editorSetup(t,props,mocks),props,events,calls,dispose:()=>dispose()}
 }
 
@@ -194,21 +195,22 @@ test('single-step debug executes the current unsaved draft and keeps it separate
 
 test('JSONPath verification uses the previous response ticket and never resends the HTTP request',async t=>{
   const {state,calls,props}=debugEditor(t)
-  await state.send();state.extracts.value='{"order_id":"$.id"}'
+  await state.send();state.extracts.value=[{name:'order_id',path:'$.id'}]
   await state.verifyExtraction()
   assert.equal(calls.length,2);assert.equal(calls[1][0],'extract')
   assert.equal(calls[1][3].response_id,'b'.repeat(32));assert.deepEqual(props.variables,{order_id:42})
+  assert.deepEqual(calls[1][3].extract_rules,{order_id:'$.id'})
   state.url.value='/orders/changed'
   await state.verifyExtraction();assert.equal(calls.length,2);assert.ok(state.debugError.value.includes('已修改'))
 })
 
-test('missing environment, invalid extraction JSON and busy clicks cannot send duplicate requests',async t=>{
+test('missing environment, incomplete extraction rows and busy clicks cannot send duplicate requests',async t=>{
   let finish
   const {state,props,calls}=debugEditor(t,{debugScenarioStep:(...args)=>{calls.push(args);return new Promise(resolve=>finish=resolve)}})
   props.envId='';await state.send();assert.equal(calls.length,0)
   props.envId=3;const pending=state.send();await state.send();assert.equal(calls.length,1)
   finish({step_id:props.step.step_id,session_id:'a'.repeat(32),response_id:'b'.repeat(32),variables:{}});await pending
-  state.extracts.value='broken';await state.verifyExtraction();assert.equal(calls.length,1);assert.ok(state.debugError.value.includes('JSON'))
+  state.extracts.value=[{name:'order_id',path:''}];await state.verifyExtraction();assert.equal(calls.length,1);assert.ok(state.debugError.value.includes('同时填写'))
 })
 
 test('closed editor ignores a late response and clearing transient variables never applies a draft',async t=>{

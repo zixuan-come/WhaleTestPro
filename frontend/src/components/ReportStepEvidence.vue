@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import ExtractedVariables from './ExtractedVariables.vue'
 const props = defineProps({ evidence: { type: Object, required: true }, label: { type: String, default: '' } })
 const assertions = computed(() => Array.isArray(props.evidence.assertions) ? props.evidence.assertions : [])
 const fmt = value => JSON.stringify(value, null, 2)
@@ -23,7 +24,7 @@ const fmt = value => JSON.stringify(value, null, 2)
         <summary>断言 · {{ assertions.filter(item => item.passed).length }} / {{ assertions.length }} 通过</summary>
         <div v-for="(assertion, index) in assertions" :key="index" class="assertion"><span class="badge" :class="assertion.passed ? 'b-pass' : 'b-fail'">{{ assertion.passed ? 'PASS' : 'FAIL' }}</span><pre>{{ fmt(assertion) }}</pre></div>
       </details>
-      <details v-if="evidence.extracted_variables" class="data-section"><summary>提取变量</summary><pre>{{ fmt(evidence.extracted_variables) }}</pre></details>
+      <details v-if="evidence.extracted_variables" class="data-section"><summary>提取变量</summary><ExtractedVariables :variables="evidence.extracted_variables" /></details>
     </div>
   </details>
 </template>

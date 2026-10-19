@@ -14,7 +14,7 @@ test('scenario order, duplicates, expected status, extraction and assertions are
   const cases = [{ id: 1, interface_id: 2, name: 'login', expected_status: 200, extract_rules: { token: '$.token' }, assertions: [] }]
   const steps = scenarioSteps({ case_ids: [1, 1] }, cases, [{ id: 2, method: 'POST', url: '/login' }])
   assert.equal(steps.length, 2)
-  assert.equal(JSON.parse(steps[1].extract_rules).token, '$.token')
+  assert.deepEqual(steps[1].extract_rules, [{name:'token', path:'$.token'}])
   assert.equal(buildPerfPlan({ ...form, mode: 'chain' }, steps).steps[1].expected_status, 200)
 })
 test('broken or SQL scenarios are not silently downgraded', () => {

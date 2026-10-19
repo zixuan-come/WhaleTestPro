@@ -11,6 +11,8 @@ import Modal from '../components/Modal.vue'
 import InlineCasePanel from '../components/InlineCasePanel.vue'
 import RequestEditor from '../components/RequestEditor.vue'
 import CaseResponse from '../components/CaseResponse.vue'
+import ExtractRulesEditor from '../components/ExtractRulesEditor.vue'
+import { extractRuleRows, serializeExtractRules } from '../utils/extractRules'
 import { requestConfig, requestDraft, serializeRequest } from '../utils/requestConfig'
 
 const props = defineProps({
@@ -61,7 +63,7 @@ const requestForm = ref(requestDraft())
 const requestEditor = ref(null)
 const form = reactive({
   name: '', interface_id: '', expected_status: 200, retries: 0,
-  extract_rules: '', assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
+  extract_rules: [], assertions: '', setup_sql: '', teardown_sql: '', datasets: '',
 })
 
 const baseline = ref('')
@@ -89,6 +91,7 @@ watch(() => form.interface_id, () => {
 }, { flush: 'sync' })
 
 function jsonFieldHasValue(text) {
+  if (Array.isArray(text)) return text.some(row => row.name || row.path)
   const raw = (text || '').trim()
   if (!raw) return false
   try {
@@ -136,7 +139,7 @@ function openCreate(initialRequest = null, expectedStatus = 200) {
   form.interface_id = props.interfaceId || ''
   form.expected_status = expectedStatus
   form.retries = 0
-  form.extract_rules = ''
+  form.extract_rules = []
   form.assertions = ''
   form.setup_sql = ''
   form.teardown_sql = ''
@@ -159,7 +162,7 @@ function openEdit(testCase) {
   form.interface_id = testCase.interface_id
   form.expected_status = testCase.expected_status
   form.retries = testCase.retries || 0
-  form.extract_rules = formatJsonField(testCase.extract_rules)
+  form.extract_rules = extractRuleRows(testCase.extract_rules)
   form.assertions = formatJsonField(testCase.assertions)
   form.setup_sql = formatJsonField(testCase.setup_sql)
   form.teardown_sql = formatJsonField(testCase.teardown_sql)
@@ -203,7 +206,7 @@ async function save() {
   let extract_rules, assertions, setup_sql, teardown_sql, datasets, request_overrides
   try {
     request_overrides = independentRequest.value ? serializeRequest(requestForm.value, selectedInterface.value?.url || '') : null
-    extract_rules = parseJsonField(form.extract_rules, '提取规则')
+    extract_rules = serializeExtractRules(form.extract_rules)
     assertions = parseJsonField(form.assertions, '断言')
     setup_sql = parseJsonField(form.setup_sql, '前置 SQL')
     teardown_sql = parseJsonField(form.teardown_sql, '后置 SQL')
@@ -426,8 +429,8 @@ defineExpose({ openCreate, load })
         <textarea id="case-assertions" v-model="form.assertions" rows="3" placeholder='[{"type":"json_eq","path":"code","expected":0}]'></textarea>
       </div>
       <div class="field">
-        <label for="case-extract-rules">提取规则 <span class="opt">(JSON 对象，可选)</span></label>
-        <textarea id="case-extract-rules" v-model="form.extract_rules" rows="2" placeholder='{"token":"data.token"}'></textarea>
+        <label>变量提取 <span class="opt">(可选)</span></label>
+        <ExtractRulesEditor v-model="form.extract_rules" id-prefix="case-extract" :disabled="saving || runningId != null" result-placeholder="运行时提取" />
       </div>
       <div class="grid2">
         <div class="field">

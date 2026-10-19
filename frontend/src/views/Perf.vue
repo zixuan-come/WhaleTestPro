@@ -12,6 +12,8 @@ import { listEnvironments } from '../api/environment'
 import { listCases } from '../api/case'
 import { listScenarios } from '../api/scenario'
 import { METHODS, newPerfStep, scenarioSteps, buildPerfPlan } from '../utils/perf-plan'
+import { extractRuleRows, PERF_EXTRACT_OPTIONS } from '../utils/extractRules'
+import ExtractRulesEditor from '../components/ExtractRulesEditor.vue'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
 
@@ -311,7 +313,7 @@ function openEdit(task) {
   const plan = task.load_config
   if (plan) {
     Object.assign(form, { mode: plan.mode, variables: JSON.stringify(plan.variables || {}, null, 2), datasets: JSON.stringify(plan.datasets || [], null, 2), stop_on_failure: plan.stop_on_failure, timeout_seconds: plan.timeout_seconds, wait_seconds: plan.wait_seconds })
-    steps.value = plan.steps.map(step => ({ ...newPerfStep(), ...step, headers: JSON.stringify(step.headers || {}, null, 2), params: JSON.stringify(step.params || {}, null, 2), body: step.body_type === 'raw' ? step.body : step.body_type === 'none' ? '' : JSON.stringify(step.body, null, 2), expected_status: step.expected_status ?? '', extract_rules: JSON.stringify(step.extract_rules || {}, null, 2), assertions: JSON.stringify(step.assertions || [], null, 2) }))
+    steps.value = plan.steps.map(step => ({ ...newPerfStep(), ...step, headers: JSON.stringify(step.headers || {}, null, 2), params: JSON.stringify(step.params || {}, null, 2), body: step.body_type === 'raw' ? step.body : step.body_type === 'none' ? '' : JSON.stringify(step.body, null, 2), expected_status: step.expected_status ?? '', extract_rules: extractRuleRows(step.extract_rules), assertions: JSON.stringify(step.assertions || [], null, 2) }))
   } else steps.value = [{ ...newPerfStep(), name: task.name, path: task.target_path }]
 }
 
@@ -583,10 +585,10 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
       </div>
       <div class="field"><label>请求体类型</label><select v-model="step.body_type" :aria-label="`步骤 ${index + 1} 请求体类型`"><option value="none">无请求体</option><option value="json">JSON</option><option value="form">表单（urlencoded）</option><option value="raw">原始文本（Content-Type 在 Headers 配置）</option></select></div>
       <div v-if="step.body_type !== 'none'" class="field"><label>请求体</label><textarea v-model="step.body" :aria-label="`步骤 ${index + 1} Body`" rows="4" /></div>
-      <details><summary>变量提取与业务断言</summary><div class="grid2">
-        <div class="field"><label>提取规则 · JSONPath 映射</label><textarea v-model="step.extract_rules" :aria-label="`步骤 ${index + 1} 提取规则`" rows="3" placeholder='{"token":"$.data.token"}' /></div>
+      <details><summary>变量提取与业务断言</summary>
+        <div class="field"><label>变量提取</label><ExtractRulesEditor v-model="step.extract_rules" :id-prefix="`perf-extract-${index}`" :disabled="saving" :rules-options="PERF_EXTRACT_OPTIONS" result-placeholder="运行时提取" /></div>
         <div class="field"><label>断言 · JSON 数组</label><textarea v-model="step.assertions" :aria-label="`步骤 ${index + 1} 断言`" rows="3" placeholder='[{"type":"json_eq","path":"$.code","expected":0}]' /></div>
-      </div></details>
+      </details>
       <label class="check-option"><input v-model="step.allow_redirects" type="checkbox" />允许重定向（可能访问其他 Host，请确认目标可信）</label>
     </div>
     <details class="pick"><summary>初始变量与数据集</summary><div class="grid2">

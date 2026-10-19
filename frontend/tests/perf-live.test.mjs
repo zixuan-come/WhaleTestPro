@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {parse,compileScript} from '@vue/compiler-sfc'
 import * as Vue from 'vue'
+import { extractRuleRows, serializeExtractRules } from '../src/utils/extractRules.js'
 const descriptor=parse(readFileSync(new URL('../src/views/Perf.vue',import.meta.url),'utf8')).descriptor
 const code=compileScript(descriptor,{id:'perf-live-test'}).content.replace(/^import[\s\S]*?from\s*['"][^'"]+['"];?\s*$/gm,'').replace('export default','return')
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
@@ -10,7 +11,7 @@ const task=(status='running',count=10)=>({id:1,name:'订单压测',status,users:
 function view(t,overrides={}){
  const auth=Vue.reactive({currentProjectId:1}),timers=new Map(),cleanups=[],data={rows:[task('pending')],fail:false},calls=[]
  const params={Vue:{...Vue,onUnmounted:fn=>cleanups.push(fn)},useAuthStore:()=>auth,useFeedback:()=>({showMessage(){},confirmAction:async()=>true}),listPerfTasks:async()=>{calls.push('list');if(overrides.list)return overrides.list();if(data.fail)throw Error('offline');return data.rows},createPerfTask:async()=>{},deletePerfTask:async()=>{},runPerfTask:async()=>{calls.push('run');data.rows=[task()];return task('queued')},stopPerfTask:async()=>{calls.push('stop');return task('cancelled',20)},listInterfaces:async()=>[],listCases:async()=>[],listScenarios:async()=>[],listEnvironments:async()=>[],METHODS:[],newPerfStep:()=>({}),scenarioSteps:()=>[],buildPerfPlan:()=>({}),EnvironmentSelect:null,Modal:null,setInterval:fn=>{timers.set(1,fn);return 1},clearInterval:id=>timers.delete(id)}
- Object.assign(params,{updatePerfTask:async()=>{},listPerfRuns:async()=>({total:0,items:[]}),getPerfRun:async()=>({result:{...task('done',100),users:2}}),clearPerfRuns:async()=>({deleted:1})},overrides.api||{})
+ Object.assign(params,{extractRuleRows,PERF_EXTRACT_OPTIONS:{},ExtractRulesEditor:null,updatePerfTask:async()=>{},listPerfRuns:async()=>({total:0,items:[]}),getPerfRun:async()=>({result:{...task('done',100),users:2}}),clearPerfRuns:async()=>({deleted:1})},overrides.api||{})
  const options=Function(...Object.keys(params),'const {ref,reactive,computed,onUnmounted,watch}=Vue;'+code)(...Object.values(params))
  const scope=Vue.effectScope(),state=scope.run(()=>options.setup({}, {expose(){}}))
  t.after(()=>{cleanups.forEach(fn=>fn());scope.stop()});return {state,auth,data,timers,calls}
@@ -66,6 +67,7 @@ test('configuration editing preserves raw body and declarative step settings',as
  assert.equal(state.steps.value[0].body,'not json');assert.equal(state.steps.value[0].body_type,'raw')
  assert.deepEqual(JSON.parse(state.steps.value[0].assertions),step.assertions)
  assert.deepEqual(JSON.parse(state.steps.value[0].params),{id:1})
+ assert.deepEqual(serializeExtractRules(state.steps.value[0].extract_rules),step.extract_rules)
  assert.equal(state.form.timeout_seconds,10);assert.equal(state.editingId.value,1)
 })
 

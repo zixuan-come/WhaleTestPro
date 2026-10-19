@@ -7,6 +7,7 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { cloneRequest, requestConfig, requestDraft, serializeRequest } from '../src/utils/requestConfig.js'
 import { pathParameterNames } from '../src/utils/pathParameters.js'
 import { interfaceResources } from '../src/utils/interfaceResources.js'
+import { extractRuleRows, serializeExtractRules } from '../src/utils/extractRules.js'
 
 function build(file) {
   const descriptor = parse(readFileSync(new URL(file, import.meta.url), 'utf8')).descriptor
@@ -62,7 +63,7 @@ test('response rendering preserves falsy JSON, text and safely escapes HTML', as
 })
 const order = { id: 81, name: '查询订单', method: 'GET', url: '/orders/{id}', path_params: { id: '1' }, headers: { 'X-Project-Id': '1' }, params: { page: 2 }, body: null }
 const other = { ...order, id: 82, name: '其他接口', path_params: { id: '9' } }
-const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, pathParameterNames }
+const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, pathParameterNames, extractRuleRows, serializeExtractRules }
 
 function workspace(t, run = async () => ({ response: { status_code: 200, body: { id: 1 } } })) {
   const calls = [], created = []
@@ -80,7 +81,7 @@ function cases(t, { embedded = true, create = async () => ({}) } = {}) {
     useExecutionEnvironment: () => ({ envs: Vue.ref([]), selectedEnv: Vue.ref('36'), loadEnvironments: async () => {} }),
     listCases: async id => { calls.push(['list', id]); return [] }, listInterfaces: async () => [order, other],
     createCase: async data => { calls.push(['create', data]); return create(data) },
-    updateCase: async (id, data) => { calls.push(['update', id, data]); return {} }, deleteCase: async () => {}, runCase: async () => ({}),
+    updateCase: async (id, data) => { calls.push(['update', id, data]); return {id,...data} }, deleteCase: async () => {}, runCase: async () => ({}),
     EnvironmentSelect: {}, Modal: {}, RequestEditor: {},
   })
   return { state, calls }
@@ -215,6 +216,20 @@ test('editing a legacy case retains inheritance until independent values are sel
   state.openEdit({ ...legacy, request_overrides: { path_params: { id: '3' } } })
   assert.equal(state.requestForm.value.pathParams.id, '3')
   assert.equal(state.requestForm.value.headers[0].key, 'X-Project-Id')
+})
+
+test('case extraction rows refill old rules, reject duplicates and explicitly clear saved rules', async t => {
+  const {state,calls}=cases(t)
+  const legacy={id:7,name:'创建订单',interface_id:81,expected_status:201,extract_rules:{order_id:'$.id'}}
+  state.openEdit(legacy)
+  assert.deepEqual(state.form.extract_rules,[{name:'order_id',path:'$.id'}])
+  state.form.extract_rules.push({name:'order_id',path:'$.other'})
+  await state.save();assert.match(state.formErr.value,/重复/);assert.equal(calls.length,0)
+  state.form.extract_rules=[{name:'order_id',path:'$.data.id'}]
+  await state.save();assert.deepEqual(calls.find(call=>call[0]==='update')[2].extract_rules,{order_id:'$.data.id'})
+  state.openEdit(legacy);state.form.extract_rules=[];await state.save()
+  assert.equal(calls.filter(call=>call[0]==='update').at(-1)[2].extract_rules,null)
+  assert.deepEqual(legacy.extract_rules,{order_id:'$.id'})
 })
 
 test('global case overview can still create and select another interface', async t => {
