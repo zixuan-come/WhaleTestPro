@@ -6,6 +6,7 @@ from app.core.variables import extract_match
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError
 from app.core.redaction import MASK, is_sensitive_source, mask_sensitive
+from app.core.json_compare import json_equal, json_contains
 
 
 _READ_ONLY_SQL = re.compile(r"^\s*select\b", re.IGNORECASE)
@@ -38,9 +39,9 @@ def run_assertions(response, assertions, db):
                 # Wildcards can select a secret without spelling its key.
                 sensitive = sensitive or is_sensitive_source(str(match.full_path))
             if a_type == "json_eq":
-                passed = actual == a["expected"]
+                passed = json_equal(actual, a["expected"])
             elif a_type == "json_contains":
-                passed = a["expected"] in actual
+                passed = json_contains(actual, a["expected"])
             elif a_type == "json_gt":
                 passed = actual > a["expected"]
             elif a_type == "json_lt":

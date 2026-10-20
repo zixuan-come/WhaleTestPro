@@ -13,7 +13,7 @@ from app.core.sql_runner import run_sql
 from app.services.project_notification import notify_regression
 from app.core.config import settings
 from app.core.metrics import regression_pass_rate, regression_coverage
-from app.core.circuit_breaker import get_breaker, CircuitBreakerOpen
+from app.core.circuit_breaker import get_breaker, target_breaker_key, CircuitBreakerOpen
 from app.core.redaction import MASK, is_sensitive_source, sensitive_strings, mask_sensitive as _mask_sensitive
 import json
 import requests
@@ -385,15 +385,21 @@ def run_chain(
 
 
 def _request(interface, **kwargs):
-    breaker = get_breaker(interface.id)
-    if not breaker.allow_request():
+    key = target_breaker_key(interface.id, kwargs.get("url"))
+    breaker = get_breaker(key) if key is not None else None
+    if breaker is not None and not breaker.allow_request():
         raise CircuitBreakerOpen(f"接口 {interface.id} 熔断打开，快速失败")
     try:
         kwargs.setdefault("timeout", settings.REQUEST_TIMEOUT_SECONDS)
         response = requests.request(method=interface.method, **kwargs)
-    except Exception:
-        breaker.record_failure()      # 连不上/超时 = 下游不可用
+    except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError):
+        if breaker is not None:
+            breaker.record_failure()      # 连不上/超时/响应中断 = 下游不可用
         raise
+    # Invalid headers, URLs, JSON serialization and other local configuration
+    # errors propagate without changing a downstream's health state.
+    if breaker is None:
+        return response
     if response.status_code >= 500:
         breaker.record_failure()      # 5xx = 下游崩了
     else:

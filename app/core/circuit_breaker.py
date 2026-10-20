@@ -1,5 +1,7 @@
 import time
+from collections.abc import Hashable
 from enum import Enum
+from urllib.parse import urlsplit
 
 
 class State(str, Enum):
@@ -55,10 +57,25 @@ class CircuitBreakerOpen(Exception):
     pass
 
 
-_breakers: dict[int, CircuitBreaker] = {}
+_breakers: dict[Hashable, CircuitBreaker] = {}
 
 
-def get_breaker(interface_id: int) -> CircuitBreaker:
+def target_breaker_key(interface_id: int, url: str):
+    """Partition by the downstream origin, never credentials or request data."""
+    if not isinstance(url, str):
+        return None
+    try:
+        target = urlsplit(url)
+        scheme, host = target.scheme.lower(), target.hostname
+        port = target.port
+    except ValueError:
+        return None
+    if scheme not in {"http", "https"} or not host:
+        return None
+    return (interface_id, scheme, host.lower(), port if port is not None else (443 if scheme == "https" else 80))
+
+
+def get_breaker(interface_id: Hashable) -> CircuitBreaker:
     if interface_id not in _breakers:
         _breakers[interface_id] = CircuitBreaker()
     return _breakers[interface_id]

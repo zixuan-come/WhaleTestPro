@@ -6,6 +6,7 @@ from time import perf_counter
 from jsonschema import validate
 from app.core.variables import extract
 from app.schemas.perf_plan import PerfLoadConfig, validate_path
+from app.core.json_compare import json_equal, json_contains
 
 
 def render_value(value, context):
@@ -34,9 +35,9 @@ def check_assertions(response, assertions, context):
             actual = response.headers.get(assertion.path)
         else:
             actual = response.elapsed.total_seconds() * 1000
-        passed = {"json_eq": lambda: actual == expected,
+        passed = {"json_eq": lambda: json_equal(actual, expected),
                   "header_eq": lambda: actual == expected,
-                  "json_contains": lambda: expected in actual,
+                  "json_contains": lambda: json_contains(actual, expected),
                   "header_contains": lambda: expected in actual,
                   "json_gt": lambda: actual > expected,
                   "json_lt": lambda: actual < expected,
