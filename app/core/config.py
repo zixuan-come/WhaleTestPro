@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Only these immediate proxy peers may supply forwarded login IPs.
+    # Compose uses the frontend service DNS name, never a public wildcard.
+    TRUSTED_PROXY_HOSTS: str = ""
     CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
     FEISHU_WEBHOOK: str = ""
     LOCUST_MASTER_URL: str = "http://localhost:8089"

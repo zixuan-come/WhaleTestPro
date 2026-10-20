@@ -5,6 +5,8 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.blacklist import is_blacklisted
+from app.core.client_ip import get_client_ip
+from app.core.config import settings
 from app.core.ratelimit import check_rate_limit
 from app.core.security import decode_access_token
 from app.database import get_db
@@ -37,7 +39,7 @@ def get_current_user(
 
 
 def login_rate_limit(request: Request) -> None:
-    ip = request.client.host
+    ip = get_client_ip(request, settings.TRUSTED_PROXY_HOSTS)
     if not check_rate_limit(f"login:{ip}", limit=5, window_seconds=60):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

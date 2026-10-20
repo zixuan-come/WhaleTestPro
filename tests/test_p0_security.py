@@ -366,21 +366,21 @@ def test_perf_cancel_marks_task_cancelled(monkeypatch):
     monkeypatch.setattr(perf_service.project_repo, 'db_lock_project', lambda *_: object())
     monkeypatch.setattr(perf_service.perf_repo, 'db_get_for_update', lambda *_: task)
 
-    task = SimpleNamespace(id=8, status='running')
+    task = SimpleNamespace(id=8, status='running', celery_task_id='cancel-current', duration=30)
     updates = []
     fake_redis = _FakeRedis()
     monkeypatch.setattr(perf_service.perf_repo, 'db_get', lambda db, task_id, project_id: task)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update', lambda db, task_id, project_id, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
-    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: (updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status))) if task.status == expected_status else None)
+    monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status', lambda db, task_id, project_id, expected_status, **fields: (updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status), celery_task_id=task.celery_task_id)) if task.status == expected_status else None)
     monkeypatch.setattr(perf_service.perf_repo, 'db_update_if_status_in', lambda db, task_id, project_id, expected_statuses, **fields: updates.append(fields) or SimpleNamespace(id=8, status=fields.get('status', task.status)))
     monkeypatch.setattr(perf_service.redis, 'from_url', lambda url: fake_redis)
     monkeypatch.setattr(perf_service.requests, 'get', lambda *args, **kwargs: SimpleNamespace())
 
-    result = perf_service.s_cancel(object(), 8, 11)
+    result = perf_service.s_cancel(SimpleNamespace(info={}), 8, 11)
 
     assert result.status == 'cancelled'
     assert updates[-1]['status'] == 'cancelled'
-    assert fake_redis.values['locust:cancel:11:8'] == '1'
+    assert fake_redis.values['locust:cancel:11:8:cancel-current'] == '1'
 
 
 def test_perf_mark_queued_rejects_second_run(monkeypatch):

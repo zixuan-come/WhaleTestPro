@@ -51,6 +51,7 @@ services:
     restart: unless-stopped
     env_file: .env                            # 注入 SECRET_KEY
     environment:
+      TRUSTED_PROXY_HOSTS: frontend
       LOCUST_MASTER_URL: http://locust-master:8089
       LOCUST_CONTROL_TOKEN: ${LOCUST_CONTROL_TOKEN:?请在.env配置独立的Locust控制凭证}
       # 覆盖 .env 里指向 127.0.0.1 的连接串：容器之间用「服务名」当主机名

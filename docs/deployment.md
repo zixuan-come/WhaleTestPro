@@ -17,6 +17,7 @@ Docker Compose 会启动以下服务:
 
 MySQL 和 Redis 只加入 Compose 内部网络,不映射公网端口。生产演示时建议安全组只开放 SSH 和前端 `8080`;其余管理端口按需限制来源 IP。
 
+
 ## 服务器准备
 
 确认服务器已安装 Git、Docker Engine 和 Docker Compose 插件:
@@ -85,6 +86,10 @@ grep -E '^[A-Z_][A-Z0-9_]*=' .env | cut -d= -f1
 ```
 
 Compose 会在容器内组装主库、影子库、Redis 和 RabbitMQ 连接地址,无需在 `.env` 重复配置 `DATABASE_URL`。
+
+登录限流默认由 Compose 设置 `TRUSTED_PROXY_HOSTS=frontend`，仅接受该服务 DNS 解析出的直接代理地址所提供的 `X-Forwarded-For`。这样通过前端访问的不同用户有各自的限流额度，而直连后端的客户端不能伪造转发头选择其他额度。代理容器地址会定期重新解析，不依赖固定 Docker 子网。脱离 Compose 部署时，可将该变量设为实际受信任的代理 IP、CIDR 或 DNS 名称，多个值使用逗号分隔；留空则使用直接连接地址。不要将 Uvicorn 的 `FORWARDED_ALLOW_IPS` 配为 `*` 并同时公开后端端口。
+
+限流计数和过期时间通过 Redis 原子脚本写入；升级后遇到旧版本遗留的无过期计数键时会自动补齐过期时间，不需要清空 Redis。
 
 飞书 Webhook 改为在「项目管理 → 通知设置」由项目所属团队所有者或管理员维护，不再使用全局 `FEISHU_WEBHOOK`。升级时运行 016_project_notification 增量迁移，配置初始为空且不会从旧变量复制。凭据使用 `SECRET_KEY` 派生的项目密钥加密；保留该部署密钥，轮换后需要重新保存通知凭据。操作说明见[项目飞书通知配置](项目飞书通知配置.md)。
 

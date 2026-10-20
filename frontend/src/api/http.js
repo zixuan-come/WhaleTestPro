@@ -35,8 +35,11 @@ http.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       const auth = useAuthStore()
-      auth.logout()
-      if (location.hash !== '#/login') location.hash = '#/login'
+      // A request from a previous login must not log out the current account.
+      if (auth.token && err.config?.headers?.Authorization === `Bearer ${auth.token}`) {
+        auth.logout()
+        if (location.hash !== '#/login') location.hash = '#/login'
+      }
     }
     const payload = err.response?.data || {}
     const detail = payload.detail

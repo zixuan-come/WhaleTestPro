@@ -20,6 +20,7 @@ class SecurityCache:
         self.failure = {}
         self.keys = set()
         self.count = 0
+        self.expiring = False
 
     def operation(self, name, *args, **kwargs):
         self.calls.append((name, args, kwargs))
@@ -42,7 +43,15 @@ class SecurityCache:
 
     def expire(self, key, seconds):
         self.operation("expire", key, seconds)
+        self.expiring = True
         return True
+
+    def eval(self, script, key_count, key, seconds):
+        self.operation("eval", script, key_count, key, seconds)
+        count = self.incr(key)
+        if not self.expiring:
+            self.expire(key, seconds)
+        return count
 
 
 @pytest.fixture
@@ -161,6 +170,25 @@ def test_healthy_limit_keeps_existing_429_semantics(auth_app):
     assert client.post("/auth/login", json=credentials).status_code == 429
     assert len(logins) == 5
     assert sum(call[0] == "expire" for call in cache.calls) == 1
+
+
+def test_existing_counter_without_expiry_is_repaired(auth_app):
+    _, cache, _, _, _ = auth_app
+    cache.count = 3
+    assert ratelimit.check_rate_limit('synthetic-orphan', 5, 60) is True
+    assert cache.expiring is True
+    assert sum(call[0] == 'eval' for call in cache.calls) == 1
+
+
+def test_limit_expiry_failure_can_recover_on_next_atomic_attempt(auth_app):
+    _, cache, _, _, _ = auth_app
+    cache.failure['expire'] = ConnectionError('synthetic-expiry-outage')
+    with pytest.raises(HTTPException) as error:
+        ratelimit.check_rate_limit('synthetic-recovery', 5, 60)
+    assert error.value.status_code == 503 and cache.expiring is False
+    cache.failure.clear()
+    assert ratelimit.check_rate_limit('synthetic-recovery', 5, 60) is True
+    assert cache.expiring is True
 
 
 def test_missing_user_remains_unauthorized(auth_app):

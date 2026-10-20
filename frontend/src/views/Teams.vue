@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { listTeams, listTeamMembers, searchTeamMemberCandidates, updateTeamMemberRole, removeTeamMember, updateTeam, transferTeamOwnership, leaveTeam, deleteTeam, inviteTeamMember, listTeamInvitations, respondTeamInvitation, listTeamPermissions, setTeamPermission } from '../api/team'
 import { useFeedback } from '../composables/feedback'
@@ -22,6 +22,9 @@ const addRole = ref('member')
 const adding = ref(false)
 const searching = ref(false)
 const permissionSaving = ref('')
+const detailsLoading = ref(false)
+const detailsReady = ref(false)
+const detailsError = ref('')
 const transferTargetId = ref(null)
 const editName = ref('')
 const editDescription = ref('')
@@ -30,6 +33,12 @@ const savingTeamInfo = ref(false)
 const teamNameInput = ref(null)
 const editTeamButton = ref(null)
 const descriptionLength = computed(() => Array.from(editDescription.value).length)
+const accountKey = computed(() => `${auth.username || ''}:${auth.token || ''}`)
+const teamKey = computed(() => `${accountKey.value}:${auth.currentTeamId}`)
+let detailsVersion = 0, searchVersion = 0, teamsVersion = 0, invitationsVersion = 0, teamGeneration = 0, disposed = false
+const validAccount = key => !disposed && key === accountKey.value
+const captureTeam = () => `${teamGeneration}:${teamKey.value}`
+const validTeam = key => !disposed && key === captureTeam()
 
 const permissionOptions = [
   { key: 'interface.write', label: '接口管理', description: '新增、修改和删除接口与分类' },
@@ -67,7 +76,13 @@ function cancelTeamEdit() {
   nextTick(() => editTeamButton.value?.focus())
 }
 
-watch(() => [auth.currentTeamId, auth.currentTeamRole], () => resetTeamEdit())
+watch(() => [teamKey.value, auth.currentTeamRole], () => {
+  teamGeneration++; detailsVersion++; searchVersion++
+  resetTeamEdit(); members.value = []; applyPermissionRows(); transferTargetId.value = null
+  keyword.value = ''; candidates.value = []; selected.value = null; searching.value = false
+  adding.value = false; permissionSaving.value = ''
+  detailsLoading.value = false; detailsReady.value = false; detailsError.value = ''
+}, { flush: 'sync' })
 
 function applyPermissionRows(rows = []) {
   const next = Object.fromEntries(permissionOptions.map(option => [option.key, false]))
@@ -78,13 +93,16 @@ function applyPermissionRows(rows = []) {
 }
 
 async function loadInvitations(page = invitationPage.value) {
+  const version = ++invitationsVersion, context = accountKey.value
   try {
     const result = await listTeamInvitations({ page, page_size: 20, status: 'pending' })
+    if (version !== invitationsVersion || !validAccount(context)) return
     invitations.value = result.items
     invitationPage.value = result.page
     invitationTotal.value = result.total
     invitationTotalPages.value = result.total_pages
   } catch {
+    if (version !== invitationsVersion || !validAccount(context)) return
     invitations.value = []
     invitationTotal.value = 0
     invitationTotalPages.value = 0
@@ -92,70 +110,102 @@ async function loadInvitations(page = invitationPage.value) {
 }
 
 async function respondInvitation(invite, accept) {
+  const context = accountKey.value
   try {
     await respondTeamInvitation(invite.id, accept)
+    if (!validAccount(context)) return
     if (invitations.value.length === 1 && invitationPage.value > 1) invitationPage.value -= 1
     await loadInvitations()
     if (accept) await load()
-  } catch (e) { showMessage(e.message || '邀请处理失败', 'error') }
+  } catch (e) { if (validAccount(context)) showMessage(e.message || '邀请处理失败', 'error') }
 }
 
 async function loadTeamDetails(team) {
+  const version = ++detailsVersion, context = captureTeam()
+  detailsLoading.value = Boolean(team); detailsReady.value = false; detailsError.value = ''
   resetTeamEdit(team)
+  members.value = []; applyPermissionRows(); transferTargetId.value = null
   if (!team) {
     members.value = []
     applyPermissionRows()
     return
   }
-  const [memberRows, permissionRows] = await Promise.all([
-    listTeamMembers(team.id),
-    listTeamPermissions(team.id),
-  ])
-  members.value = memberRows
-  applyPermissionRows(permissionRows)
-  editName.value = team.name
-  editDescription.value = team.description || ''
-  transferTargetId.value = members.value.find(member => member.role !== 'owner')?.user_id || null
+  try {
+    const [memberRows, permissionRows] = await Promise.all([
+      listTeamMembers(team.id),
+      listTeamPermissions(team.id),
+    ])
+    if (version !== detailsVersion || !validTeam(context) || team.id !== auth.currentTeamId) return
+    members.value = memberRows
+    applyPermissionRows(permissionRows)
+    editName.value = team.name
+    editDescription.value = team.description || ''
+    transferTargetId.value = members.value.find(member => member.role !== 'owner')?.user_id || null
+    detailsReady.value = true
+  } catch (failure) {
+    if (version !== detailsVersion || !validTeam(context)) return
+    detailsError.value = failure.message || '团队权限加载失败，请重试。'
+    throw failure
+  } finally {
+    if (version === detailsVersion && validTeam(context)) detailsLoading.value = false
+  }
 }
 
 async function load() {
+  const version = ++teamsVersion, context = accountKey.value
   loading.value = true
   error.value = ''
   try {
-    teams.value = await listTeams()
+    const rows = await listTeams()
+    if (version !== teamsVersion || !validAccount(context)) return
+    teams.value = rows
     const team = teams.value.find(item => item.id === auth.currentTeamId) || teams.value[0] || null
     if (team) auth.setTeam(team.id, team.name, team.role || '')
+    else { auth.setTeam(null, '', ''); auth.setProject(null, '') }
     await loadTeamDetails(team)
-  } catch (e) { error.value = e.message || '加载失败' } finally { loading.value = false }
+  } catch (e) { if (version === teamsVersion && validAccount(context)) error.value = e.message || '加载失败' }
+  finally { if (version === teamsVersion && validAccount(context)) loading.value = false }
 }
 
 async function switchTeam(team) {
   auth.setTeam(team.id, team.name, team.role || '')
   auth.setProject(null, '')
-  await loadTeamDetails(team)
+  const context = captureTeam()
+  error.value = ''
+  try { await loadTeamDetails(team) }
+  catch (e) { if (validTeam(context)) error.value = e.message || '团队详情加载失败' }
 }
 
 async function search() {
+  const version = ++searchVersion, context = captureTeam()
   selected.value = null
   if (!canManage.value || keyword.value.trim().length < 2 || !currentTeam.value) {
     candidates.value = []
     return
   }
   searching.value = true
-  try { candidates.value = await searchTeamMemberCandidates(currentTeam.value.id, { keyword: keyword.value.trim(), limit: 20 }) } catch { candidates.value = [] } finally { searching.value = false }
+  try {
+    const rows = await searchTeamMemberCandidates(currentTeam.value.id, { keyword: keyword.value.trim(), limit: 20 })
+    if (version === searchVersion && validTeam(context)) candidates.value = rows
+  } catch { if (version === searchVersion && validTeam(context)) candidates.value = [] }
+  finally { if (version === searchVersion && validTeam(context)) searching.value = false }
 }
 
 async function addMember() {
-  if (!selected.value || !currentTeam.value) return
+  if (!selected.value || !currentTeam.value || adding.value) return
+  const context = captureTeam(), teamId = currentTeam.value.id
   adding.value = true
   try {
-    await inviteTeamMember(currentTeam.value.id, { user_id: selected.value.id, role: addRole.value })
+    await inviteTeamMember(teamId, { user_id: selected.value.id, role: addRole.value })
+    if (!validTeam(context)) return
     showMessage('邀请已发送')
     keyword.value = ''
     selected.value = null
     candidates.value = []
-    members.value = await listTeamMembers(currentTeam.value.id)
-  } catch (e) { showMessage(e.message || '添加失败', 'error') } finally { adding.value = false }
+    const rows = await listTeamMembers(teamId)
+    if (validTeam(context)) members.value = rows
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '添加失败', 'error') }
+  finally { if (validTeam(context)) adding.value = false }
 }
 
 async function saveTeamInfo() {
@@ -165,9 +215,11 @@ async function saveTeamInfo() {
     return
   }
   const teamId = editingTeamId.value
+  const account = accountKey.value
   savingTeamInfo.value = true
   try {
     const updated = await updateTeam(teamId, { name: editName.value.trim(), description: editDescription.value.trim() || null })
+    if (!validAccount(account)) return
     const index = teams.value.findIndex(team => team.id === updated.id)
     if (index >= 0) teams.value[index] = { ...teams.value[index], ...updated }
     if (auth.currentTeamId === teamId) auth.setTeam(updated.id, updated.name, auth.currentTeamRole)
@@ -175,77 +227,102 @@ async function saveTeamInfo() {
       resetTeamEdit(updated)
       nextTick(() => editTeamButton.value?.focus())
     }
-    showMessage('团队信息已更新')
-  } catch (e) { showMessage(e.message || '更新失败', 'error') }
+    if (auth.currentTeamId === teamId) showMessage('团队信息已更新')
+  } catch (e) { if (validAccount(account)) showMessage(e.message || '更新失败', 'error') }
   finally { savingTeamInfo.value = false }
 }
 
 async function transferOwner() {
+  const context = captureTeam(), teamId = currentTeam.value?.id
   const target = members.value.find(member => member.user_id === Number(transferTargetId.value) && member.role !== 'owner')
   if (!currentTeam.value || !target || !(await confirmAction(`确认将团队所有权转让给“${target.user.username}”吗？`))) return
+  if (!validTeam(context)) return
   try {
-    await transferTeamOwnership(currentTeam.value.id, { user_id: target.user_id })
+    await transferTeamOwnership(teamId, { user_id: target.user_id })
+    if (!validTeam(context)) return
     showMessage('所有权已转让')
     await load()
-  } catch (e) { showMessage(e.message || '转让失败', 'error') }
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '转让失败', 'error') }
 }
 
 async function leaveCurrentTeam() {
+  const context = captureTeam(), teamId = currentTeam.value?.id
   if (!currentTeam.value || auth.currentTeamRole === 'owner' || !(await confirmAction(`确认退出团队“${currentTeam.value.name}”吗？`))) return
+  if (!validTeam(context)) return
   try {
-    await leaveTeam(currentTeam.value.id)
+    await leaveTeam(teamId)
+    if (!validTeam(context)) return
     auth.setTeam(null, '', '')
     auth.setProject(null, '')
     showMessage('已退出团队')
     await load()
-  } catch (e) { showMessage(e.message || '退出失败', 'error') }
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '退出失败', 'error') }
 }
 
 async function deleteCurrentTeam() {
+  const context = captureTeam(), teamId = currentTeam.value?.id
   if (!currentTeam.value || auth.currentTeamRole !== 'owner' || !(await confirmAction(`确认删除团队“${currentTeam.value.name}”吗？团队下不能有项目。`))) return
+  if (!validTeam(context)) return
   try {
-    await deleteTeam(currentTeam.value.id)
+    await deleteTeam(teamId)
+    if (!validTeam(context)) return
     auth.setTeam(null, '', '')
     auth.setProject(null, '')
     showMessage('团队已删除')
     await load()
-  } catch (e) { showMessage(e.message || '删除失败', 'error') }
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '删除失败', 'error') }
 }
 
 async function changeRole(member, role) {
   if (!currentTeam.value || member.role === role) return
+  const context = captureTeam()
   try {
     const updated = await updateTeamMemberRole(currentTeam.value.id, member.id, { role })
+    if (!validTeam(context)) return
     const index = members.value.findIndex(item => item.id === member.id)
     if (index >= 0) members.value[index] = updated
-  } catch (e) { showMessage(e.message || '角色更新失败', 'error') }
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '角色更新失败', 'error') }
 }
 
 async function remove(member) {
+  const context = captureTeam(), teamId = currentTeam.value?.id
   if (!currentTeam.value || member.role === 'owner' || !(await confirmAction(`确认移除成员“${member.user.username}”吗？`))) return
+  if (!validTeam(context)) return
   try {
-    await removeTeamMember(currentTeam.value.id, member.id)
+    await removeTeamMember(teamId, member.id)
+    if (!validTeam(context)) return
     members.value = members.value.filter(item => item.id !== member.id)
     showMessage('成员已移除')
-  } catch (e) { showMessage(e.message || '移除失败', 'error') }
+  } catch (e) { if (validTeam(context)) showMessage(e.message || '移除失败', 'error') }
 }
 
 async function togglePermission(option, event) {
-  if (!currentTeam.value || !canManage.value) return
+  if (!currentTeam.value || !canManage.value || permissionSaving.value || detailsLoading.value || !detailsReady.value) return
+  const context = captureTeam(), readVersion = detailsVersion
   const previous = Boolean(permissions.value[option.key])
   const enabled = event.target.checked
   permissions.value = { ...permissions.value, [option.key]: enabled }
   permissionSaving.value = option.key
   try {
     await setTeamPermission(currentTeam.value.id, { role: 'member', permission: option.key, enabled })
+    if (!validTeam(context)) return
+    permissions.value = { ...permissions.value, [option.key]: enabled }
+    // A same-team refresh may have read the pre-save value while this write was pending.
+    if (readVersion !== detailsVersion) {
+      try { await loadTeamDetails(currentTeam.value) }
+      catch { if (validTeam(context)) showMessage('权限已保存，请重新加载以确认最新权限。', 'error') }
+      if (!validTeam(context)) return
+    }
     showMessage(`${option.label}权限已更新`)
   } catch (e) {
+    if (!validTeam(context)) return
     permissions.value = { ...permissions.value, [option.key]: previous }
     showMessage(e.message || '权限更新失败', 'error')
-  } finally { permissionSaving.value = '' }
+  } finally { if (validTeam(context)) permissionSaving.value = '' }
 }
 
 onMounted(() => { load(); loadInvitations() })
+onBeforeUnmount(() => { disposed = true; detailsVersion++; searchVersion++; teamsVersion++; invitationsVersion++ })
 </script>
 
 <template>
@@ -332,10 +409,12 @@ onMounted(() => { load(); loadInvitations() })
         <section v-if="currentTeam" class="panel permission-panel">
           <div class="panel-head"><span>普通成员写权限</span><span class="count">Owner / Admin 默认拥有全部权限</span></div>
           <p class="permission-description">读取和执行权限默认开放给团队成员；下面仅控制普通成员能否修改对应模块。</p>
+          <p v-if="detailsLoading" class="permission-description" role="status">正在加载团队权限…</p>
+          <p v-else-if="detailsError" class="permission-description err" role="alert">{{ detailsError }} <button type="button" class="btn btn-ghost" @click="switchTeam(currentTeam)">重试</button></p>
           <div class="permission-grid">
             <label v-for="option in permissionOptions" :key="option.key" class="permission-card" :class="{ disabled: !canManage }">
               <span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span>
-              <input type="checkbox" :checked="permissions[option.key]" :disabled="!canManage || permissionSaving === option.key" @change="togglePermission(option, $event)" />
+              <input type="checkbox" :checked="permissions[option.key]" :disabled="!canManage || !!permissionSaving || detailsLoading || !detailsReady" @change="togglePermission(option, $event)" />
             </label>
           </div>
         </section>
