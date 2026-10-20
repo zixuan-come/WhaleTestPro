@@ -245,7 +245,8 @@ def perf_control(monkeypatch):
     db.commit()
     cache = _ControlRedis()
     monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
-    monkeypatch.setattr(perf.time, "sleep", lambda _: None)
+    from tests.perf_clock import install_clock
+    cache.clock = install_clock(monkeypatch, perf)
     response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
         "stats": [{"name": "Aggregated", "num_requests": 1}],
         "lease": cache.get(perf.RUN_LOCK_KEY), "configuration_failures": 0})

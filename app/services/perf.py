@@ -4,6 +4,7 @@ from html import unescape
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from time import monotonic
 
 import redis
 import requests
@@ -63,6 +64,10 @@ def _run_id(project_id: int, task_id: int) -> str:
 
 def _lease_id(run_id: str, celery_task_id: str) -> str:
     return f"{run_id}:{celery_task_id}"
+
+
+def _cancel_key(project_id: int, task_id: int, execution_id: str) -> str:
+    return f"locust:cancel:{project_id}:{task_id}:{execution_id}"
 
 
 def _target_path_key(run_id: str) -> str:
@@ -224,9 +229,8 @@ def _validate_iterations(iteration_stats, lease_id: str):
 MAX_LIVE_HISTORY_SAMPLES = 600
 
 
-def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples, *, allow_empty=False):
+def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples, *, allow_empty=False, elapsed_seconds=None):
     """Pure final-stat mapping; stopped counters must not replace live RPS."""
-    rps = live_rps if live_rps is not None else stats.get("total_rps")
     fail_ratio = stats.get("fail_ratio")
     aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
     request_count = max(aggregate.get("num_requests", 0) or 0,
@@ -234,11 +238,13 @@ def _result_statistics(stats, live_rps, live_endpoint_rps, history_samples, *, a
                             if row.get("name") != "Aggregated"))
     if request_count <= 0 and not allow_empty:
         raise PerfControlUnavailableError("Locust 未产生任何请求，压测未有效执行；请检查 Worker 和目标配置")
+    elapsed = elapsed_seconds if type(elapsed_seconds) in (int, float) and elapsed_seconds > 0 else None
+    rps = live_rps if live_rps is not None else request_count / elapsed if elapsed else stats.get("total_rps")
     avg = aggregate.get("avg_response_time")
     p95 = aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile"))
     p99 = aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))
     request_stats = [
-        {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": live_endpoint_rps.get((row.get("method"), row.get("name")), row.get("current_rps", row.get("rps"))), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
+        {"name": row.get("name"), "method": row.get("method"), "num_requests": row.get("num_requests", 0), "num_failures": row.get("num_failures", 0), "rps": live_endpoint_rps.get((row.get("method"), row.get("name")), (row.get("num_requests", 0) or 0) / elapsed if elapsed else row.get("current_rps", row.get("rps"))), "avg_response_ms": row.get("avg_response_time"), "p95_response_ms": row.get("response_time_percentile_0.95", row.get("95th_percentile")), "p99_response_ms": row.get("response_time_percentile_0.99", row.get("99th_percentile"))}
         for row in stats.get("stats", []) if row.get("name") != "Aggregated"
     ]
     requests_by_endpoint = {(row["method"], row["name"]): row["num_requests"] for row in request_stats}
@@ -327,10 +333,11 @@ def _run(
         )
         raise PerfRunBusyError("Locust master 已被其他压测任务占用")
 
-    cancel_key = f"locust:cancel:{project_id}:{task_id}"
+    cancel_key = _cancel_key(project_id, task_id, message_id)
     base = settings.LOCUST_MASTER_URL
     stats = {}
     history_samples = []
+    live_rps, live_endpoint_rps = None, {}
     started = False
     stopped = False
     claimed = False
@@ -388,6 +395,8 @@ def _run(
             # locks until it returns so cancellation/recovery cannot admit a
             # newer run that this old HTTP request would subsequently overwrite.
             started = True
+            run_started = monotonic()
+            deadline = run_started + task.duration
             response = requests.post(f"{base}/swarm", data={
                 "user_count": task.users,
                 "spawn_rate": task.spawn_rate,
@@ -398,26 +407,33 @@ def _run(
             if response.json().get("success") is False:
                 raise PerfControlUnavailableError("Locust 未接受启动请求")
 
-        elapsed = 0
-        while elapsed < task.duration:
+        while monotonic() < deadline:
             if _decode_redis_value(redis_client.get(RUN_LOCK_KEY)) != lease_id:
                 raise RuntimeError("压测执行锁已丢失")
             if redis_client.get(cancel_key):
                 _stop_owned_run(redis_client, lease_id)
                 stopped = True
                 return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="cancelled") or perf_repo.db_get(db, task_id, project_id)
-            pause = max(0.01, min(2, settings.PERF_HEARTBEAT_TIMEOUT_SECONDS / 4))
+            pause = min(max(0.01, min(2, settings.PERF_HEARTBEAT_TIMEOUT_SECONDS / 4)),
+                        max(0, deadline - monotonic()))
             time.sleep(pause)
-            elapsed += pause
             heartbeat()
             stats = _control_get_json(base, "/stats/requests")
+            sampled_at, sampled_elapsed = _utcnow(), monotonic() - run_started
             heartbeat()  # Do not stack two blocking control calls under one heartbeat.
             iteration_stats = _control_get_json(base, "/whale/iterations")
             heartbeat()
             _validate_iterations(iteration_stats, lease_id)
+            # Counters collected after the real deadline belong to finalization,
+            # not a live throughput sample (the master may already have stopped).
+            if sampled_elapsed > task.duration or stats.get("state") in {"stopped", "stopping"}:
+                continue
+            live_rps = stats.get("total_rps")
+            live_endpoint_rps = {(row.get("method"), row.get("name")): row.get("current_rps", row.get("rps"))
+                                 for row in stats.get("stats", [])}
             aggregate = next((row for row in stats.get("stats", []) if row.get("name") == "Aggregated"), {})
             transactions = transaction_sample(iteration_stats, history_samples[-1] if history_samples else None)
-            history_samples.append({"elapsed_s": elapsed, "sampled_at": _utcnow().isoformat() + "Z", "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
+            history_samples.append({"elapsed_s": sampled_elapsed, "sampled_at": sampled_at.isoformat() + "Z", "rps": stats.get("total_rps") or 0, "fail_ratio": stats.get("fail_ratio") or 0, "users": stats.get("user_count") or 0, "avg_response_ms": aggregate.get("avg_response_time"), "p95_response_ms": aggregate.get("response_time_percentile_0.95", aggregate.get("95th_percentile")), "p99_response_ms": aggregate.get("response_time_percentile_0.99", aggregate.get("99th_percentile"))})
             history_samples[-1].update(transactions)
             # Bound repeated JSON writes on long runs; request counters remain cumulative.
             del history_samples[:-MAX_LIVE_HISTORY_SAMPLES]
@@ -438,9 +454,6 @@ def _run(
 
         # Final counters include late worker reports, but stopped instantaneous
         # RPS is not a replacement for the last live sample shown in history.
-        live_rps = stats.get("total_rps")
-        live_endpoint_rps = {(row.get("method"), row.get("name")): row.get("current_rps", row.get("rps"))
-                             for row in stats.get("stats", [])}
         heartbeat()
         _stop_owned_run(redis_client, lease_id)
         stopped = True
@@ -454,7 +467,8 @@ def _run(
         perf_repo.db_update_if_status(db, task_id, project_id, "running", iteration_stats=iteration_stats)
         stats = _control_get_json(base, "/stats/requests")
         heartbeat()
-        result_stats = _result_statistics(stats, live_rps, live_endpoint_rps, history_samples)
+        result_stats = _result_statistics(stats, live_rps, live_endpoint_rps, history_samples,
+            elapsed_seconds=iteration_stats.get("elapsed_seconds") or min(monotonic() - run_started, task.duration))
         finished_at = _utcnow()
         return perf_repo.db_update_if_status(db, task_id, project_id, "running", status="done", heartbeat_at=finished_at, finished_at=finished_at, failure_reason=None, **result_stats)
     except Exception as exc:
@@ -519,6 +533,7 @@ def s_mark_queued(
             raise PerfRunBusyError("已有压测任务正在排队或运行")
         perf_repo._sync_run(db, task_id, project_id)
         redis_client.delete(f"locust:cancel:{project_id}:{task_id}")
+        redis_client.delete(_cancel_key(project_id, task_id, celery_task_id))
         reset = {field: None for field in RESULT_FIELDS if field not in {
             "status", "celery_task_id", "queued_at"}}
         updated = perf_repo.db_update_if_status(
@@ -555,40 +570,54 @@ def s_cancel(db: Session, task_id: int, project_id: int, execution_id: str | Non
         raise PerfRunBusyError("执行记录已变化，请刷新后重试")
     if task.status not in {"queued", "running"}:
         return task
+    # Keep the admitted generation even if a competing request completes this
+    # execution and starts another after a commit. Every CAS is fenced by it.
+    admitted_execution = task.celery_task_id
+    message_id = admitted_execution or "legacy"
     redis_client = redis.from_url(settings.REDIS_URL)
     # Only a successful queued -> cancelled CAS proves no Worker has claimed
     # the task. A stale queued snapshot must never free a running Worker's lease.
-    result = perf_repo.db_update_if_status(
-        db,
-        task_id,
-        project_id,
-        "queued",
-        status="cancelled",
-        finished_at=_utcnow(),
-        failure_reason=None,
-    )
-    run_id = _run_id(project_id, task_id)
-    if result is not None:
-        _release_run_lock(redis_client, run_id, _lease_id(run_id, getattr(task, "celery_task_id", None) or "legacy"))
-        return result
-    redis_client.set(f"locust:cancel:{project_id}:{task_id}", "1", ex=86400)
-    result = perf_repo.db_update_if_status(
-        db, task_id, project_id, "running", status="cancelled",
-        finished_at=_utcnow(), failure_reason=None,
-    )
-    # A running launch may not have published ACTIVE yet. Its Worker (or the
-    # serialized reconciler) stops/cleans up before releasing the execution lease.
-    return result or perf_repo.db_get(db, task_id, project_id)
+    previous_owner = db.info.get("perf_execution")
+    db.info["perf_execution"] = (task_id, project_id, admitted_execution)
+    try:
+        result = perf_repo.db_update_if_status(
+            db, task_id, project_id, "queued", rollback_on_miss=False,
+            status="cancelled", finished_at=_utcnow(), failure_reason=None,
+        )
+        run_id = _run_id(project_id, task_id)
+        if result is not None:
+            _release_run_lock(redis_client, run_id, _lease_id(run_id, message_id))
+            return result
+        # A missed queued CAS must not release the admission row locks before
+        # cancelling running. The flag is also private to this execution ID.
+        redis_client.set(_cancel_key(project_id, task_id, message_id), "1", ex=_run_ttl(task.duration))
+        result = perf_repo.db_update_if_status(
+            db, task_id, project_id, "running", status="cancelled",
+            finished_at=_utcnow(), failure_reason=None,
+        )
+        current = result or perf_repo.db_get(db, task_id, project_id)
+        if current is not None and current.celery_task_id != admitted_execution:
+            raise PerfRunBusyError("执行记录已变化，请刷新后重试")
+        # The Worker/reconciler owns master cleanup, including an in-flight launch.
+        return current
+    finally:
+        if previous_owner is None:
+            db.info.pop("perf_execution", None)
+        else:
+            db.info["perf_execution"] = previous_owner
 
 
 
 
-def s_mark_failed(db: Session, task_id: int, project_id: int):
+def s_mark_failed(db: Session, task_id: int, project_id: int, celery_task_id: str):
+    if not celery_task_id:
+        raise ValueError("入队失败补偿必须指定原执行 ID")
     result = perf_repo.db_update_if_status_in(
         db,
         task_id,
         project_id,
         ("queued", "running"),
+        execution_id=celery_task_id,
         status="failed",
         finished_at=_utcnow(),
         failure_reason="压测任务未成功投递到 RabbitMQ",
@@ -597,7 +626,9 @@ def s_mark_failed(db: Session, task_id: int, project_id: int):
         redis_client = redis.from_url(settings.REDIS_URL)
         if result is not None:
             run_id = _run_id(project_id, task_id)
-            _cleanup_run(redis_client, run_id, _lease_id(run_id, result.celery_task_id), True)
+            # The row returned after commit may already describe a newer run.
+            # A late publication failure can only clean its original lease.
+            _cleanup_run(redis_client, run_id, _lease_id(run_id, celery_task_id), True)
     except Exception:
         pass
     return result

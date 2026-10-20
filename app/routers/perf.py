@@ -108,7 +108,7 @@ def run_task(
             task_id=celery_task_id,
         )
     except Exception:
-        perf_service.s_mark_failed(db, task_id, context.project_id)
+        perf_service.s_mark_failed(db, task_id, context.project_id, celery_task_id)
         raise HTTPException(status_code=503, detail="压测任务入队失败，请稍后重试")
     return success_response(perf_repo.annotate_runs(db, [task])[0], message="压测任务已进入队列")
 

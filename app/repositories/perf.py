@@ -103,7 +103,8 @@ def db_update(db: Session, task_id: int, project_id: int, **fields):
     return db_task
 
 
-def db_update_if_status(db: Session, task_id: int, project_id: int, expected_status: str, **fields):
+def db_update_if_status(db: Session, task_id: int, project_id: int, expected_status: str,
+                        *, rollback_on_miss: bool = True, **fields):
     updated = (
         _owned_update(db, db.query(PerfTask), task_id, project_id)
         .filter(
@@ -114,7 +115,8 @@ def db_update_if_status(db: Session, task_id: int, project_id: int, expected_sta
         .update(fields, synchronize_session=False)
     )
     if updated == 0:
-        db.rollback()
+        if rollback_on_miss:
+            db.rollback()
         return None
     if set(fields) != {"heartbeat_at"}:
         _sync_run(db, task_id, project_id)
@@ -127,10 +129,15 @@ def db_update_if_status_in(
     task_id: int,
     project_id: int,
     expected_statuses: tuple[str, ...],
+    *,
+    execution_id: str | None = None,
     **fields,
 ):
+    query = _owned_update(db, db.query(PerfTask), task_id, project_id)
+    if execution_id is not None:
+        query = query.filter(PerfTask.celery_task_id == execution_id)
     updated = (
-        _owned_update(db, db.query(PerfTask), task_id, project_id)
+        query
         .filter(
             PerfTask.id == task_id,
             PerfTask.project_id == project_id,

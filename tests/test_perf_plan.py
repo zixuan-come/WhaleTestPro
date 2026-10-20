@@ -245,7 +245,8 @@ def test_backend_publishes_owned_snapshot_and_saves_iteration_metrics(monkeypatc
     cache = Cache()
     monkeypatch.setattr(perf.redis, "from_url", lambda *_: cache)
     monkeypatch.setattr(perf.settings, "LOCUST_CONTROL_TOKEN", "synthetic-control")
-    monkeypatch.setattr(perf.time, "sleep", lambda *_: None)
+    from tests.perf_clock import install_clock
+    install_clock(monkeypatch, perf)
     started = []
     def launch(url, **kwargs):
         payload = json.loads(cache.get(perf._target_path_key(f"1:{saved.id}")))

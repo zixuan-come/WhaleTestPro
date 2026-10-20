@@ -22,7 +22,8 @@ def control(monkeypatch):
     cache = _ControlRedis()
     monkeypatch.setattr(perf.redis, "from_url", lambda _: cache)
     monkeypatch.setattr(perf.settings, "LOCUST_CONTROL_TOKEN", "synthetic-control")
-    monkeypatch.setattr(perf.time, "sleep", lambda _: None)
+    from tests.perf_clock import install_clock
+    cache.clock = install_clock(monkeypatch, perf)
     return cache
 
 
@@ -186,6 +187,7 @@ def test_two_slow_successful_control_polls_do_not_make_alive_worker_stale(db, co
     row = task(db, plan={"steps": [{"method": "GET", "path": "/health"}]})
     now = [datetime(2026, 10, 11)]
     monkeypatch.setattr(perf, "_utcnow", lambda: now[0])
+    monkeypatch.setattr(perf, "monotonic", lambda: now[0].timestamp())
     monkeypatch.setattr(perf.settings, "PERF_HEARTBEAT_TIMEOUT_SECONDS", heartbeat_timeout)
     monkeypatch.setattr(perf.settings, "REQUEST_TIMEOUT_SECONDS", 30)
     perf.s_mark_queued(db, row.id, 1, "message")
