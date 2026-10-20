@@ -354,6 +354,7 @@ WhaleTestPro 是一个**团队协作型接口测试平台**。用户登录后，
 - 用录制的 method + body 重放到目标（不传 env 打回本机 `http://127.0.0.1:8000`）。
 - 只带 `X-Shadow:1` 头（写操作落**影子库**，零污染主库），不原样带录制的旧 headers（host/content-length/脱敏鉴权头带过去无意义）。
 - 逐字段 diff：录制老响应 vs 回放新响应，`field_rules` 可叠加自定义比对规则（忽略/类型/正则/容差）。
+- 自定义规则最多 100 项，每项规则最长 1000 字符；语法无效时在发送回放请求前返回 400。所有正则字段共享 100ms 匹配预算，超时作为比较失败记录；布尔值不视为整数或浮点数，普通比较也区分 `true` 与 `1`。
 - 返回 `{recorded_status, recorded_body, replayed_status, replayed_body, diff}`。
 
 **边界/异常**：record 不存在 → 返回 None（路由层应处理）。

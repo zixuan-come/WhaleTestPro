@@ -10,6 +10,58 @@ from app.services import traffic_replay
 from tests.test_perf_lifecycle import perf_control
 
 
+@pytest.mark.parametrize('field,rules', [
+    ('amount', None), ('id', None), ('value', {'value': 'type:float'}),
+    ('value', {'value': 'range:0.1'}),
+])
+def test_replay_detects_bool_as_a_numeric_contract_change(field, rules):
+    assert not response_diff.diff_response({field: 1}, {field: True}, rules)['same']
+    if rules is None and field == 'amount':
+        assert not response_diff.diff_response({field: True}, {field: 1}, rules)['same']
+    assert response_diff.diff_response({'amount': 1}, {'amount': 1})['same']
+    assert response_diff.diff_response({'id': 1}, {'id': 42})['same']
+
+
+def test_expensive_regex_is_interrupted_and_becomes_a_failed_comparison(monkeypatch):
+    monkeypatch.setattr(response_diff, 'REGEX_BUDGET_SECONDS', 0.02)
+    started = time.monotonic()
+    result = response_diff.diff_response({'sample': ''}, {'sample': 'a' * 20000 + '!'},
+                                         {'sample': 'regex:(a+)+$'})
+    assert time.monotonic() - started < 2
+    assert not result['same']
+    assert '超过上限' in result['diffs'][0]['reason']
+
+
+def test_all_regex_fields_share_one_comparison_budget(monkeypatch):
+    clock, budgets = [0.0], []
+    monkeypatch.setattr(response_diff, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(response_diff, 'REGEX_BUDGET_SECONDS', 0.1)
+    class Pattern:
+        def match(self, value, timeout, concurrent):
+            assert concurrent
+            budgets.append(timeout)
+            clock[0] += min(0.03, timeout)
+            if timeout < 0.03:
+                raise TimeoutError
+            return None
+    monkeypatch.setattr(response_diff, '_compile_regex', lambda _: Pattern())
+    fields = {str(index): 'x' for index in range(10)}
+    result = response_diff.diff_response(fields, fields, {key: 'regex:x' for key in fields})
+    assert not result['same'] and len(budgets) < len(fields)
+    assert budgets[0] == pytest.approx(0.1) and budgets[-1] < budgets[0]
+    assert clock[0] <= 0.100001
+
+
+@pytest.mark.parametrize('rule', ['regex:[', 'range:-1', 'range:nan', 'type:unknown'])
+def test_invalid_diff_rule_is_rejected_before_replay_reads_or_sends(monkeypatch, rule):
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Invalid rule must be rejected before a mutating replay')
+    monkeypatch.setattr(traffic_replay.traffic_record_repo, 'db_get', forbidden)
+    monkeypatch.setattr(traffic_replay.requests, 'request', forbidden)
+    with pytest.raises(ValueError):
+        traffic_replay.s_replay(None, 1, 1, field_rules={'amount': rule})
+
+
 def test_old_stop_is_fenced_even_if_a_new_run_is_injected_between_updates(perf_control, monkeypatch):
     perf, db, (task, _), cache, _ = perf_control
     perf.s_mark_queued(db, task.id, 1, 'old')

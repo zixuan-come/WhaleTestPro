@@ -15,4 +15,5 @@ jsonpath-ng
 jsonschema
 celery-redbeat~=2.3.2
 cryptography
+regex>=2024.11.6,<2027.0
 

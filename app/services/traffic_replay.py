@@ -2,7 +2,7 @@ import json
 import requests
 from app.repositories import traffic_record as traffic_record_repo
 from app.repositories import environment as env_repo
-from app.core.response_diff import diff_response
+from app.core.response_diff import diff_response, validate_field_rules
 from app.core.config import settings
 from app.core.redaction import mask_sensitive, sensitive_strings
 from app.core.variables import render_deep
@@ -29,6 +29,7 @@ def _base_url(db, env_id, project_id):
 
 
 def s_replay(db, record_id, project_id, env_id=None, field_rules=None, *, overrides=None):
+    validate_field_rules(field_rules)
     record = traffic_record_repo.db_get(db, record_id, project_id)
     if record is None:
         return None
