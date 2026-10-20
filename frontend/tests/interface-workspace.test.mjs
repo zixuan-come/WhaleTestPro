@@ -68,7 +68,7 @@ const helpers = { cloneRequest, requestConfig, requestDraft, serializeRequest, p
 
 function workspace(t, run = async () => ({ response: { status_code: 200, body: { id: 1 } } })) {
   const calls = [], created = []
-  const props = Vue.reactive({ interfaceData: cloneRequest(order), modelValue: '36', initialTab: 'debug', environments: [] })
+  const props = Vue.reactive({ interfaceData: cloneRequest(order), modelValue: '36', initialTab: 'debug', environments: [{ id: 36, name: 'test' }] })
   const state = workspaceSetup(t, props, { ...Vue, ...helpers, runInterface: async (...args) => { calls.push(args); return run(...args) },
     useFeedback: () => ({ showMessage() {} }), EnvironmentSelect: {}, RequestEditor: {}, Cases: {} })
   state.casesPanel.value = { openCreate: (...args) => created.push(args) }
@@ -363,7 +363,7 @@ test('unified debug saves a request directly into the parent inline editor', asy
 
 test('inline case save uses its own configuration, updates the tree and runs only saved values', async t => {
   const events = [], calls = []
-  const props = Vue.reactive({ interfaceData: order, interfaceId: 81, detailMode: true, embedded: true, caseData: originalCase, envId: '36' })
+  const props = Vue.reactive({ interfaceData: order, interfaceId: 81, detailMode: true, embedded: true, caseData: originalCase, envId: '36', environments: [{ id: 36, name: 'test' }] })
   const state = caseSetup(t, props, { ...Vue, ...helpers, onMounted() {}, useRouter: () => ({}),
     useFeedback: () => ({ showMessage() {}, confirmAction: async () => false }), $emit: (...args) => events.push(args),
     useExecutionEnvironment: () => ({ envs: Vue.ref([]), selectedEnv: Vue.ref(''), loadEnvironments: async () => {} }),

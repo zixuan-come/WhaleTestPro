@@ -37,6 +37,9 @@ const router = useRouter()
 const items = ref([])
 const interfaces = ref([])
 const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
+const executionEnvironments = computed(() => props.detailMode ? props.environments || [] : envs.value)
+const hasExecutionEnvironment = computed(() => executionEnvironments.value.some(env => String(env.id) === String(executionEnv.value || '')))
+const executionEnvironmentHint = computed(() => executionEnvironments.value.length ? '请选择有效的执行环境后再运行。' : '当前项目暂无执行环境，请先在环境管理中创建。')
 const loading = ref(true)
 const error = ref('')
 
@@ -253,6 +256,7 @@ async function save() {
 }
 
 async function onRun(c) {
+  if (!hasExecutionEnvironment.value) { showMessage(executionEnvironmentHint.value, 'error'); return }
   if (runningId.value != null || saving.value) return
   if (props.detailMode && dirty.value) { showMessage('请先保存修改，再运行用例', 'error'); return }
   runningId.value = c.id
@@ -307,6 +311,7 @@ defineExpose({ openCreate, load })
 </script>
 
 <template>
+  <p v-if="!loading && !hasExecutionEnvironment" class="case-save-hint" role="status">{{ executionEnvironmentHint }} <RouterLink v-if="!executionEnvironments.length" to="/environments">前往环境管理</RouterLink></p>
   <div v-if="!embedded && !detailMode" class="cards">
     <div class="card"><div class="k">用例总数</div><div class="v pri">{{ total }}</div></div>
     <div class="card"><div class="k">关联接口</div><div class="v">{{ interfaces.length }}</div></div>
@@ -317,7 +322,7 @@ defineExpose({ openCreate, load })
     <div class="panel-head">
       <div class="case-heading">{{ embedded ? '当前接口的测试用例' : '全部测试用例' }} <span class="case-total">{{ total }}</span></div>
       <div class="head-actions">
-        <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="跑测试时使用的环境" />
+        <EnvironmentSelect v-model="selectedEnv" :environments="envs" required placeholder="请选择执行环境" title="跑测试时使用的环境" />
         <button class="btn btn-primary" @click="openCreate()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
           新建用例
@@ -349,7 +354,7 @@ defineExpose({ openCreate, load })
         <span class="c-iface" :title="ifaceLabel(c.interface_id)">{{ ifaceLabel(c.interface_id) }}</span>
         <span class="c-exp">{{ c.expected_status }}</span>
         <span class="c-act">
-          <button class="icon-btn run" title="运行" :disabled="runningId === c.id" @click="onRun(c)">
+          <button class="icon-btn run" :title="!hasExecutionEnvironment ? executionEnvironmentHint : '运行'" :disabled="runningId === c.id || !hasExecutionEnvironment" @click="onRun(c)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4Z" /></svg>
           </button>
           <button class="icon-btn edit" title="编辑" @click="openEdit(c)">
@@ -369,7 +374,7 @@ defineExpose({ openCreate, load })
       <div class="case-detail-actions"><span class="save-state">{{ dirty ? '有未保存的修改' : editingId == null ? '尚未保存' : '已保存' }}</span><button v-if="caseData" type="button" class="btn btn-ghost" :disabled="saving || runningId != null" @click="onDelete(caseData)">删除用例</button><button type="button" class="btn btn-primary" :disabled="saving || runningId != null || !interfaces.length" @click="save">{{ saving ? '保存中…' : editingId == null ? '创建用例' : '保存用例' }}</button></div>
     </template>
     <div v-if="detailMode" class="case-context"><span>{{ interfaceData?.method }}</span><code>{{ interfaceData?.url }}</code><strong>{{ interfaceData?.name }}</strong></div>
-    <div v-if="detailMode" class="case-environment"><span>执行环境</span><EnvironmentSelect v-model="executionEnv" :environments="environments" /></div>
+    <div v-if="detailMode" class="case-environment"><span>执行环境</span><EnvironmentSelect v-model="executionEnv" :environments="environments" required placeholder="请选择执行环境" /></div>
     <fieldset class="case-form-fields" :disabled="saving || runningId != null">
     <div class="field">
       <label for="case-name">用例名称</label>
@@ -462,7 +467,7 @@ defineExpose({ openCreate, load })
     <div v-if="formErr" class="form-err" role="alert">{{ formErr }}</div>
 
     <template #foot>
-      <button v-if="detailMode && editingId != null" type="button" class="btn btn-ghost" :disabled="dirty || saving || runningId != null" :title="dirty ? '请先保存修改，再运行用例' : '运行已保存的用例'" @click="onRun({ id: editingId, name: form.name })">{{ runningId != null ? '运行中…' : '运行用例' }}</button>
+      <button v-if="detailMode && editingId != null" type="button" class="btn btn-ghost" :disabled="dirty || saving || runningId != null || !hasExecutionEnvironment" :title="!hasExecutionEnvironment ? executionEnvironmentHint : dirty ? '请先保存修改，再运行用例' : '运行已保存的用例'" @click="onRun({ id: editingId, name: form.name })">{{ runningId != null ? '运行中…' : '运行用例' }}</button>
       <button class="btn btn-ghost" @click="closeModal" :disabled="saving || runningId != null">{{ detailMode ? '返回接口' : '取消' }}</button>
       <button class="btn btn-primary" @click="save" :disabled="saving || runningId != null || !interfaces.length">{{ saving ? '保存中…' : (editingId == null ? '创建' : '保存') }}</button>
     </template>

@@ -52,7 +52,7 @@ test('CI executes suite modal regressions before the frontend build', () => {
 function suite(overrides = {}) {
   const calls = []
   const api = {
-    listSuites: async () => [], listEnvironments: async () => [],
+    listSuites: async () => [], listEnvironments: async () => [{ id: 7, name: 'synthetic-env' }],
     createSuite: async payload => calls.push(['create', payload]),
     updateSuite: async (id, payload) => calls.push(['update', id, payload]),
     apiDeleteSuite: async id => calls.push(['delete', id]),
@@ -62,7 +62,9 @@ function suite(overrides = {}) {
   }
   const alerts = []
   const feedback = []
-  const auth = Vue.reactive({ username:'suite-user', currentProjectId:1, token:'synthetic' })
+  const preferences = new Map()
+  const auth = Vue.reactive({ username:'suite-user', currentProjectId:1, token:'synthetic',
+    getPreferredEnv: id => preferences.get(id) || '', setPreferredEnv: (id, value) => preferences.set(id, value) })
   const SuiteContentPicker = { props:['modelValue','disabled'], render: () => Vue.h('div', { class:'suite-picker-test' }, '按名称选择测试内容') }
   const desc = descriptor('../src/views/TestSuites.vue')
   const script = compileScript(desc, { id: 'suite-characterization' })
@@ -71,6 +73,7 @@ function suite(overrides = {}) {
     ...Object.values(api), Modal, SuiteContentPicker, SuiteRunResult, () => auth, (message,type) => { alerts.push(message);feedback.push({message,type}) }, async () => true, () => { throw Error('Unexpected native alert') }, () => { throw Error('Unexpected native confirm') })
   options.render = render(desc, 'suite-characterization', script.bindings)
   const state = options.data()
+  state.environments = [{ id: 7, name: 'synthetic-env' }]
   for (const [name, method] of Object.entries(options.methods)) state[name] = method.bind(state)
   for (const [name, getter] of Object.entries(options.computed)) Object.defineProperty(state, name, { get: () => getter.call(state) })
   return { options, state, calls, alerts, auth, feedback }
@@ -206,6 +209,7 @@ test('run retains suite/environment IDs and opens the matching result', async ()
 test('run failure keeps the environment dialog available for retry', async () => {
   const { state, alerts } = suite({ apiRunSuite: async () => { throw Error('synthetic failure') } })
   state.runSuite(8)
+  state.selectedEnvId = 7
   await state.executeRun()
   assert.equal(state.showRunDialog, true)
   assert.equal(state.runResult, null)
@@ -258,6 +262,7 @@ test('late suite listing and execution cannot show old project data', async () =
   const listings=[];let finishRun
   const {state,auth,options}=suite({listSuites:()=>new Promise(resolve=>listings.push(resolve)),apiRunSuite:()=>new Promise(resolve=>finishRun=resolve)})
   const listing=state.fetchSuites();state.runSuite(8)
+  state.selectedEnvId=7
   const running=state.executeRun()
   auth.currentProjectId=2;options.watch.projectIdentity.call(state)
   finishRun({suite_name:'old suite',total:1,passed:1,failed:0})
@@ -272,10 +277,58 @@ test('late suite listing and execution cannot show old project data', async () =
 test('suite execution rejects duplicate clicks while the request is pending', async () => {
   let finish,count=0
   const {state}=suite({apiRunSuite:()=>{count++;return new Promise(resolve=>finish=resolve)}})
-  state.runSuite(8);const pending=state.executeRun();await state.executeRun();state.runSuite(9)
+  state.runSuite(8);state.selectedEnvId=7;const pending=state.executeRun();await state.executeRun();state.runSuite(9)
   assert.equal(count,1);assert.equal(state.runningSuiteId,8)
   finish({suite_name:'original',total:1,passed:1,failed:0});await pending
   assert.equal(state.running,false);assert.equal(state.runResult.suite_name,'original')
+})
+
+test('suite execution requires an available environment and never submits a synthetic default', async () => {
+  const sent = [], { state, alerts } = suite({ apiRunSuite: async (...args) => { sent.push(args); return {} } })
+  state.runSuite(8)
+  await state.executeRun()
+  assert.equal(state.canExecuteRun, false); assert.deepEqual(sent, []); assert.match(alerts.at(-1), /请选择有效/)
+  state.selectedEnvId = 99
+  await state.executeRun(); assert.deepEqual(sent, [])
+  state.environments = []
+  await state.executeRun(); assert.match(alerts.at(-1), /环境管理/)
+  state.environments = [{ id: 7, name: 'test' }]; state.selectedEnvId = '7'
+  await state.executeRun(); assert.deepEqual(sent, [[8, 7]])
+})
+
+test('suite execution restores only valid user preferences and remembers explicit selection', async () => {
+  const { state, auth } = suite()
+  auth.setPreferredEnv(1, '7'); state.runSuite(8)
+  assert.equal(state.selectedEnvId, '7'); assert.equal(state.canExecuteRun, true)
+  state.environments.push({ id: 9, name: 'second' }); state.selectedEnvId = 9
+  await state.executeRun(); assert.equal(auth.getPreferredEnv(1), '9')
+  state.runSuite(8); assert.equal(state.selectedEnvId, '9')
+  auth.setPreferredEnv(1, 'deleted'); state.runSuite(8)
+  assert.equal(state.selectedEnvId, null)
+  await state.fetchEnvironments(); assert.equal(auth.getPreferredEnv(1), '')
+  assert.equal(state.selectedEnvId, null)
+})
+
+test('suite environment load failure blocks stale selection without erasing the user preference', async () => {
+  let reject, sent = 0
+  const { state, auth } = suite({ listEnvironments: () => new Promise((_, no) => { reject = no }), apiRunSuite: async () => sent++ })
+  auth.setPreferredEnv(1, '7'); state.runSuite(8)
+  const loading = state.fetchEnvironments(); assert.equal(state.environmentsLoading, true)
+  await state.executeRun(); assert.equal(sent, 0)
+  reject(Error('offline')); await loading
+  assert.equal(state.environmentsLoading, false); assert.match(state.environmentsError, /重试/)
+  await state.executeRun(); assert.equal(sent, 0); assert.equal(auth.getPreferredEnv(1), '7')
+})
+
+test('suite environment dialog disables execution and provides navigation when no environment exists', async () => {
+  const { options } = suite(), context = {}
+  const app = Vue.createSSRApp({ ...options, data: () => ({ ...options.data(), showRunDialog: true, runningSuiteId: 8 }) })
+  app.component('RouterLink', { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { href: props.to }, slots.default?.()) })
+  await renderToString(app, context)
+  const html = context.teleports.body
+  assert.match(html, /<button[^>]+disabled[^>]*>开始执行<\/button>/)
+  assert.match(html, /href="\/environments"/); assert.match(html, /请选择执行环境/)
+  assert.ok(!html.includes('默认环境'))
 })
 
 test('suite results preserve execution order and open failures, including data rows and missing resources', async () => {

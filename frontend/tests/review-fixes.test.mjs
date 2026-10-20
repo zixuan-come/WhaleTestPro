@@ -55,11 +55,61 @@ test('late 401 from an old credential cannot log out the new account, but curren
   assert.equal(auth.token, ''); assert.equal(location.hash, '#/login')
 })
 
+test('synchronous run adapters allow long chains and proxy waits longer than the client', async () => {
+  const { http } = httpClient(), calls = []
+  http.defaults.adapter = async config => { calls.push(config); return { status: 200, data: {}, headers: {}, config } }
+  for (const [file, name] of [['case', 'runCase'], ['case', 'runChain'], ['scenario', 'runScenario'], ['scenario', 'debugScenarioStep'], ['suite', 'runSuite'], ['interface', 'runInterface']]) {
+    const code = read(`src/api/${file}.js`).replace(/^import[^\n]+\n/gm, '').replaceAll('export const ', 'const ')
+    await Function('http', code + `\nreturn ${name}`)(http)(1, 1, {})
+  }
+  assert.ok(calls.every(config => config.timeout === 600000))
+  await http.get('/cases'); assert.equal(calls.at(-1).timeout, 15000)
+  const nginx = read('nginx.conf')
+  assert.match(nginx, /proxy_read_timeout 660s;/)
+  assert.match(nginx, /cases\/\(\[0-9\]\+\/run\|chain\)/)
+})
 
+test('uncertain execution failures direct users to reports or target data without inviting retries', async () => {
+  const { http } = httpClient()
+  http.defaults.adapter = async config => { throw new axios.AxiosError('timeout', 'ECONNABORTED', config) }
+  await assert.rejects(http.post('/cases/1/run'), error => error.executionUncertain && /测试报告/.test(error.message))
+  await assert.rejects(http.post('/interfaces/1/run'), error => error.executionUncertain && /目标数据/.test(error.message))
+  await assert.rejects(http.get('/cases'), error => !error.executionUncertain && error.message === 'timeout')
+  http.defaults.adapter = async config => { throw new axios.AxiosError('rejected', 'ERR_BAD_REQUEST', config, null,
+    { status: 409, data: { message: '内容已变更' }, config }) }
+  await assert.rejects(http.post('/cases/1/run'), error => !error.executionUncertain && error.message === '内容已变更')
+  http.defaults.adapter = async config => { throw new axios.AxiosError('gateway', 'ERR_BAD_RESPONSE', config, null,
+    { status: 502, data: '<html>Bad gateway</html>', config }) }
+  await assert.rejects(http.post('/suites/1/run'), error => error.executionUncertain && /避免重复执行/.test(error.message))
+})
 
 const typed = { status: ['paid', 'pending'], page: 2, include_deleted: false, missing: null }
 const api = { id: 1, name: 'query', method: 'GET', url: '/orders', params: typed, headers: null, body: null }
+test('debug request serialization preserves unchanged JSON Query values, while edited values become text', () => {
+  const draft = request.requestDraft(api)
+  assert.deepEqual(request.serializeRequest(draft, '/orders').params, typed)
+  draft.params.find(row => row.key === 'status').value = 'paid'
+  const result = request.serializeRequest(draft, '/orders')
+  assert.equal(result.params.status, 'paid'); assert.equal(result.params.page, 2)
+  result.params.status = ['new']; assert.deepEqual(api.params.status, ['paid', 'pending'])
+})
 
+test('renaming an interface or independent case cannot change imported Query types', async t => {
+  let interfacePayload, casePayload
+  const common = { useFeedback: feedback, useExecutionEnvironment: () => ({ envs: Vue.ref([]), selectedEnv: Vue.ref(''), loadEnvironments: async () => [] }),
+    onBeforeRouteLeave() {}, listInterfaces: async () => [api], listCases: async () => [],
+    updateInterface: async (id, payload) => { interfacePayload = payload; return { id, ...payload } } }
+  const interfaces = setup(t, 'views/Interfaces.vue', {}, common)
+  interfaces.openEdit(api); interfaces.form.name = 'renamed'; await interfaces.save()
+  assert.deepEqual(interfacePayload.params, typed)
+  interfaces.form.params.find(row => row.key === 'page').value = '3'; await interfaces.save()
+  assert.equal(interfacePayload.params.page, '3'); assert.deepEqual(interfacePayload.params.status, typed.status)
+  const cases = setup(t, 'views/Cases.vue', { interfaceId: 1, interfaceData: api, embedded: true }, {
+    ...common, useRouter: () => ({}), updateCase: async (id, payload) => { casePayload = payload; return { id, ...payload } } })
+  cases.openEdit({ id: 7, name: 'case', interface_id: 1, expected_status: 200, request_overrides: { params: typed } })
+  cases.form.name = 'renamed'; await cases.save()
+  assert.deepEqual(casePayload.request_overrides.params, typed)
+})
 
 function teamsPage(t, overrides = {}) {
   const auth = Vue.reactive({ username: 'alice', token: 'synthetic', currentTeamId: 1, currentTeamRole: 'owner',
@@ -135,7 +185,46 @@ test('same-team A to B to A late details cannot release a newer loading guard, a
   await state.togglePermission({ key: 'case.write' }, { target: { checked: true } }); assert.equal(writes, 0)
 })
 
+test('case, scenario and interface handlers refuse missing or stale environment IDs', async t => {
+  const rows = Vue.ref([{ id: 7, name: 'available' }]), selected = Vue.ref(''), sent = [], messages = []
+  const common = { useFeedback: () => ({ showMessage: message => messages.push(message), confirmAction: async () => true }),
+    useExecutionEnvironment: () => ({ envs: rows, selectedEnv: selected, loadEnvironments: async () => rows.value }),
+    useRouter: () => ({}), useAuthStore: () => Vue.reactive({ token: 'synthetic', currentProjectId: 1 }),
+    runCase: async (...args) => { sent.push(['case', ...args]); return [] },
+    runScenario: async (...args) => { sent.push(['scenario', ...args]); return [] },
+    runInterface: async (...args) => { sent.push(['interface', ...args]); return {} } }
+  const cases = setup(t, 'views/Cases.vue', {}, common)
+  const scenario = setup(t, 'views/Orchestration.vue', {}, common)
+  scenario.currentId.value = 1; scenario.chain.value = [{ step_id: 'one' }]
+  const props = Vue.reactive({ interfaceData: api, environments: rows.value, modelValue: '', initialTab: 'debug' })
+  const workspace = setup(t, 'components/InterfaceWorkspace.vue', props, common)
+  for (const value of ['', 'deleted']) {
+    selected.value = value; props.modelValue = value
+    await cases.onRun({ id: 1 }); await scenario.onRun(); await workspace.send()
+    assert.equal(sent.length, 0)
+    assert.equal(cases.hasExecutionEnvironment.value, false); assert.equal(scenario.hasExecutionEnvironment.value, false)
+    assert.equal(workspace.hasExecutionEnvironment.value, false)
+    assert.match(workspace.error.value, /请选择有效/)
+  }
+  rows.value = []; props.environments = []
+  await cases.onRun({ id: 1 }); await scenario.onRun(); await workspace.send()
+  assert.match(messages.at(-1), /环境管理/); assert.match(workspace.error.value, /环境管理/)
+  rows.value = [{ id: 7, name: 'available' }]; selected.value = '7'; props.environments = rows.value; props.modelValue = '7'
+  await cases.onRun({ id: 1 }); await scenario.onRun(); await workspace.send()
+  assert.deepEqual(sent.map(row => row[0]), ['case', 'scenario', 'interface'])
+  assert.ok(sent.every(row => String(row[2]) === '7'))
+})
 
+test('formal scene edits retain large legacy extraction sets while debug validates its own bounds', async t => {
+  const sent = [], applied = [], step = { step_id: 'test', source_case_id: 1, interface_id: 1, name: 'old', method: 'GET', url: '/orders', expected_status: 200,
+    extract_rules: Object.fromEntries(Array.from({ length: 101 }, (_, index) => ['v' + index, '$.id'])) }
+  const state = setup(t, 'components/ScenarioStepEditor.vue', { step, envId: 1 }, { debugScenarioStep: async (...args) => sent.push(args), emit: (name, value) => applied.push([name, value]) })
+  state.name.value = 'renamed'; state.apply()
+  assert.equal(Object.keys(applied[0][1].extract_rules).length, 101)
+  await state.send(); assert.equal(sent.length, 0); assert.match(state.debugError.value, /100/)
+  state.extracts.value = [{ name: 'v'.repeat(65), path: '$.id' }]
+  assert.ok(state.buildStep()); await state.send(); assert.equal(sent.length, 0); assert.match(state.debugError.value, /64/)
+})
 
 test('suite picker does not treat chain steps with SQL, datasets or retries as full independent executions', () => {
   const base = { id: 1, name: 'case', interface_id: 1, expected_status: 200 }

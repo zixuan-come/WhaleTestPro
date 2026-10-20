@@ -107,6 +107,8 @@ function rowsFromDict(value) {
     enabled: true,
     key,
     value: itemValue == null ? '' : String(itemValue),
+    originalValue: JSON.parse(JSON.stringify(itemValue)),
+    originalText: itemValue == null ? '' : String(itemValue),
   }))
 }
 
@@ -130,7 +132,9 @@ function rowsToDict(rows, label, tab, caseInsensitive = false) {
     const uniqueKey = caseInsensitive ? key.toLowerCase() : key
     if (seen.has(uniqueKey)) validationError(label + ' 存在重复 Key：' + key, tab)
     seen.add(uniqueKey)
-    result[key] = String(value)
+    Object.defineProperty(result, key, { enumerable: true, configurable: true, writable: true,
+      value: tab === 'params' && Object.hasOwn(row, 'originalValue') && String(value) === row.originalText
+        ? JSON.parse(JSON.stringify(row.originalValue)) : String(value) })
   })
 
   return Object.keys(result).length ? result : null

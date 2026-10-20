@@ -54,7 +54,7 @@ function buildStep() {
     }
     if (request.value.bodyType === originalRequest.bodyType && request.value.body === originalRequest.body) fields.body = cloneRequest(props.step.body ?? null)
     let rules, checks
-    try { rules = serializeExtractRules(extracts.value, SCENARIO_EXTRACT_OPTIONS); checks = serializeAssertions(assertions.value) }
+    try { rules = serializeExtractRules(extracts.value); checks = serializeAssertions(assertions.value) }
     catch (e) { advanced.value = true; throw e }
     return { ...cloneRequest(props.step), ...fields, name:name.value.trim(), method:method.value,
       url:url.value.trim(), expected_status:Number(expectedStatus.value), assertions:checks, extract_rules:rules }
@@ -80,6 +80,9 @@ async function send() {
   if (!props.envId) { debugError.value = '请先在场景顶部选择执行环境'; return }
   const step = buildStep()
   if (!step) return
+  // Redis single-step debugging has tighter bounds than saved scenarios.
+  try { serializeExtractRules(extracts.value, SCENARIO_EXTRACT_OPTIONS) }
+  catch (e) { advanced.value = true; debugError.value = e.message; return }
   const version = ++requestVersion, key = requestKey(), checks = checksKey()
   sending.value = true
   try {
@@ -172,7 +175,7 @@ async function copyResponse() {
     </section>
     <div v-if="advanced || result" ref="extractionPanel" class="step-field extraction-config">
       <div class="extraction-heading"><strong>变量提取</strong><button type="button" :disabled="locked || !!step.missing_reason || !result?.response_id || staleResponse" @click="verifyExtraction">{{ verifying ? '验证中…' : '验证提取' }}</button></div>
-      <ExtractRulesEditor v-model="extracts" id-prefix="step-extract" :disabled="locked || !!step.missing_reason" :results="result?.extraction || []" :results-enabled="!staleResponse" :rules-options="SCENARIO_EXTRACT_OPTIONS" />
+      <ExtractRulesEditor v-model="extracts" id-prefix="step-extract" :disabled="locked || !!step.missing_reason" :results="result?.extraction || []" :results-enabled="!staleResponse" />
       <p class="step-hint">使用刚才的响应验证，不会重新发送请求。配置应用并保存场景后用于正式执行。</p>
       <template v-if="!staleResponse"><p v-for="(row, index) in (result?.extraction || []).filter(item => !item.name && item.error)" :key="index" class="step-error" role="alert">{{ row.error }}</p><p v-if="result?.extraction?.some(row => !row.passed)" class="step-hint">上次提取验证未全部成功，临时调试变量未更新；请修正后重新验证。</p></template>
     </div>

@@ -8,7 +8,8 @@ export function requestConfig(interfaceData = {}, overrides = null) {
 }
 
 function rows(value) {
-  return Object.entries(value || {}).map(([key, value]) => ({ enabled: true, key, value: value == null ? '' : String(value) }))
+  return Object.entries(value || {}).map(([key, value]) => ({ enabled: true, key,
+    value: value == null ? '' : String(value), originalValue: cloneRequest(value), originalText: value == null ? '' : String(value) }))
 }
 
 export function requestDraft(config = {}) {
@@ -34,7 +35,10 @@ function dictionary(rows, tab, label) {
     const unique = tab === 'headers' ? key.toLowerCase() : key
     if (seen.has(unique)) invalid(label + ' 参数名重复：' + key, tab)
     seen.add(unique)
-    entries.push([key, value])
+    // Preserve imported JSON values until their text is edited. In particular,
+    // an array must remain repeated Query parameters instead of comma text.
+    entries.push([key, tab === 'params' && Object.hasOwn(row, 'originalValue') && value === row.originalText
+      ? cloneRequest(row.originalValue) : value])
   }
   return entries.length ? Object.fromEntries(entries) : null
 }

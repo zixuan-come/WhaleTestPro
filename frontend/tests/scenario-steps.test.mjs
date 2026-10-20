@@ -34,7 +34,7 @@ async function page(t, overrides={}) {
   let saved={id:5,name:'订单核心链路',description:null,case_ids:[1,1],steps:[caseToStep(template,request),caseToStep(template,request)]}
   const mocks={onMounted(){},useAuthStore:()=>Vue.reactive({token:'test-session',currentProjectId:1}),caseToStep,savedScenarioSteps,cloneRequest,
     useFeedback:()=>({showMessage:(...args)=>messages.push(args),confirmAction:async()=>true}),
-    useExecutionEnvironment:()=>({envs:Vue.ref([]),selectedEnv:Vue.ref(3),loadEnvironments:async()=>{}}),
+    useExecutionEnvironment:()=>({envs:Vue.ref([{id:3,name:'test'}]),selectedEnv:Vue.ref(3),loadEnvironments:async()=>{}}),
     listScenarios:async()=>[cloneRequest(saved)],listCases:async()=>[cloneRequest(template)],listInterfaces:async()=>[cloneRequest(request)],
     getScenario:async()=>cloneRequest(saved),getCase:async()=>({...cloneRequest(template),name:'最新模板'}),getInterface:async()=>cloneRequest(request),
     updateScenario:async(id,payload)=>{calls.push(['save',id,cloneRequest(payload)]);saved={id,...cloneRequest(payload),case_ids:payload.steps.map(step=>step.source_case_id)};return cloneRequest(saved)},

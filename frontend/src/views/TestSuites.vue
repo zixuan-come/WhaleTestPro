@@ -78,16 +78,17 @@
       <div>
         <div class="form-row">
           <label>选择环境</label>
-          <select v-model="selectedEnvId" :disabled="running">
-            <option :value="null">默认环境</option>
+          <select v-model="selectedEnvId" :disabled="running || environmentsLoading">
+            <option :value="null" disabled>请选择执行环境</option>
             <option v-for="env in environments" :key="env.id" :value="env.id">
               {{ env.name }}
             </option>
           </select>
+          <p v-if="!canExecuteRun" class="run-environment-note" role="status">{{ runEnvironmentMessage }} <RouterLink v-if="!environmentsLoading && !environmentsError && !environments.length" to="/environments">前往环境管理</RouterLink><button v-if="environmentsError" type="button" class="btn btn-ghost" @click="fetchEnvironments">重试</button></p>
         </div>
         <div class="form-actions">
           <button @click="showRunDialog = false" class="btn-cancel" :disabled="running">取消</button>
-          <button @click="executeRun" class="btn-submit" :disabled="running">{{ running ? '正在执行…' : '开始执行' }}</button>
+          <button @click="executeRun" class="btn-submit" :disabled="running || !canExecuteRun">{{ running ? '正在执行…' : '开始执行' }}</button>
         </div>
       </div>
     </Modal>
@@ -117,7 +118,7 @@ export default {
       suites: [],
       search: '', page: 1, pageSize: 20, loadingSuites: false, suiteLoadError: '',
       running: false, runVersion: 0,
-      environments: [],
+      environments: [], environmentsLoading: false, environmentsError: '',
       showCreateDialog: false,
       showEditDialog: false,
       showRunDialog: false,
@@ -140,6 +141,9 @@ export default {
     this.fetchEnvironments();
   },
   computed: {
+    runEnvironment() { return this.environments.find(env => String(env.id) === String(this.selectedEnvId ?? '')) || null; },
+    canExecuteRun() { return !this.environmentsLoading && !this.environmentsError && Boolean(this.runEnvironment); },
+    runEnvironmentMessage() { return this.environmentsLoading ? '正在加载执行环境…' : this.environmentsError || (this.environments.length ? '请选择有效的执行环境后再运行。' : '当前项目暂无执行环境，请先在环境管理中创建。'); },
     filteredSuites() { const query = this.search.trim().toLocaleLowerCase(); return this.suites.filter(suite => !query || `${suite.name || ''} ${suite.description || ''}`.toLocaleLowerCase().includes(query)); },
     pageCount() { return Math.max(1, Math.ceil(this.filteredSuites.length / this.pageSize)); },
     pageSuites() { return this.filteredSuites.slice((this.page - 1) * this.pageSize, this.page * this.pageSize); },
@@ -152,7 +156,7 @@ export default {
     projectIdentity() {
       this.runVersion++; this.running = false; this.runningSuiteId = null; this.search = ''; this.page = 1;
       this.saveVersion++; this.saving = false; this.closeDialog();
-      this.showRunDialog = false; this.runResult = null; this.suites = []; this.environments = [];
+      this.showRunDialog = false; this.runResult = null; this.suites = []; this.environments = []; this.selectedEnvId = null; this.environmentsError = '';
       this.fetchSuites(); this.fetchEnvironments();
     },
   },
@@ -180,13 +184,18 @@ export default {
     },
     async fetchEnvironments() {
       const version = ++this.envVersion, context = this.projectIdentity;
+      this.environmentsLoading = true; this.environmentsError = '';
       try {
         const data = await listEnvironments();
         if (version !== this.envVersion || context !== this.projectIdentity) return;
-        this.environments = Array.isArray(data) ? data : [];
+        if (!Array.isArray(data)) throw Error('环境数据格式异常');
+        this.environments = data;
+        const auth = useAuthStore(), preferred = auth.getPreferredEnv?.(auth.currentProjectId);
+        if (preferred && !data.some(env => String(env.id) === String(preferred))) auth.setPreferredEnv?.(auth.currentProjectId, '');
+        if (!this.runEnvironment) this.selectedEnvId = this.showRunDialog && preferred && data.some(env => String(env.id) === String(preferred)) ? preferred : null;
       } catch (error) {
-        console.error('获取环境列表失败:', error);
-      }
+        if (version === this.envVersion && context === this.projectIdentity) this.environmentsError = '获取执行环境失败，请重试。';
+      } finally { if (version === this.envVersion && context === this.projectIdentity) this.environmentsLoading = false; }
     },
     async submitForm() {
       if (this.saving || !this.pickerReady) return;
@@ -245,15 +254,19 @@ export default {
     runSuite(id) {
       if (this.running) return;
       this.runningSuiteId = id;
-      this.selectedEnvId = null;
+      const auth = useAuthStore(), preferred = auth.getPreferredEnv?.(auth.currentProjectId);
+      this.selectedEnvId = preferred && this.environments.some(env => String(env.id) === String(preferred)) ? preferred : null;
       this.showRunDialog = true;
     },
     async executeRun() {
       if (this.running || this.runningSuiteId == null) return;
+      if (!this.canExecuteRun) { showMessage(this.runEnvironmentMessage, 'error'); return; }
       const version = ++this.runVersion, context = this.projectIdentity;
+      const envId = this.runEnvironment.id, auth = useAuthStore();
+      auth.setPreferredEnv?.(auth.currentProjectId, String(envId));
       this.running = true;
       try {
-        const result = await apiRunSuite(this.runningSuiteId, this.selectedEnvId);
+        const result = await apiRunSuite(this.runningSuiteId, envId);
         if (version !== this.runVersion || context !== this.projectIdentity) return;
         this.runResult = result;
         this.showRunDialog = false;
@@ -290,6 +303,7 @@ export default {
 </script>
 
 <style scoped>
+.run-environment-note{margin:8px 0 0;color:var(--text-muted);font-size:12px;line-height:1.6}
 .suite-editor-form { height:min(570px,calc(88dvh - 170px)); min-height:330px; }
 .suite-editor-fields { height:100%;min-width:0;min-height:0;padding:0;margin:0;border:0;display:flex;flex-direction:column;gap:14px; }
 .suite-basic-fields { display:grid;grid-template-columns:1fr 1.35fr;gap:16px;flex:none; }

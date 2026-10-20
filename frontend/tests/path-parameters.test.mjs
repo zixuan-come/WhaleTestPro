@@ -93,7 +93,7 @@ test('editing saves defaults separately from Query parameters and drops removed 
   await state.save()
   const saved = calls.find(call => call.name === 'updateInterface')
   assert.deepEqual(saved.args[1].path_params, { id: '3' })
-  assert.deepEqual(saved.args[1].params, { page: '2' })
+  assert.deepEqual(saved.args[1].params, { page: 2 })
   assert.equal(saved.args[1].url, '/orders/{id}')
 })
 
@@ -117,8 +117,8 @@ test('API adapter sends Path overrides in the body and leaves the legacy request
   run(81, undefined)
   run(81, 36, undefined, { path_params: { id: '3' }, params: { page: '2' }, headers: null, body: null })
   assert.deepEqual(calls, [
-    ['/interfaces/81/run', { path_params: { id: '2' } }, { params: { env_id: 36 } }],
-    ['/interfaces/81/run', null, { params: {} }],
-    ['/interfaces/81/run', { request_overrides: { path_params: { id: '3' }, params: { page: '2' }, headers: null, body: null } }, { params: { env_id: 36 } }],
+    ['/interfaces/81/run', { path_params: { id: '2' } }, { params: { env_id: 36 }, timeout: 600000 }],
+    ['/interfaces/81/run', null, { params: {}, timeout: 600000 }],
+    ['/interfaces/81/run', { request_overrides: { path_params: { id: '3' }, params: { page: '2' }, headers: null, body: null } }, { params: { env_id: 36 }, timeout: 600000 }],
   ])
 })

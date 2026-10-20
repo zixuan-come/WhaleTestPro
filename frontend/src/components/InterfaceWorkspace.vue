@@ -22,6 +22,8 @@ const running = ref(false), error = ref(''), result = ref(null), lastRequest = r
 watch(running, value => emit('busy', value), { flush: 'sync' })
 let version = 0
 const environment = computed({ get: () => props.modelValue, set: value => { if (!running.value) emit('update:modelValue', value) } })
+const hasExecutionEnvironment = computed(() => (props.environments || []).some(env => String(env.id) === String(environment.value || '')))
+const executionEnvironmentHint = computed(() => props.environments?.length ? '请选择有效的执行环境后再运行。' : '当前项目暂无执行环境，请先在环境管理中创建。')
 const methodClass = computed(() => 'm-' + props.interfaceData.method.toLowerCase())
 const defaultTables = computed(() => {
   const paths = props.interfaceData.path_params || {}
@@ -68,7 +70,7 @@ async function send() {
   let values
   try {
     values = serializeRequest(draft.value, props.interfaceData.url)
-    if (!props.modelValue) throw Error('请选择执行环境')
+    if (!hasExecutionEnvironment.value) throw Error(executionEnvironmentHint.value)
   } catch (failure) {
     editor.value?.focusError(failure)
     error.value = failure.message
@@ -135,7 +137,8 @@ async function saveAsCase(fromResult = false) {
     </section>
 
     <section v-show="tab === 'debug'" id="workspace-panel-debug" class="debug-panel panel" role="tabpanel" aria-labelledby="workspace-tab-debug">
-      <div class="debug-toolbar"><div class="debug-environment"><span>执行环境</span><EnvironmentSelect v-model="environment" :environments="environments" /></div><div class="debug-actions"><button type="button" class="btn btn-ghost" :disabled="running" @click="reset">重置参数</button><button type="button" class="btn btn-ghost" :disabled="running" @click="saveAsCase()">保存为测试用例</button><button type="button" class="btn btn-primary" :disabled="running" @click="send">{{ running ? '发送中…' : '发送请求' }}</button></div></div>
+      <div class="debug-toolbar"><div class="debug-environment"><span>执行环境</span><EnvironmentSelect v-model="environment" :environments="environments" required placeholder="请选择执行环境" /></div><div class="debug-actions"><button type="button" class="btn btn-ghost" :disabled="running" @click="reset">重置参数</button><button type="button" class="btn btn-ghost" :disabled="running" @click="saveAsCase()">保存为测试用例</button><button type="button" class="btn btn-primary" :disabled="running || !hasExecutionEnvironment" :title="!hasExecutionEnvironment ? executionEnvironmentHint : '发送请求'" @click="send">{{ running ? '发送中…' : '发送请求' }}</button></div></div>
+      <p v-if="!hasExecutionEnvironment" class="debug-hint" role="status">{{ executionEnvironmentHint }} <RouterLink v-if="!environments.length" to="/environments">前往环境管理</RouterLink></p>
       <p class="debug-hint">这里的参数用于本次调试。保存为测试用例后，可单独维护参数和断言。</p>
       <RequestEditor ref="editor" v-model="draft" :url="interfaceData.url" :disabled="running" id-prefix="debug-request" />
       <div v-if="error" class="workspace-error" role="alert">{{ error }}</div>

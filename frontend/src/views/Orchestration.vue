@@ -22,6 +22,8 @@ const scenarios = ref([])
 const cases = ref([])
 const interfaces = ref([])
 const { envs, selectedEnv, loadEnvironments } = useExecutionEnvironment()
+const hasExecutionEnvironment = computed(() => envs.value.some(env => String(env.id) === String(selectedEnv.value || '')))
+const executionEnvironmentHint = computed(() => envs.value.length ? '请选择有效的执行环境后再运行。' : '当前项目暂无执行环境，请先在环境管理中创建。')
 const auth = useAuthStore()
 const debugSession = ref('')
 const debugVariables = ref({})
@@ -282,11 +284,13 @@ async function reapplyTemplate(step) {
 
 // —— 跑 ——
 async function onRun() {
+  if (!hasExecutionEnvironment.value) { showMessage(executionEnvironmentHint.value, 'error'); return }
   if (!currentId.value || saving.value || running.value || refreshing.value) return
   if (dirty.value) {
     if (!(await confirmAction('当前场景有未保存修改，保存后执行？'))) return
     if (!(await saveCurrent())) return
   }
+  if (!hasExecutionEnvironment.value) { showMessage(executionEnvironmentHint.value, 'error'); return }
   running.value = true
   try {
     const data = await runScenario(currentId.value, selectedEnv.value || undefined)
@@ -325,9 +329,9 @@ onMounted(load)
         <div class="editor-head">
           <div class="editor-meta"><input v-model="currentName" class="editor-name" aria-label="场景名称" placeholder="场景名称" maxlength="100" :disabled="saving || running || refreshing" /><span v-if="dirty" class="dirty-label">未保存</span></div>
           <div class="editor-actions">
-            <EnvironmentSelect v-model="selectedEnv" :environments="envs" title="执行环境" />
+            <EnvironmentSelect v-model="selectedEnv" :environments="envs" required placeholder="请选择执行环境" title="执行环境" />
             <button class="btn btn-ghost btn-sm" @click="saveCurrent" :disabled="!dirty || saving || running || refreshing">{{ saving ? '保存中…' : '保存' }}</button>
-            <button class="btn btn-primary btn-sm" @click="onRun" :disabled="running || saving || refreshing || !chain.length">{{ running ? '执行中…' : '运行场景' }}</button>
+            <button class="btn btn-primary btn-sm" @click="onRun" :disabled="running || saving || refreshing || !chain.length || !hasExecutionEnvironment" :title="!hasExecutionEnvironment ? executionEnvironmentHint : '运行场景'">{{ running ? '执行中…' : '运行场景' }}</button>
             <div class="more-actions" @focusout="event => { if (!event.currentTarget.contains(event.relatedTarget)) showMore = false }" @keydown.esc="showMore = false">
               <button class="icon-btn" type="button" aria-label="更多场景操作" :aria-expanded="showMore" aria-haspopup="menu" :disabled="saving || running || refreshing" @click="showMore = !showMore">⋯</button>
               <div v-if="showMore" class="more-menu" role="menu"><button role="menuitem" type="button" @click="deleteCurrent">删除场景</button></div>
@@ -335,6 +339,7 @@ onMounted(load)
           </div>
           <input v-model="currentDesc" class="desc-input" aria-label="场景简介" placeholder="添加场景简介（可选）" maxlength="500" :disabled="saving || running || refreshing" />
         </div>
+        <p v-if="!hasExecutionEnvironment" class="execution-environment-hint" role="status">{{ executionEnvironmentHint }} <RouterLink v-if="!envs.length" to="/environments">前往环境管理</RouterLink></p>
         <div class="flow-heading"><strong>执行步骤 <span>{{ chain.length }}</span></strong><span>按顺序执行 · 可拖拽调整</span></div>
         <div v-if="!chain.length" class="canvas-empty"><strong>从用例库添加第一个步骤</strong><p>每个步骤都可以单独修改请求、期望状态码和断言。</p><button class="btn btn-primary btn-sm" @click="openCasePicker">＋ 从用例库添加步骤</button></div>
         <template v-else>
@@ -371,6 +376,7 @@ onMounted(load)
 </template>
 
 <style scoped>
+.execution-environment-hint{margin:0;padding:10px 18px;color:var(--text-muted);font-size:12px;line-height:1.6}
 .scenario-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:stretch}
 .scenario-nav,.scenario-editor{display:flex;flex-direction:column;min-width:0;min-height:520px}
 .panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;font-size:14px;font-weight:600}

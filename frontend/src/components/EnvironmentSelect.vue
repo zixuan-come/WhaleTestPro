@@ -6,6 +6,7 @@ const props = defineProps({
   environments: { type: Array, default: () => [] },
   placeholder: { type: String, default: '不指定环境' },
   title: { type: String, default: '选择环境' },
+  required: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'change'])
 const open = ref(false)
@@ -35,7 +36,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onOutside))
       <svg class="env-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg>
     </button>
     <div v-if="open" class="env-menu">
-      <button type="button" class="env-option" :class="{ active: !props.modelValue }" @click="pick('')">
+      <button v-if="!required" type="button" class="env-option" :class="{ active: !props.modelValue }" @click="pick('')">
         <span class="env-dot muted"></span><span><strong>{{ placeholder }}</strong><small>不使用环境配置</small></span>
       </button>
       <button v-for="environment in environments" :key="environment.id" type="button" class="env-option" :class="{ active: String(environment.id) === String(props.modelValue) }" @click="pick(environment.id)">
