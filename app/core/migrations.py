@@ -467,6 +467,8 @@ def ensure_perf_run_schema(bind) -> None:
 
 
 def run_all_migrations(*binds) -> None:
+    from app.models import register_models
+    register_models()
     for bind in binds:
         ensure_project_team_schema(bind)
         ensure_operational_consistency_schema(bind)

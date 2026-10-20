@@ -96,13 +96,29 @@ def move_reports(db, project_id, references, folder_id):
         for storage, rows in roots.items():
             for report in rows:
                 query = db.query(ReportFolderItem).filter_by(project_id=project_id, storage=storage, report_id=report.id)
-                item = query.first()
+                # Authorizing the request already opened a REPEATABLE READ
+                # snapshot. The root lock serializes writers, but only a current
+                # read refreshes this relationship after a competing move.
+                item = query.populate_existing().with_for_update().first()
                 if folder_id is None:
                     query.delete(synchronize_session=False)
                 elif item is not None:
                     item.folder_id = folder_id
                 else:
-                    db.add(ReportFolderItem(project_id=project_id, storage=storage, report_id=report.id, folder_id=folder_id))
+                    values = dict(project_id=project_id, storage=storage, report_id=report.id, folder_id=folder_id)
+                    dialect = db.get_bind().dialect.name
+                    if dialect == "mysql":
+                        from sqlalchemy.dialects.mysql import insert
+                        statement = insert(ReportFolderItem).values(**values)
+                        db.execute(statement.on_duplicate_key_update(folder_id=statement.inserted.folder_id))
+                    elif dialect == "sqlite":
+                        from sqlalchemy.dialects.sqlite import insert
+                        statement = insert(ReportFolderItem).values(**values)
+                        db.execute(statement.on_conflict_do_update(
+                            index_elements=["project_id", "storage", "report_id"],
+                            set_={"folder_id": statement.excluded.folder_id}))
+                    else:
+                        db.add(ReportFolderItem(**values))
                 moved += 1
         db.commit()
         return {"moved": moved, "folder_id": folder_id}
@@ -139,9 +155,9 @@ def delete_reports(db, project_id, references):
         scenario_ids = [row.id for row in roots.get("scenario", [])]
         if run_ids:
             old_ids += [number for (number,) in db.query(TestReport.id).filter(
-                TestReport.project_id == project_id, TestReport.execution_report_id.in_(run_ids)).all()]
+                TestReport.project_id == project_id, TestReport.execution_report_id.in_(run_ids)).with_for_update().all()]
             scenario_ids += [number for (number,) in db.query(ScenarioReport.id).filter(
-                ScenarioReport.project_id == project_id, ScenarioReport.execution_report_id.in_(run_ids)).all()]
+                ScenarioReport.project_id == project_id, ScenarioReport.execution_report_id.in_(run_ids)).with_for_update().all()]
         if scenario_ids:
             # Explicitly clean evidence even on databases without FK cascades enabled.
             db.query(ScenarioReportStep).filter(ScenarioReportStep.report_id.in_(scenario_ids)).delete(synchronize_session=False)
