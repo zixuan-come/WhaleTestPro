@@ -16,10 +16,12 @@ import { extractRuleRows, PERF_EXTRACT_OPTIONS } from '../utils/extractRules'
 import ExtractRulesEditor from '../components/ExtractRulesEditor.vue'
 import AssertionEditor from '../components/AssertionEditor.vue'
 import { assertionRows } from '../utils/assertionRules'
+import { grafanaUrl } from '../utils/serviceUrls'
 import EnvironmentSelect from '../components/EnvironmentSelect.vue'
 import Modal from '../components/Modal.vue'
 
 const items = ref([])
+const grafanaHref = grafanaUrl()
 const auth = useAuthStore()
 const pollError = ref('')
 const stoppingId = ref(null)
@@ -412,7 +414,7 @@ onUnmounted(() => { stopPoll(); ++pageVersion; ++refreshSerial })
     <div class="panel-head">
       压测任务
       <div class="head-actions">
-        <a class="btn btn-ghost mon" href="http://localhost:3000/d/perf-dash" target="_blank" rel="noopener"
+        <a class="btn btn-ghost mon" :href="grafanaHref" target="_blank" rel="noopener"
            title="Grafana 看板:压测指标时序曲线">Grafana</a>
         <button class="btn btn-primary" @click="openCreate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>

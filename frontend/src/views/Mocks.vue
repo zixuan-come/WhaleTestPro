@@ -20,7 +20,7 @@ const form = reactive({ name: '', path: '', method: 'GET', status: 200, body: ''
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
 const total = computed(() => items.value.length)
 // 挡板命中 URL 前缀:/mock/{pid} —— 后端多项目改造后,path 必须带 pid,展示时把前缀显式画出来
-const hitUrlPrefix = computed(() => `/mock/${auth.currentProjectId ?? '?'}`)
+const hitUrlPrefix = computed(() => `/api/mock/${auth.currentProjectId ?? '?'}`)
 
 function methodClass(m) { return 'm-' + (m || 'get').toLowerCase() }
 

@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+ARG VITE_GRAFANA_URL=""
 RUN npm run build
 
 # 运行阶段:Nginx 托管静态文件 + 反代 /api

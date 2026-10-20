@@ -18,7 +18,7 @@ const saving = ref(false)
 const formErr = ref('')
 const form = reactive({ name: '', base_url: '' })
 const pairs = ref([])                // [{ key, value }] 键值对编辑
-const refSyntax = '{{key}}'          // 提示文案里的字面量,放常量避免污染模板 mustache 解析
+const refSyntax = '${key}'          // 与执行引擎及 Path 参数中的变量语法一致。
 
 function varCount(env) {
   return env.variables ? Object.keys(env.variables).length : 0

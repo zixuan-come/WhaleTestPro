@@ -8,6 +8,7 @@ import * as request from '../src/utils/requestConfig.js'
 import * as extraction from '../src/utils/extractRules.js'
 import * as assertion from '../src/utils/assertionRules.js'
 import * as paths from '../src/utils/pathParameters.js'
+import { grafanaUrl } from '../src/utils/serviceUrls.js'
 import { caseToStep, equivalentCaseIds } from '../src/utils/scenarioSteps.js'
 import { selectedSuiteContent, suiteCatalog } from '../src/utils/suiteSelection.js'
 
@@ -235,4 +236,19 @@ test('suite picker does not treat chain steps with SQL, datasets or retries as f
     assert.equal(selectedSuiteContent(catalog, { scenario_ids: [1], case_ids: [1] }).cases[0].included, false)
   }
   assert.deepEqual([...equivalentCaseIds([caseToStep(base, api)], [base], [api])], [1])
+})
+
+test('Grafana uses deployment hostname and allows an explicit HTTPS or same-origin dashboard URL', () => {
+  assert.equal(grafanaUrl('http://cloud.example:8080'), 'http://cloud.example:3000/d/perf-dash')
+  assert.equal(grafanaUrl('https://app.example', 'https://monitor.example/grafana/d/perf-dash'), 'https://monitor.example/grafana/d/perf-dash')
+  assert.equal(grafanaUrl('https://app.example', '/grafana/d/perf-dash'), 'https://app.example/grafana/d/perf-dash')
+  assert.equal(grafanaUrl('http://cloud.example', 'javascript:alert(1)'), 'http://cloud.example:3000/d/perf-dash')
+  assert.match(read('Dockerfile'), /ARG VITE_GRAFANA_URL/)
+})
+test('Mock advertised URLs use the configured frontend API proxy and environment syntax matches the engine', t => {
+  const mocks = setup(t, 'views/Mocks.vue', {}, { useAuthStore: () => ({ currentProjectId: 7 }), useFeedback: feedback })
+  assert.equal(mocks.hitUrlPrefix.value + '/orders', '/api/mock/7/orders')
+  assert.match(read('nginx.conf'), /location \/api\//)
+  const envs = setup(t, 'views/Environments.vue', {}, { useFeedback: feedback })
+  assert.equal(envs.refSyntax, '${key}')
 })
