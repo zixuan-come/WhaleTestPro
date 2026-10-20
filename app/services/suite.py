@@ -1,6 +1,7 @@
 from datetime import datetime
 from time import perf_counter
 from types import SimpleNamespace
+from copy import deepcopy
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
@@ -12,7 +13,7 @@ from app.repositories import report as report_repo
 from app.services import execution
 from app.schemas.suite import SuiteCreate, SuiteUpdate
 from app.services.execution_tracking import tracked
-from app.core.scenario_steps import equivalent_case_ids
+from app.core.scenario_steps import equivalent_case_ids, standalone_case_options
 from app.models.case import Case
 from app.models.interface import Interface
 
@@ -97,16 +98,30 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
             })
             continue
 
-        # run_chain 会写场景报告
-        chain_results = execution.run_chain(
-            db,
-            scenario.case_ids,
-            env_id,
-            project_id,
-            scenario_id=scenario.id,
-            scenario_name=scenario.name,
-            **({'steps': scenario.steps} if getattr(scenario, 'steps', None) is not None else {}),
+        # Child execution commits expire ORM rows; the source may be edited or
+        # deleted while HTTP is in flight. Keep the values this execution owns.
+        scenario = SimpleNamespace(
+            id=scenario_id, name=scenario.name,
+            case_ids=tuple(scenario.case_ids or ()),
+            steps=deepcopy(getattr(scenario, 'steps', None)),
         )
+
+        # run_chain 会写场景报告
+        try:
+            chain_results = execution.run_chain(
+                db,
+                scenario.case_ids,
+                env_id,
+                project_id,
+                scenario_id=scenario.id,
+                scenario_name=scenario.name,
+                **({'steps': scenario.steps} if scenario.steps is not None else {}),
+            )
+        except Exception as exc:
+            db.rollback()
+            results.append({"type": "scenario", "id": scenario.id, "name": scenario.name,
+                            "passed": False, "error": f"执行异常（{type(exc).__name__}）"})
+            continue
 
         passed = bool(chain_results) and all(r["passed"] for r in chain_results)
         results.append({
@@ -119,8 +134,9 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
         })
 
         # 记录已执行的用例（场景中的步骤）
-        if getattr(scenario, 'steps', None) is None:
-            executed_case_ids.update(scenario.case_ids or [])
+        if scenario.steps is None:
+            executed_case_ids.update(number for number in scenario.case_ids
+                if not standalone_case_options(case_repo.db_get(db, number, project_id)))
         else:
             cases = {row.id: row for row in db.query(Case).filter_by(project_id=project_id).all()}
             interfaces = {row.id: row for row in db.query(Interface).filter_by(project_id=project_id).all()}
@@ -143,7 +159,15 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
             continue
 
         # run_case 会写报告
-        case_result = execution.run_case(db, case_id, env_id, project_id)
+        case_name = case.name
+        try:
+            case_result = execution.run_case(db, case_id, env_id, project_id)
+        except Exception as exc:
+            db.rollback()
+            results.append({"type": "case", "id": case_id, "name": case_name,
+                            "passed": False, "error": f"执行异常（{type(exc).__name__}）"})
+            executed_case_ids.add(case_id)
+            continue
 
         if isinstance(case_result, dict) and "error" in case_result:
             passed = False
@@ -155,7 +179,7 @@ def run_suite(db: Session, suite_id: int, project_id: int, env_id: int | None = 
         results.append({
             "type": "case",
             "id": case_id,
-            "name": case.name,
+            "name": case_name,
             "passed": passed,
             "detail": case_result,
         })

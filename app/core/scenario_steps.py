@@ -31,12 +31,24 @@ def execution_config(step):
     return {key: step.get(key) for key in (*REQUEST_FIELDS, *CASE_FIELDS)}
 
 
+def standalone_case_options(case):
+    """True when chain execution cannot substitute for the library case."""
+    datasets = value(case, 'datasets')
+    return bool(datasets or (datasets is not None and not isinstance(datasets, list))
+                or value(case, 'setup_sql') or value(case, 'teardown_sql')
+                or value(case, 'retries', 0) not in (None, 0))
+
+
 def equivalent_case_ids(steps, cases, interfaces):
     """Only an unchanged executable copy can replace an explicit library case."""
     included = set()
     for step in steps:
         number = step.get('source_case_id')
         case = cases.get(number)
+        # Chains intentionally omit SQL, datasets and retry. Even an unchanged
+        # metadata snapshot cannot stand in for that standalone behavior.
+        if standalone_case_options(case):
+            continue
         interface = interfaces.get(value(case, 'interface_id')) if case is not None else None
         if case is not None and interface is not None and not step.get('missing_reason'):
             if execution_config(step) == execution_config(case_snapshot(case, interface)):

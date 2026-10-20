@@ -14,7 +14,7 @@ from app.models.scenario import Scenario
 from app.models.suite import TestSuite
 from app.services import execution, suite
 from app.services.execution_tracking import tracked
-from app.core.scenario_steps import equivalent_case_ids
+from app.core.scenario_steps import equivalent_case_ids, standalone_case_options
 
 
 def _assets(db, model, project_id):
@@ -81,7 +81,8 @@ def preview(db, project_id, selection):
                     remember(scenario)
                     if getattr(scenario, 'steps', None) is None:
                         steps = [case_item(case_id) for case_id in scenario.case_ids or []]
-                        used.update(scenario.case_ids or [])
+                        used.update(number for number in scenario.case_ids or []
+                                    if not standalone_case_options(cases.get(number)))
                     else:
                         steps = []
                         for step in scenario.steps:

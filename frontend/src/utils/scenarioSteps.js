@@ -36,6 +36,10 @@ export function equivalentCaseIds(steps, cases, interfaces) {
   return new Set(steps.filter(step => {
     const testCase = cases.find(item => item.id === step.source_case_id)
     const request = interfaces.find(item => item.id === testCase?.interface_id)
-    return testCase && request && !step.missing_reason && config(step) === config(caseToStep(testCase, request))
+    // Chain execution excludes case-level SQL, datasets and retries. Matching
+    // their snapshots does not mean the independent case has been executed.
+    const unsupported = value => value && (value.setup_sql?.length || value.teardown_sql?.length || value.datasets?.length || value.retries > 0)
+    return testCase && request && !step.missing_reason && !unsupported(step) && !unsupported(testCase) &&
+      config(step) === config(caseToStep(testCase, request))
   }).map(step => step.source_case_id))
 }

@@ -134,3 +134,16 @@ test('same-team A to B to A late details cannot release a newer loading guard, a
   assert.match(state.detailsError.value, /failed permission GET/)
   await state.togglePermission({ key: 'case.write' }, { target: { checked: true } }); assert.equal(writes, 0)
 })
+
+
+
+test('suite picker does not treat chain steps with SQL, datasets or retries as full independent executions', () => {
+  const base = { id: 1, name: 'case', interface_id: 1, expected_status: 200 }
+  for (const extra of [{ datasets: [{ user: 'a' }] }, { setup_sql: ['SELECT 1'] }, { teardown_sql: ['SELECT 1'] }, { retries: 1 }]) {
+    const full = { ...base, ...extra }, step = caseToStep(full, api)
+    assert.equal(equivalentCaseIds([step], [full], [api]).size, 0)
+    const catalog = suiteCatalog([{ id: 1, name: 'scenario', steps: [step] }], [full], [api])
+    assert.equal(selectedSuiteContent(catalog, { scenario_ids: [1], case_ids: [1] }).cases[0].included, false)
+  }
+  assert.deepEqual([...equivalentCaseIds([caseToStep(base, api)], [base], [api])], [1])
+})
